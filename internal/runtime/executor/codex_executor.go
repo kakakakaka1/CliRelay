@@ -905,10 +905,15 @@ func parseCodexQuotaProbe(body []byte) *cliproxyauth.QuotaProbeResult {
 
 	allowed := rateLimit.Get("allowed")
 	limitReached := rateLimit.Get("limit_reached")
-	if allowed.Exists() && allowed.Bool() && (!limitReached.Exists() || !limitReached.Bool()) {
-		return &cliproxyauth.QuotaProbeResult{Recovered: true}
+	if limitReached.Exists() && limitReached.Bool() {
+		return &cliproxyauth.QuotaProbeResult{
+			Recovered:     false,
+			NextRecoverAt: codexQuotaProbeNextRecoverAt(rateLimit, false),
+		}
 	}
 
+	hasWindowUsage := false
+	hasExhaustedWindow := false
 	nextRecoverAt := time.Time{}
 	for _, path := range []string{"primary_window", "secondary_window"} {
 		window := rateLimit.Get(path)
@@ -916,8 +921,16 @@ func parseCodexQuotaProbe(body []byte) *cliproxyauth.QuotaProbeResult {
 			continue
 		}
 		usedPercent := window.Get("used_percent")
-		if usedPercent.Exists() && usedPercent.Float() < 100 {
-			return &cliproxyauth.QuotaProbeResult{Recovered: true}
+		windowExhausted := false
+		if usedPercent.Exists() {
+			hasWindowUsage = true
+			windowExhausted = usedPercent.Float() >= 100
+			if windowExhausted {
+				hasExhaustedWindow = true
+			}
+		}
+		if !windowExhausted {
+			continue
 		}
 		if resetAt := codexQuotaWindowResetAt(window, time.Now()); !resetAt.IsZero() {
 			if nextRecoverAt.IsZero() || resetAt.Before(nextRecoverAt) {
@@ -926,10 +939,44 @@ func parseCodexQuotaProbe(body []byte) *cliproxyauth.QuotaProbeResult {
 		}
 	}
 
+	if !hasExhaustedWindow {
+		if allowed.Exists() {
+			return &cliproxyauth.QuotaProbeResult{
+				Recovered:     allowed.Bool(),
+				NextRecoverAt: codexQuotaProbeNextRecoverAt(rateLimit, false),
+			}
+		}
+		if hasWindowUsage {
+			return &cliproxyauth.QuotaProbeResult{Recovered: true}
+		}
+	}
+
 	return &cliproxyauth.QuotaProbeResult{
 		Recovered:     false,
 		NextRecoverAt: nextRecoverAt,
 	}
+}
+
+func codexQuotaProbeNextRecoverAt(rateLimit gjson.Result, exhaustedOnly bool) time.Time {
+	nextRecoverAt := time.Time{}
+	for _, path := range []string{"primary_window", "secondary_window"} {
+		window := rateLimit.Get(path)
+		if !window.Exists() {
+			continue
+		}
+		if exhaustedOnly {
+			usedPercent := window.Get("used_percent")
+			if usedPercent.Exists() && usedPercent.Float() < 100 {
+				continue
+			}
+		}
+		if resetAt := codexQuotaWindowResetAt(window, time.Now()); !resetAt.IsZero() {
+			if nextRecoverAt.IsZero() || resetAt.Before(nextRecoverAt) {
+				nextRecoverAt = resetAt
+			}
+		}
+	}
+	return nextRecoverAt
 }
 
 func codexQuotaWindowResetAt(window gjson.Result, now time.Time) time.Time {
