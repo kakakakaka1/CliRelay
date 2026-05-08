@@ -197,6 +197,15 @@ func (h *Handler) GetUsageLogs(c *gin.Context) {
 	})
 }
 
+func (h *Handler) DeleteUsageLogs(c *gin.Context) {
+	result, err := usage.ClearAllRequestLogs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 // buildNameMaps builds three maps from the current config/auth store:
 //  1. keyNameMap:          user-facing api_key → display name
 //  2. channelNameMap:      source/api_key/email → channel name

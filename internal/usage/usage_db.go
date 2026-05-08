@@ -72,6 +72,11 @@ type LogStats struct {
 	TotalCost   float64 `json:"total_cost"`
 }
 
+type ClearRequestLogsResult struct {
+	DeletedLogs     int64 `json:"deleted_logs"`
+	DeletedContents int64 `json:"deleted_contents"`
+}
+
 type DailyCountPoint struct {
 	Date     string `json:"date"`
 	Requests int64  `json:"requests"`
@@ -618,6 +623,63 @@ func DeleteLogsByAPIKey(apiKey string) (int64, error) {
 		log.Infof("usage: deleted %d request log(s) for api_key=%s", deleted, apiKey)
 	}
 	return deleted, nil
+}
+
+// ClearAllRequestLogs removes all request_logs and request_log_content rows
+// while leaving other SQLite-backed management data untouched.
+func ClearAllRequestLogs() (ClearRequestLogsResult, error) {
+	db := getDB()
+	if db == nil {
+		return ClearRequestLogsResult{}, fmt.Errorf("usage: database not initialised")
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return ClearRequestLogsResult{}, fmt.Errorf("usage: begin clear request logs: %w", err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	contentResult, err := tx.Exec("DELETE FROM request_log_content")
+	if err != nil {
+		return ClearRequestLogsResult{}, fmt.Errorf("usage: clear request_log_content: %w", err)
+	}
+	logResult, err := tx.Exec("DELETE FROM request_logs")
+	if err != nil {
+		return ClearRequestLogsResult{}, fmt.Errorf("usage: clear request_logs: %w", err)
+	}
+
+	deletedContents, err := contentResult.RowsAffected()
+	if err != nil {
+		return ClearRequestLogsResult{}, fmt.Errorf("usage: content affected rows: %w", err)
+	}
+	deletedLogs, err := logResult.RowsAffected()
+	if err != nil {
+		return ClearRequestLogsResult{}, fmt.Errorf("usage: log affected rows: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return ClearRequestLogsResult{}, fmt.Errorf("usage: commit clear request logs: %w", err)
+	}
+	committed = true
+
+	if _, err := db.Exec("VACUUM"); err != nil {
+		log.Warnf("usage: vacuum after request log cleanup failed: %v", err)
+	}
+
+	if deletedLogs > 0 || deletedContents > 0 {
+		log.Infof("usage: cleared request logs (logs=%d contents=%d)", deletedLogs, deletedContents)
+	}
+
+	return ClearRequestLogsResult{
+		DeletedLogs:     deletedLogs,
+		DeletedContents: deletedContents,
+	}, nil
 }
 
 // DashboardKPI holds the aggregated KPI data needed by the dashboard page.

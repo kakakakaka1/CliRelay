@@ -641,6 +641,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/usage/export", s.mgmt.ExportUsageStatistics)
 		mgmt.POST("/usage/import", s.mgmt.ImportUsageStatistics)
 		mgmt.GET("/usage/logs", s.mgmt.GetUsageLogs)
+		mgmt.DELETE("/usage/logs", s.mgmt.DeleteUsageLogs)
 		mgmt.GET("/usage/logs/:id/content", s.mgmt.GetLogContent)
 		mgmt.GET("/usage/auth-file-group-trend", s.mgmt.GetAuthFileGroupTrend)
 		mgmt.GET("/usage/auth-file-trend", s.mgmt.GetAuthFileTrend)

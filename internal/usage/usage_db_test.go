@@ -961,3 +961,72 @@ func TestDeleteLogsByAPIKeyRemovesLogsAndContent(t *testing.T) {
 		t.Fatalf("expected 1 content row (sk-other only), got %d", contentCount)
 	}
 }
+
+func TestClearAllRequestLogsRemovesRequestLogTablesOnly(t *testing.T) {
+	initTestUsageDB(t, config.RequestLogStorageConfig{
+		StoreContent:           true,
+		ContentRetentionDays:   30,
+		CleanupIntervalMinutes: 1440,
+	})
+
+	if err := UpsertAPIKey(APIKeyRow{
+		Key:       "sk-config-keep",
+		Name:      "Config Keep",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("UpsertAPIKey() error = %v", err)
+	}
+
+	timestamp := time.Now().UTC()
+	input := `{"messages":[{"role":"user","content":"hello"}]}`
+	output := `{"id":"resp_1","output":"done"}`
+
+	InsertLog("sk-target", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 100, 10, TokenStats{
+		InputTokens: 10, OutputTokens: 20, TotalTokens: 30,
+	}, input, output)
+	InsertLog("sk-other", "", "gpt-test", "source", "channel", "auth-2", false, timestamp, 200, 20, TokenStats{
+		InputTokens: 5, OutputTokens: 10, TotalTokens: 15,
+	}, input, output)
+
+	result, err := QueryLogs(LogQueryParams{Page: 1, Size: 10, Days: 1})
+	if err != nil {
+		t.Fatalf("QueryLogs() error = %v", err)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected 2 log rows before cleanup, got %d", len(result.Items))
+	}
+
+	cleared, err := ClearAllRequestLogs()
+	if err != nil {
+		t.Fatalf("ClearAllRequestLogs() error = %v", err)
+	}
+	if cleared.DeletedLogs != 2 {
+		t.Fatalf("DeletedLogs = %d, want 2", cleared.DeletedLogs)
+	}
+	if cleared.DeletedContents != 2 {
+		t.Fatalf("DeletedContents = %d, want 2", cleared.DeletedContents)
+	}
+
+	result, err = QueryLogs(LogQueryParams{Page: 1, Size: 10, Days: 1})
+	if err != nil {
+		t.Fatalf("QueryLogs() after cleanup error = %v", err)
+	}
+	if len(result.Items) != 0 {
+		t.Fatalf("expected 0 log rows after cleanup, got %d", len(result.Items))
+	}
+
+	db := getDB()
+	var contentCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM request_log_content").Scan(&contentCount); err != nil {
+		t.Fatalf("count content rows: %v", err)
+	}
+	if contentCount != 0 {
+		t.Fatalf("expected 0 content rows after cleanup, got %d", contentCount)
+	}
+
+	keys := ListAPIKeys()
+	if len(keys) != 1 || keys[0].Key != "sk-config-keep" {
+		t.Fatalf("ListAPIKeys() = %#v, want preserved api key row", keys)
+	}
+}
