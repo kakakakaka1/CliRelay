@@ -332,6 +332,45 @@ func TestGetChannelGroupsReturnsChannelDetailsWithTags(t *testing.T) {
 	}
 }
 
+func TestBuildChannelGroupItemsKeepsRenamedKimiOAuthChannelsSeparate(t *testing.T) {
+	auths := []*coreauth.Auth{
+		{
+			ID:       "kimi-team-a",
+			Label:    "Kimi Team A",
+			Provider: "kimi",
+			Metadata: map[string]any{
+				"type":          "kimi",
+				"refresh_token": "kimi-refresh-a",
+			},
+		},
+		{
+			ID:       "kimi-team-b",
+			Label:    "Kimi Team B",
+			Provider: "kimi",
+			Metadata: map[string]any{
+				"type":          "kimi",
+				"refresh_token": "kimi-refresh-b",
+			},
+		},
+	}
+
+	items := buildChannelGroupItems(&config.Config{
+		Routing: config.RoutingConfig{IncludeDefaultGroup: true},
+	}, auths)
+	if len(items) != 1 {
+		t.Fatalf("expected default group, got %d groups: %#v", len(items), items)
+	}
+	if !containsString(items[0].Channels, "Kimi Team A") {
+		t.Fatalf("channels = %v, want Kimi Team A", items[0].Channels)
+	}
+	if !containsString(items[0].Channels, "Kimi Team B") {
+		t.Fatalf("channels = %v, want Kimi Team B", items[0].Channels)
+	}
+	if len(items[0].ChannelDetails) != 2 {
+		t.Fatalf("channel details = %#v, want two distinct Kimi entries", items[0].ChannelDetails)
+	}
+}
+
 func TestBuildChannelGroupItemsCanonicalizesRenamedOAuthChannel(t *testing.T) {
 	cfg := &config.Config{
 		Routing: config.RoutingConfig{
