@@ -793,6 +793,8 @@ func (s *Service) registerModelsForAuth(ctx context.Context, a *coreauth.Auth) {
 	if authKind == "" {
 		if kind, _ := a.AccountInfo(); strings.EqualFold(kind, "api_key") {
 			authKind = "apikey"
+		} else if strings.EqualFold(kind, "oauth") {
+			authKind = "oauth"
 		}
 	}
 	if a.Attributes != nil {
@@ -873,7 +875,7 @@ func (s *Service) registerModelsForAuth(ctx context.Context, a *coreauth.Auth) {
 				excluded = entry.ExcludedModels
 			}
 		}
-		models = appendOAuthUserDefinedModelConfigs(models, provider, authKind)
+		models = appendOAuthProviderModelConfigs(models, provider, authKind)
 		models = applyExcludedModels(models, excluded)
 	case "bedrock":
 		models = registry.GetBedrockModels()
@@ -1460,7 +1462,7 @@ func buildClaudeConfigModels(entry *config.ClaudeKey) []*ModelInfo {
 	return buildConfigModels(entry.Models, "anthropic", "claude")
 }
 
-func appendOAuthUserDefinedModelConfigs(models []*ModelInfo, provider, authKind string) []*ModelInfo {
+func appendOAuthProviderModelConfigs(models []*ModelInfo, provider, authKind string) []*ModelInfo {
 	if !strings.EqualFold(strings.TrimSpace(authKind), "oauth") {
 		return models
 	}
@@ -1488,7 +1490,7 @@ func appendOAuthUserDefinedModelConfigs(models []*ModelInfo, provider, authKind 
 	now := time.Now().Unix()
 	for _, row := range internalusage.ListModelConfigs() {
 		modelID := strings.TrimSpace(row.ModelID)
-		if modelID == "" || !row.Enabled || !strings.EqualFold(strings.TrimSpace(row.Source), "user") {
+		if modelID == "" || !row.Enabled || !oauthProviderModelConfigSourceAllowed(row.Source) {
 			continue
 		}
 		if _, ok := owners[normalizeModelConfigOwner(row.OwnedBy)]; !ok {
@@ -1511,6 +1513,15 @@ func appendOAuthUserDefinedModelConfigs(models []*ModelInfo, provider, authKind 
 		})
 	}
 	return out
+}
+
+func oauthProviderModelConfigSourceAllowed(source string) bool {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "user", "seed", "openrouter":
+		return true
+	default:
+		return false
+	}
 }
 
 func modelConfigOwnerAliases(provider string) map[string]struct{} {
