@@ -341,6 +341,7 @@ func (h *Handler) PutConfigYAML(c *gin.Context) {
 		return
 	}
 	if usage.ConfigStoreAvailable() {
+		usage.PersistRuntimeSettingsPresentInYAML(newCfg, body)
 		usage.MigrateRuntimeSettingsFromConfig(newCfg, h.configFilePath)
 		usage.ApplyStoredRuntimeSettings(newCfg)
 	}
