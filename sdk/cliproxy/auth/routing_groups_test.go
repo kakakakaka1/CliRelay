@@ -129,6 +129,77 @@ func TestAuthGroupsMatchesLegacyOAuthEmailAfterRename(t *testing.T) {
 	}
 }
 
+func TestAuthGroupsMatchesAnyDisplayTagDynamically(t *testing.T) {
+	t.Parallel()
+
+	cfg := &internalconfig.Config{
+		Routing: internalconfig.RoutingConfig{
+			ChannelGroups: []internalconfig.RoutingChannelGroup{
+				{
+					Name: "tag-pool",
+					Match: internalconfig.ChannelGroupMatch{
+						Tags: []string{"vip", "team-a"},
+					},
+				},
+			},
+		},
+	}
+	auth := &Auth{
+		Label:    "codex-account",
+		Provider: "codex",
+		Metadata: map[string]any{
+			"custom_tags": []string{"vip"},
+		},
+	}
+
+	groups := authGroups(cfg, auth)
+	if _, ok := groups["tag-pool"]; !ok {
+		t.Fatalf("expected tag-pool from matching tag, got %v", groups)
+	}
+
+	auth.Metadata["custom_tags"] = []string{"other"}
+	groups = authGroups(cfg, auth)
+	if _, ok := groups["tag-pool"]; ok {
+		t.Fatalf("tag-pool should disappear after the matching tag is removed, got %v", groups)
+	}
+}
+
+func TestAuthGroupsIgnoresHiddenDisplayTags(t *testing.T) {
+	t.Parallel()
+
+	cfg := &internalconfig.Config{
+		Routing: internalconfig.RoutingConfig{
+			ChannelGroups: []internalconfig.RoutingChannelGroup{
+				{
+					Name: "pro-pool",
+					Match: internalconfig.ChannelGroupMatch{
+						Tags: []string{"pro"},
+					},
+				},
+			},
+		},
+	}
+	auth := &Auth{
+		Label:    "codex-account",
+		Provider: "codex",
+		Metadata: map[string]any{
+			"plan_type":           "pro",
+			"hidden_default_tags": []string{"pro"},
+		},
+	}
+
+	groups := authGroups(cfg, auth)
+	if _, ok := groups["pro-pool"]; ok {
+		t.Fatalf("pro-pool should not match a hidden display tag, got %v", groups)
+	}
+
+	auth.Metadata["display_tags"] = []string{}
+	groups = authGroups(cfg, auth)
+	if _, ok := groups["pro-pool"]; ok {
+		t.Fatalf("pro-pool should not match an explicit empty display tag list, got %v", groups)
+	}
+}
+
 func TestDerivedGroupPriorityPreservesExplicitZero(t *testing.T) {
 	t.Parallel()
 

@@ -30,6 +30,7 @@ type channelGroupItem struct {
 	Priority       int                         `json:"priority,omitempty"`
 	Implicit       bool                        `json:"implicit"`
 	Prefixes       []string                    `json:"prefixes,omitempty"`
+	Tags           []string                    `json:"tags,omitempty"`
 	Channels       []string                    `json:"channels,omitempty"`
 	ChannelDetails []channelGroupChannelDetail `json:"channel-details,omitempty"`
 	AllowedModels  []string                    `json:"allowed-models,omitempty"`
@@ -148,6 +149,7 @@ func buildChannelGroupItems(cfg *config.Config, auths []*coreauth.Auth) []channe
 		item.Priority = group.Priority
 		item.AllowedModels = append(item.AllowedModels, group.AllowedModels...)
 		item.Prefixes = append(item.Prefixes, group.Match.Prefixes...)
+		item.Tags = append(item.Tags, group.Match.Tags...)
 		configuredChannelsByGroup[item.Name] = append(configuredChannelsByGroup[item.Name], group.Match.Channels...)
 	}
 
@@ -183,6 +185,9 @@ func buildChannelGroupItems(cfg *config.Config, auths []*coreauth.Auth) []channe
 					}
 				}
 			}
+			if !matched && channelMatchesAnyTag(channel, group.Tags) {
+				matched = true
+			}
 			if !matched {
 				if group.Name == "default" && prefix == "" && includeDefault {
 					matched = true
@@ -209,6 +214,7 @@ func buildChannelGroupItems(cfg *config.Config, auths []*coreauth.Auth) []channe
 	for name, item := range groupMap {
 		item.Name = name
 		item.Prefixes = uniqueSortedStrings(item.Prefixes, internalrouting.NormalizeGroupName)
+		item.Tags = uniqueSortedStrings(item.Tags, config.NormalizeRoutingTag)
 		item.Channels = uniqueSortedStrings(item.Channels, func(value string) string { return strings.TrimSpace(value) })
 		item.ChannelDetails = uniqueSortedChannelDetails(item.ChannelDetails)
 		item.PathRoutes = uniqueSortedStrings(knownPaths[name], internalrouting.NormalizeNamespacePath)
@@ -216,6 +222,28 @@ func buildChannelGroupItems(cfg *config.Config, auths []*coreauth.Auth) []channe
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func channelMatchesAnyTag(channel channelDescriptor, tags []string) bool {
+	if len(tags) == 0 {
+		return false
+	}
+	displayTags := make(map[string]struct{}, len(channel.DisplayTags))
+	for _, tag := range channel.DisplayTags {
+		normalized := config.NormalizeRoutingTag(tag)
+		if normalized != "" {
+			displayTags[normalized] = struct{}{}
+		}
+	}
+	if len(displayTags) == 0 {
+		return false
+	}
+	for _, tag := range tags {
+		if _, ok := displayTags[config.NormalizeRoutingTag(tag)]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func uniqueSortedStrings(values []string, normalizer func(string) string) []string {
@@ -391,6 +419,9 @@ func channelGroupMatchesAnyDescriptor(group config.RoutingChannelGroup, descript
 			if channel != "" && strings.EqualFold(strings.TrimSpace(candidateChannel), channel) {
 				return true
 			}
+		}
+		if channelMatchesAnyTag(descriptor, group.Match.Tags) {
+			return true
 		}
 	}
 	return false

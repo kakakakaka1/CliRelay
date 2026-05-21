@@ -332,6 +332,68 @@ func TestGetChannelGroupsReturnsChannelDetailsWithTags(t *testing.T) {
 	}
 }
 
+func TestBuildChannelGroupItemsMatchesChannelsByAnyDisplayTag(t *testing.T) {
+	auths := []*coreauth.Auth{
+		{
+			ID:       "team-a",
+			Label:    "Team A Codex",
+			Provider: "codex",
+			Metadata: map[string]any{
+				"custom_tags": []string{"team-a"},
+			},
+		},
+		{
+			ID:       "pro",
+			Label:    "Pro Codex",
+			Provider: "codex",
+			Metadata: map[string]any{
+				"plan_type": "pro",
+			},
+		},
+		{
+			ID:       "free",
+			Label:    "Free Codex",
+			Provider: "codex",
+			Metadata: map[string]any{
+				"plan_type": "free",
+			},
+		},
+	}
+	cfg := &config.Config{
+		Routing: config.RoutingConfig{
+			ChannelGroups: []config.RoutingChannelGroup{
+				{
+					Name: "tag-pool",
+					Match: config.ChannelGroupMatch{
+						Tags: []string{"team-a", "pro"},
+					},
+				},
+			},
+		},
+	}
+
+	items := buildChannelGroupItems(cfg, auths)
+	var tagPool *channelGroupItem
+	for i := range items {
+		if items[i].Name == "tag-pool" {
+			tagPool = &items[i]
+			break
+		}
+	}
+	if tagPool == nil {
+		t.Fatal("expected tag-pool group")
+	}
+	if !containsString(tagPool.Channels, "Team A Codex") {
+		t.Fatalf("channels = %v, want Team A Codex from custom tag", tagPool.Channels)
+	}
+	if !containsString(tagPool.Channels, "Pro Codex") {
+		t.Fatalf("channels = %v, want Pro Codex from plan tag", tagPool.Channels)
+	}
+	if containsString(tagPool.Channels, "Free Codex") {
+		t.Fatalf("channels = %v, should not include Free Codex", tagPool.Channels)
+	}
+}
+
 func TestBuildChannelGroupItemsKeepsRenamedKimiOAuthChannelsSeparate(t *testing.T) {
 	auths := []*coreauth.Auth{
 		{

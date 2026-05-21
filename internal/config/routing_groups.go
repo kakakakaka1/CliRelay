@@ -10,6 +10,7 @@ import (
 type ChannelGroupMatch struct {
 	Prefixes []string `yaml:"prefixes,omitempty" json:"prefixes,omitempty"`
 	Channels []string `yaml:"channels,omitempty" json:"channels,omitempty"`
+	Tags     []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 }
 
 // RoutingChannelGroup defines a named channel group used by routing and API-key permissions.
@@ -88,6 +89,14 @@ func NormalizeRoutingStrategy(strategy string) string {
 	}
 }
 
+func NormalizeRoutingTag(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(trimmed), "-")
+}
+
 func normalizeOptionalRoutingStrategy(strategy string) string {
 	if strings.TrimSpace(strategy) == "" {
 		return ""
@@ -113,6 +122,7 @@ func (cfg *Config) SanitizeRouting() {
 		group.Match.Channels = normalizeStringList(group.Match.Channels, func(value string) string {
 			return strings.TrimSpace(value)
 		})
+		group.Match.Tags = normalizeStringList(group.Match.Tags, NormalizeRoutingTag)
 		group.ChannelPriorities = normalizeChannelPriorities(group.ChannelPriorities)
 		group.AllowedModels = normalizeStringList(group.AllowedModels, func(value string) string {
 			return strings.TrimSpace(value)

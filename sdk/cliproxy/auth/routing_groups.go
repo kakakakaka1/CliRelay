@@ -11,6 +11,16 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 )
 
+var routingCodexPlanDisplayTags = map[string]struct{}{
+	"business":   {},
+	"edu":        {},
+	"enterprise": {},
+	"free":       {},
+	"plus":       {},
+	"pro":        {},
+	"team":       {},
+}
+
 func metadataStringSet(meta map[string]any, key string, normalizer func(string) string) map[string]struct{} {
 	if len(meta) == 0 {
 		return nil
@@ -48,6 +58,162 @@ func metadataStringSet(meta map[string]any, key string, normalizer func(string) 
 		return nil
 	}
 	return out
+}
+
+func metadataTagList(meta map[string]any, key string) ([]string, bool) {
+	if len(meta) == 0 {
+		return nil, false
+	}
+	raw, ok := meta[key]
+	if !ok || raw == nil {
+		return nil, ok
+	}
+	var values []string
+	switch typed := raw.(type) {
+	case string:
+		values = strings.Split(typed, ",")
+	case []string:
+		values = typed
+	case []any:
+		values = make([]string, 0, len(typed))
+		for _, item := range typed {
+			values = append(values, fmt.Sprint(item))
+		}
+	default:
+		return nil, ok
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		tag := internalconfig.NormalizeRoutingTag(value)
+		if tag == "" {
+			continue
+		}
+		if _, exists := seen[tag]; exists {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	return out, ok
+}
+
+func metadataStringValue(meta map[string]any, keys ...string) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		if value, ok := meta[key].(string); ok {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func appendUniqueTag(values []string, tag string) []string {
+	normalized := internalconfig.NormalizeRoutingTag(tag)
+	if normalized == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == normalized {
+			return values
+		}
+	}
+	return append(values, normalized)
+}
+
+func authDisplayTags(auth *Auth) []string {
+	if auth == nil {
+		return nil
+	}
+	defaultTags := make([]string, 0, 2)
+	if provider := internalconfig.NormalizeRoutingTag(auth.Provider); provider != "" && provider != "unknown" {
+		defaultTags = appendUniqueTag(defaultTags, provider)
+	}
+	if planType := internalconfig.NormalizeRoutingTag(metadataStringValue(auth.Metadata, "plan_type", "planType")); planType != "" {
+		defaultTags = appendUniqueTag(defaultTags, planType)
+	}
+
+	customTags, _ := metadataTagList(auth.Metadata, "custom_tags")
+	hiddenDefaultTags, _ := metadataTagList(auth.Metadata, "hidden_default_tags")
+	explicitDisplayTags, hasExplicitDisplayTags := metadataTagList(auth.Metadata, "display_tags")
+	if hasExplicitDisplayTags {
+		allowed := make(map[string]struct{}, len(defaultTags)+len(customTags))
+		for _, tag := range defaultTags {
+			allowed[tag] = struct{}{}
+		}
+		for _, tag := range customTags {
+			allowed[tag] = struct{}{}
+		}
+		out := make([]string, 0, len(explicitDisplayTags))
+		providerTag := internalconfig.NormalizeRoutingTag(auth.Provider)
+		currentPlan := internalconfig.NormalizeRoutingTag(metadataStringValue(auth.Metadata, "plan_type", "planType"))
+		for _, tag := range explicitDisplayTags {
+			if _, ok := allowed[tag]; ok {
+				out = appendUniqueTag(out, tag)
+				continue
+			}
+			if isStaleCodexRoutingPlanDisplayTag(providerTag, currentPlan, tag) {
+				if _, ok := allowed[currentPlan]; ok {
+					out = appendUniqueTag(out, currentPlan)
+				}
+			}
+		}
+		return out
+	}
+
+	hidden := make(map[string]struct{}, len(hiddenDefaultTags))
+	for _, tag := range hiddenDefaultTags {
+		hidden[tag] = struct{}{}
+	}
+	out := make([]string, 0, len(defaultTags)+len(customTags))
+	for _, tag := range defaultTags {
+		if _, skip := hidden[tag]; !skip {
+			out = appendUniqueTag(out, tag)
+		}
+	}
+	for _, tag := range customTags {
+		if _, skip := hidden[tag]; !skip {
+			out = appendUniqueTag(out, tag)
+		}
+	}
+	return out
+}
+
+func isStaleCodexRoutingPlanDisplayTag(providerTag string, currentPlan string, tag string) bool {
+	if providerTag != "codex" || currentPlan == "" || tag == currentPlan {
+		return false
+	}
+	if _, ok := routingCodexPlanDisplayTags[currentPlan]; !ok {
+		return false
+	}
+	_, ok := routingCodexPlanDisplayTags[tag]
+	return ok
+}
+
+func authMatchesAnyTag(auth *Auth, tags []string) bool {
+	if auth == nil || len(tags) == 0 {
+		return false
+	}
+	displayTags := make(map[string]struct{})
+	for _, tag := range authDisplayTags(auth) {
+		normalized := internalconfig.NormalizeRoutingTag(tag)
+		if normalized != "" {
+			displayTags[normalized] = struct{}{}
+		}
+	}
+	if len(displayTags) == 0 {
+		return false
+	}
+	for _, tag := range tags {
+		if _, ok := displayTags[internalconfig.NormalizeRoutingTag(tag)]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func allowedChannelGroupsFromMetadata(meta map[string]any) map[string]struct{} {
@@ -163,6 +329,9 @@ func authGroups(cfg *internalconfig.Config, auth *Auth) map[string]struct{} {
 					break
 				}
 			}
+		}
+		if !matched && authMatchesAnyTag(auth, group.Match.Tags) {
+			matched = true
 		}
 		if matched {
 			out[group.Name] = struct{}{}
