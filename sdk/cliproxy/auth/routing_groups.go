@@ -640,7 +640,7 @@ func (m *Manager) CanServeModelWithScopes(modelID string, allowedChannels, allow
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, candidate := range m.auths {
-		if candidate == nil || candidate.Disabled {
+		if candidate == nil || candidate.Disabled || candidate.Status == StatusDisabled {
 			continue
 		}
 		if !authAllowedByChannels(candidate, allowedChannels) {
