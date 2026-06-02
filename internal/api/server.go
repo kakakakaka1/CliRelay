@@ -890,6 +890,7 @@ func (s *Server) registerManagementRoutes() {
 		pub.POST("/usage/logs/:id/content", s.mgmt.GetPublicLogContent)
 		pub.GET("/usage/chart-data", s.mgmt.GetPublicUsageChartData)
 		pub.POST("/usage/chart-data", s.mgmt.GetPublicUsageChartData)
+			pub.POST("/usage/summary", s.mgmt.GetPublicUsageSummary)
 	}
 }
 
