@@ -1835,7 +1835,11 @@ func normalizeOpenCodeGoKey(entry *config.OpenCodeGoKey) {
 	entry.Headers = config.NormalizeHeaders(entry.Headers)
 	entry.ExcludedModels = config.NormalizeExcludedModels(entry.ExcludedModels)
 	entry.VisionFallbackModel = strings.TrimSpace(entry.VisionFallbackModel)
-	entry.WorkspaceID = strings.TrimSpace(entry.WorkspaceID)
+	if workspaceID, err := normalizeOpenCodeGoWorkspaceID(entry.WorkspaceID); err == nil {
+		entry.WorkspaceID = workspaceID
+	} else {
+		entry.WorkspaceID = strings.TrimSpace(entry.WorkspaceID)
+	}
 	entry.AuthCookie = strings.TrimSpace(entry.AuthCookie)
 }
 

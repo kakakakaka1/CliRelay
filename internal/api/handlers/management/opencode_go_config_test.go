@@ -33,7 +33,7 @@ func TestOpenCodeGoKeyManagementPutGetPatchDelete(t *testing.T) {
 		t.Fatalf("OpenCodeGoKey after PUT = %+v", h.cfg.OpenCodeGoKey)
 	}
 
-	patchBody := []byte(`{"index":0,"value":{"name":"secondary","excluded-models":[" minimax-m2.5 "],"vision-fallback-model":" qwen3.6-plus ","workspace-id":" wrk_456 ","auth-cookie":" auth-next "}}`)
+	patchBody := []byte(`{"index":0,"value":{"name":"secondary","excluded-models":[" minimax-m2.5 "],"vision-fallback-model":" qwen3.6-plus ","workspace-id":" https://opencode.ai/workspace/wrk_456/go ","auth-cookie":" auth-next "}}`)
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPatch, "/v0/management/opencode-go-api-key", bytes.NewReader(patchBody))

@@ -38,12 +38,43 @@ func TestNormalizeOpenCodeGoAuthCookie(t *testing.T) {
 		"token":                        "token",
 		" auth=abc123; oc_locale=en ":  "abc123",
 		"Cookie: foo=bar; auth=abc; z": "abc",
+		"cookie: auth=lowercase":       "lowercase",
 		"foo=bar; session=not-an-auth": "",
 		"token=with-padding":           "token=with-padding",
 	}
 	for input, want := range tests {
 		if got := normalizeOpenCodeGoAuthCookie(input); got != want {
 			t.Fatalf("normalizeOpenCodeGoAuthCookie(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestNormalizeOpenCodeGoWorkspaceID(t *testing.T) {
+	tests := map[string]string{
+		"wrk_123": "wrk_123",
+		" https://opencode.ai/workspace/wrk_123/go ":  "wrk_123",
+		"/workspace/wrk_456/go":                       "wrk_456",
+		"https://opencode.ai/workspace/wrk_789/usage": "wrk_789",
+	}
+	for input, want := range tests {
+		got, err := normalizeOpenCodeGoWorkspaceID(input)
+		if err != nil {
+			t.Fatalf("normalizeOpenCodeGoWorkspaceID(%q) error: %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("normalizeOpenCodeGoWorkspaceID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestNormalizeOpenCodeGoWorkspaceIDRejectsNamesAndServerIDs(t *testing.T) {
+	tests := []string{
+		"Default",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	for _, input := range tests {
+		if _, err := normalizeOpenCodeGoWorkspaceID(input); err == nil {
+			t.Fatalf("normalizeOpenCodeGoWorkspaceID(%q) error = nil, want validation error", input)
 		}
 	}
 }
@@ -99,6 +130,55 @@ func TestQueryOpenCodeGoUsageFetchesDashboard(t *testing.T) {
 	}
 	if decoded.WorkspaceID != "wrk_test" || len(decoded.Usage) != 3 || decoded.Usage[2].Percentage != 56 {
 		t.Fatalf("response = %+v", decoded)
+	}
+}
+
+func TestQueryOpenCodeGoUsageAcceptsDashboardURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspace/wrk_test/go" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`Rolling Usage 1% Resets in 1 hour Weekly Usage 2% Resets in 2 days Monthly Usage 3% Resets in 3 days`))
+	}))
+	defer upstream.Close()
+
+	prevBaseURL := openCodeGoConsoleBaseURL
+	openCodeGoConsoleBaseURL = upstream.URL
+	defer func() { openCodeGoConsoleBaseURL = prevBaseURL }()
+
+	h := &Handler{cfg: &config.Config{}}
+	body := []byte(`{"workspace-id":"https://opencode.ai/workspace/wrk_test/go","auth-cookie":"token"}`)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v0/management/opencode-go-api-key/usage", bytes.NewReader(body))
+
+	h.QueryOpenCodeGoUsage(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"workspace_id":"wrk_test"`)) {
+		t.Fatalf("body = %s", w.Body.String())
+	}
+}
+
+func TestQueryOpenCodeGoUsageRejectsWorkspaceName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := &Handler{cfg: &config.Config{}}
+	body := []byte(`{"workspace-id":"Default","auth-cookie":"token"}`)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v0/management/opencode-go-api-key/usage", bytes.NewReader(body))
+
+	h.QueryOpenCodeGoUsage(c)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("/workspace/{id}/go")) {
+		t.Fatalf("body = %s", w.Body.String())
 	}
 }
 

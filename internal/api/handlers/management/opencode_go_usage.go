@@ -16,11 +16,14 @@ import (
 )
 
 var (
-	openCodeGoConsoleBaseURL = "https://opencode.ai"
-	openCodeGoUsagePattern   = regexp.MustCompile(`(?i)(Rolling|Weekly|Monthly)\s+Usage\s+([0-9]{1,3})%\s+Resets\s+in\s+`)
-	openCodeGoTagPattern     = regexp.MustCompile(`(?s)<[^>]+>`)
-	openCodeGoSpacePattern   = regexp.MustCompile(`\s+`)
+	openCodeGoConsoleBaseURL  = "https://opencode.ai"
+	openCodeGoUsagePattern    = regexp.MustCompile(`(?i)(Rolling|Weekly|Monthly)\s+Usage\s+([0-9]{1,3})%\s+Resets\s+in\s+`)
+	openCodeGoServerIDPattern = regexp.MustCompile(`(?i)^[a-f0-9]{64}$`)
+	openCodeGoTagPattern      = regexp.MustCompile(`(?s)<[^>]+>`)
+	openCodeGoSpacePattern    = regexp.MustCompile(`\s+`)
 )
+
+const openCodeGoWorkspaceIDHint = "OpenCode Go workspace-id must be the /workspace/{id}/go URL segment from the dashboard address bar, usually starting with wrk_; workspace names like Default and server id hashes are not valid"
 
 type openCodeGoUsageItem struct {
 	Type       string `json:"type"`
@@ -49,13 +52,13 @@ func (h *Handler) QueryOpenCodeGoUsage(c *gin.Context) {
 	}
 
 	entry := h.findOpenCodeGoEntry(body)
-	workspaceID := strings.TrimSpace(body.WorkspaceID)
+	workspaceID, workspaceErr := normalizeOpenCodeGoWorkspaceID(body.WorkspaceID)
 	authCookie := strings.TrimSpace(body.AuthCookie)
 	proxyID := strings.TrimSpace(body.ProxyID)
 	proxyURL := strings.TrimSpace(body.ProxyURL)
 	if entry != nil {
 		if workspaceID == "" {
-			workspaceID = strings.TrimSpace(entry.WorkspaceID)
+			workspaceID, workspaceErr = normalizeOpenCodeGoWorkspaceID(entry.WorkspaceID)
 		}
 		if authCookie == "" {
 			authCookie = strings.TrimSpace(entry.AuthCookie)
@@ -69,6 +72,10 @@ func (h *Handler) QueryOpenCodeGoUsage(c *gin.Context) {
 	}
 	if workspaceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace-id is required"})
+		return
+	}
+	if workspaceErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": workspaceErr.Error()})
 		return
 	}
 	authCookie = normalizeOpenCodeGoAuthCookie(authCookie)
@@ -177,7 +184,9 @@ func normalizeOpenCodeGoAuthCookie(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	raw = strings.TrimPrefix(raw, "Cookie:")
+	if strings.HasPrefix(strings.ToLower(raw), "cookie:") {
+		raw = strings.TrimSpace(raw[len("cookie:"):])
+	}
 	raw = strings.TrimSpace(raw)
 	for _, part := range strings.Split(raw, ";") {
 		part = strings.TrimSpace(part)
@@ -189,6 +198,49 @@ func normalizeOpenCodeGoAuthCookie(raw string) string {
 		return ""
 	}
 	return raw
+}
+
+func normalizeOpenCodeGoWorkspaceID(raw string) (string, error) {
+	raw = strings.Trim(strings.TrimSpace(raw), `"'`)
+	if raw == "" {
+		return "", nil
+	}
+	if id := extractOpenCodeGoWorkspaceID(raw); id != "" {
+		return id, nil
+	}
+	trimmed := strings.Trim(raw, "/")
+	if strings.EqualFold(trimmed, "default") || openCodeGoServerIDPattern.MatchString(trimmed) {
+		return trimmed, openCodeGoUsageError(openCodeGoWorkspaceIDHint)
+	}
+	return trimmed, nil
+}
+
+func extractOpenCodeGoWorkspaceID(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err == nil && parsed.Path != "" {
+		if id := extractOpenCodeGoWorkspaceIDFromPath(parsed.Path); id != "" {
+			return id
+		}
+	}
+	return extractOpenCodeGoWorkspaceIDFromPath(raw)
+}
+
+func extractOpenCodeGoWorkspaceIDFromPath(path string) string {
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		if part != "workspace" || i+1 >= len(parts) {
+			continue
+		}
+		id := strings.TrimSpace(parts[i+1])
+		if id == "" {
+			continue
+		}
+		if unescaped, err := url.PathUnescape(id); err == nil {
+			id = unescaped
+		}
+		return strings.TrimSpace(id)
+	}
+	return ""
 }
 
 func parseOpenCodeGoUsageHTML(body string) []openCodeGoUsageItem {
