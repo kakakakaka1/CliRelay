@@ -40,11 +40,11 @@ func TestStripBracketSuffix(t *testing.T) {
 
 func TestParseSuffix_BracketSuffix(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          string
-		wantModelName  string
-		wantHasSuffix  bool
-		wantRawSuffix  string
+		name          string
+		input         string
+		wantModelName string
+		wantHasSuffix bool
+		wantRawSuffix string
 	}{
 		{
 			name:          "deepseek-v4-flash with 1M bracket",

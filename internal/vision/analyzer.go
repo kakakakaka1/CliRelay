@@ -23,8 +23,8 @@ type AnalyzeRequest struct {
 	ImageURL   string       // remote URL if not inline
 	MIMEType   string       // "image/png", "image/jpeg", etc.
 	SourceKind ImageSourceKind
-	TurnIndex  int          // conversation turn index
-	IsFollowUp bool         // true if this is a follow-up analysis
+	TurnIndex  int  // conversation turn index
+	IsFollowUp bool // true if this is a follow-up analysis
 }
 
 // AnalyzeResponse contains the analysis result.

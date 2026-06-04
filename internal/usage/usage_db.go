@@ -874,10 +874,10 @@ func QueryDashboardKPI(days int) (DashboardKPI, error) {
 	}
 	if kpi.InputTokens > 0 {
 		effectiveInput := kpi.InputTokens
-			if kpi.CachedTokens > kpi.InputTokens {
-				effectiveInput = kpi.InputTokens + kpi.CachedTokens
-			}
-			kpi.CacheRate = float64(kpi.CachedTokens) / float64(effectiveInput) * 100
+		if kpi.CachedTokens > kpi.InputTokens {
+			effectiveInput = kpi.InputTokens + kpi.CachedTokens
+		}
+		kpi.CacheRate = float64(kpi.CachedTokens) / float64(effectiveInput) * 100
 	}
 
 	return kpi, nil
