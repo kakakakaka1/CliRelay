@@ -1086,21 +1086,7 @@ func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 			}
 		}
 
-		recordMetadata := map[string]any{
-			"email":      ts.Email,
-			"project_id": ts.ProjectID,
-			"auto":       ts.Auto,
-			"checked":    ts.Checked,
-		}
-
-		fileName := geminiAuth.CredentialFileName(ts.Email, ts.ProjectID, true)
-		record := &coreauth.Auth{
-			ID:       fileName,
-			Provider: "gemini",
-			FileName: fileName,
-			Storage:  &ts,
-			Metadata: recordMetadata,
-		}
+		record := geminicli.RecordFromTokenStorage(&ts)
 		savedPath, errSave := h.saveTokenRecord(ctx, record)
 		if errSave != nil {
 			log.Errorf("Failed to save token to file: %v", errSave)
