@@ -18,7 +18,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/auth/codex"
 	geminiAuth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/gemini"
 	iflowauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/iflow"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/auth/kimi"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
 	oauthcallback "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/callback"
@@ -1042,53 +1041,23 @@ func (h *Handler) RequestQwenToken(c *gin.Context) {
 func (h *Handler) RequestKimiToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
 
-	fmt.Println("Initializing Kimi authentication...")
-
-	state := fmt.Sprintf("kmi-%d", time.Now().UnixNano())
-	// Initialize Kimi auth service
-	kimiAuth := kimi.NewKimiAuth(h.cfg)
-
-	// Generate authorization URL
-	deviceFlow, errStartDeviceFlow := kimiAuth.StartDeviceFlow(ctx)
-	if errStartDeviceFlow != nil {
-		log.Errorf("Failed to generate authorization URL: %v", errStartDeviceFlow)
+	result, err := kimiprovider.StartDeviceLogin(ctx, kimiprovider.DeviceLoginOptions{
+		Config:     h.cfg,
+		SaveRecord: h.saveTokenRecord,
+		Sessions: kimiprovider.SessionCallbacks{
+			Register:         RegisterOAuthSession,
+			SetError:         SetOAuthSessionError,
+			Complete:         CompleteOAuthSession,
+			CompleteProvider: CompleteOAuthSessionsByProvider,
+		},
+	})
+	if err != nil {
+		log.Errorf("Failed to generate authorization URL: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate authorization url"})
 		return
 	}
-	authURL := deviceFlow.VerificationURIComplete
-	if authURL == "" {
-		authURL = deviceFlow.VerificationURI
-	}
 
-	RegisterOAuthSession(state, "kimi")
-
-	go func() {
-		fmt.Println("Waiting for authentication...")
-		authBundle, errWaitForAuthorization := kimiAuth.WaitForAuthorization(ctx, deviceFlow)
-		if errWaitForAuthorization != nil {
-			SetOAuthSessionError(state, "Authentication failed")
-			fmt.Printf("Authentication failed: %v\n", errWaitForAuthorization)
-			return
-		}
-
-		// Create token storage
-		tokenStorage := kimiAuth.CreateTokenStorage(authBundle)
-
-		record := kimiprovider.RecordFromAuthBundle(tokenStorage, authBundle, time.Now())
-		savedPath, errSave := h.saveTokenRecord(ctx, record)
-		if errSave != nil {
-			log.Errorf("Failed to save authentication tokens: %v", errSave)
-			SetOAuthSessionError(state, "Failed to save authentication tokens")
-			return
-		}
-
-		fmt.Printf("Authentication successful! Token saved to %s\n", savedPath)
-		fmt.Println("You can now use Kimi services through this CLI")
-		CompleteOAuthSession(state)
-		CompleteOAuthSessionsByProvider("kimi")
-	}()
-
-	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
+	c.JSON(200, gin.H{"status": "ok", "url": result.AuthURL, "state": result.State})
 }
 
 func (h *Handler) RequestIFlowToken(c *gin.Context) {
