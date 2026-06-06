@@ -29,6 +29,7 @@ import (
 	claudeprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/claude"
 	codexprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/codex"
 	geminicli "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/geminicli"
+	kimiprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/kimi"
 	qwenprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/qwen"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
@@ -1467,31 +1468,7 @@ func (h *Handler) RequestKimiToken(c *gin.Context) {
 		// Create token storage
 		tokenStorage := kimiAuth.CreateTokenStorage(authBundle)
 
-		metadata := map[string]any{
-			"type":          "kimi",
-			"access_token":  authBundle.TokenData.AccessToken,
-			"refresh_token": authBundle.TokenData.RefreshToken,
-			"token_type":    authBundle.TokenData.TokenType,
-			"scope":         authBundle.TokenData.Scope,
-			"timestamp":     time.Now().UnixMilli(),
-		}
-		if authBundle.TokenData.ExpiresAt > 0 {
-			expired := time.Unix(authBundle.TokenData.ExpiresAt, 0).UTC().Format(time.RFC3339)
-			metadata["expired"] = expired
-		}
-		if strings.TrimSpace(authBundle.DeviceID) != "" {
-			metadata["device_id"] = strings.TrimSpace(authBundle.DeviceID)
-		}
-
-		fileName := fmt.Sprintf("kimi-%d.json", time.Now().UnixMilli())
-		record := &coreauth.Auth{
-			ID:       fileName,
-			Provider: "kimi",
-			FileName: fileName,
-			Label:    "Kimi User",
-			Storage:  tokenStorage,
-			Metadata: metadata,
-		}
+		record := kimiprovider.RecordFromAuthBundle(tokenStorage, authBundle, time.Now())
 		savedPath, errSave := h.saveTokenRecord(ctx, record)
 		if errSave != nil {
 			log.Errorf("Failed to save authentication tokens: %v", errSave)
