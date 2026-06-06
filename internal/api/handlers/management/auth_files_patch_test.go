@@ -438,9 +438,9 @@ func TestBuildAuthFileEntryExposesMetadataPlanTypeBeforeIDTokenClaim(t *testing.
 	if got, _ := entry["plan_type"].(string); got != "free" {
 		t.Fatalf("plan_type = %q, want free", got)
 	}
-	claims, ok := entry["id_token"].(gin.H)
+	claims, ok := entry["id_token"].(map[string]any)
 	if !ok {
-		t.Fatalf("id_token type = %T, want gin.H", entry["id_token"])
+		t.Fatalf("id_token type = %T, want map[string]any", entry["id_token"])
 	}
 	if got, _ := claims["plan_type"].(string); got != "plus" {
 		t.Fatalf("id_token.plan_type = %q, want plus", got)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
 	internalrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
@@ -141,7 +142,7 @@ func includeAuthInChannelGroups(auth *coreauth.Auth) bool {
 		strings.EqualFold(statusMessage, "removed via config update") {
 		return false
 	}
-	if isRuntimeOnlyAuth(auth) && (auth.Disabled || auth.Status == coreauth.StatusDisabled) {
+	if managementauthfiles.IsRuntimeOnly(auth) && (auth.Disabled || auth.Status == coreauth.StatusDisabled) {
 		return false
 	}
 	return true

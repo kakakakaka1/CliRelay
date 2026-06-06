@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 )
 
@@ -342,7 +343,7 @@ func (h *Handler) buildNameMaps() (keyNameMap, channelNameMap, authIndexChannelM
 					})
 				}
 			}
-			if email := strings.TrimSpace(authEmail(auth)); email != "" {
+			if email := strings.TrimSpace(managementauthfiles.Email(auth)); email != "" {
 				legacyCandidates = append(legacyCandidates, legacyChannelCandidate{
 					key:       email,
 					channel:   channel,

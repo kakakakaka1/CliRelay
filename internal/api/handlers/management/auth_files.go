@@ -341,11 +341,11 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 		return nil
 	}
 	auth.EnsureIndex()
-	runtimeOnly := isRuntimeOnlyAuth(auth)
+	runtimeOnly := managementauthfiles.IsRuntimeOnly(auth)
 	if runtimeOnly && (auth.Disabled || auth.Status == coreauth.StatusDisabled) {
 		return nil
 	}
-	path := strings.TrimSpace(authAttribute(auth, "path"))
+	path := strings.TrimSpace(managementauthfiles.Attribute(auth, "path"))
 	if path == "" && !runtimeOnly {
 		return nil
 	}
@@ -368,7 +368,7 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 		"source":         "memory",
 		"size":           int64(0),
 	}
-	if email := authEmail(auth); email != "" {
+	if email := managementauthfiles.Email(auth); email != "" {
 		entry["email"] = email
 	}
 	if accountType, account := auth.AccountInfo(); accountType != "" || account != "" {
@@ -420,84 +420,10 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 			log.WithError(err).Warnf("failed to stat auth file %s", path)
 		}
 	}
-	if claims := extractCodexIDTokenClaims(auth); claims != nil {
+	if claims := managementauthfiles.CodexIDTokenClaims(auth); claims != nil {
 		entry["id_token"] = claims
 	}
 	return entry
-}
-
-func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
-	if auth == nil || auth.Metadata == nil {
-		return nil
-	}
-	if !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
-		return nil
-	}
-	idTokenRaw, ok := auth.Metadata["id_token"].(string)
-	if !ok {
-		return nil
-	}
-	idToken := strings.TrimSpace(idTokenRaw)
-	if idToken == "" {
-		return nil
-	}
-	claims, err := codex.ParseJWTToken(idToken)
-	if err != nil || claims == nil {
-		return nil
-	}
-
-	result := gin.H{}
-	if v := strings.TrimSpace(claims.CodexAuthInfo.ChatgptAccountID); v != "" {
-		result["chatgpt_account_id"] = v
-	}
-	if v := strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType); v != "" {
-		result["plan_type"] = v
-	}
-	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveStart; v != nil {
-		result["chatgpt_subscription_active_start"] = v
-	}
-	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveUntil; v != nil {
-		result["chatgpt_subscription_active_until"] = v
-	}
-
-	if len(result) == 0 {
-		return nil
-	}
-	return result
-}
-
-func authEmail(auth *coreauth.Auth) string {
-	if auth == nil {
-		return ""
-	}
-	if auth.Metadata != nil {
-		if v, ok := auth.Metadata["email"].(string); ok {
-			return strings.TrimSpace(v)
-		}
-	}
-	if auth.Attributes != nil {
-		if v := strings.TrimSpace(auth.Attributes["email"]); v != "" {
-			return v
-		}
-		if v := strings.TrimSpace(auth.Attributes["account_email"]); v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-func authAttribute(auth *coreauth.Auth, key string) string {
-	if auth == nil || len(auth.Attributes) == 0 {
-		return ""
-	}
-	return auth.Attributes[key]
-}
-
-func isRuntimeOnlyAuth(auth *coreauth.Auth) bool {
-	if auth == nil || len(auth.Attributes) == 0 {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(auth.Attributes["runtime_only"]), "true")
 }
 
 // Download single auth file by name
@@ -714,7 +640,7 @@ func (h *Handler) findAuthByNameOrID(name string) *coreauth.Auth {
 		if strings.EqualFold(strings.TrimSpace(auth.FileName), name) {
 			return auth
 		}
-		if path := strings.TrimSpace(authAttribute(auth, "path")); path != "" && strings.EqualFold(filepath.Base(path), name) {
+		if path := strings.TrimSpace(managementauthfiles.Attribute(auth, "path")); path != "" && strings.EqualFold(filepath.Base(path), name) {
 			return auth
 		}
 	}
@@ -967,7 +893,7 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "label is only supported for oauth auth files"})
 			return
 		}
-		if isRuntimeOnlyAuth(targetAuth) {
+		if managementauthfiles.IsRuntimeOnly(targetAuth) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "runtime-only auth files cannot rename channel"})
 			return
 		}
@@ -1147,7 +1073,7 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update auth: %v", err)})
 		return
 	}
-	if path := strings.TrimSpace(authAttribute(targetAuth, "path")); path != "" {
+	if path := strings.TrimSpace(managementauthfiles.Attribute(targetAuth, "path")); path != "" {
 		if err := h.persistAuthFileChange(ctx, "Update auth "+targetAuth.FileName, path); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
