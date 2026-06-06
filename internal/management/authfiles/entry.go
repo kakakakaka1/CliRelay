@@ -2,6 +2,7 @@ package authfiles
 
 import (
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +13,21 @@ type EntryOptions struct {
 	Now         time.Time
 	Stat        func(string) (os.FileInfo, error)
 	OnStatError func(string, error)
+}
+
+func ListEntries(auths []*coreauth.Auth, opts EntryOptions) []map[string]any {
+	files := make([]map[string]any, 0, len(auths))
+	for _, auth := range auths {
+		if entry := BuildEntry(auth, opts); entry != nil {
+			files = append(files, entry)
+		}
+	}
+	sort.Slice(files, func(i, j int) bool {
+		nameI, _ := files[i]["name"].(string)
+		nameJ, _ := files[j]["name"].(string)
+		return strings.ToLower(nameI) < strings.ToLower(nameJ)
+	})
+	return files
 }
 
 // BuildEntry returns the public management auth-file entry for an auth record.

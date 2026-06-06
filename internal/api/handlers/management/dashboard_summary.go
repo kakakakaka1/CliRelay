@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
+	log "github.com/sirupsen/logrus"
 )
 
 // GetDashboardSummary is a lightweight endpoint that returns only the
@@ -36,11 +38,11 @@ func (h *Handler) GetDashboardSummary(c *gin.Context) {
 	apiKeyCount = len(usage.ListAPIKeys())
 
 	if h.authManager != nil {
-		for _, auth := range h.authManager.List() {
-			if entry := h.buildAuthFileEntry(auth); entry != nil {
-				authFileCount++
-			}
-		}
+		authFileCount = len(managementauthfiles.ListEntries(h.authManager.List(), managementauthfiles.EntryOptions{
+			OnStatError: func(path string, err error) {
+				log.WithError(err).Warnf("failed to stat auth file %s", path)
+			},
+		}))
 	}
 
 	providerTotal := geminiCount + claudeCount + codexCount + vertexCount + openaiCount

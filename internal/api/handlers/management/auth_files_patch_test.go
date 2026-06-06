@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
@@ -328,7 +329,7 @@ func TestBuildAuthFileEntryIncludesDefaultAndDisplayTags(t *testing.T) {
 		},
 	}
 
-	entry := (&Handler{}).buildAuthFileEntry(auth)
+	entry := managementauthfiles.BuildEntry(auth, managementauthfiles.EntryOptions{})
 	if entry == nil {
 		t.Fatal("expected auth file entry")
 	}
@@ -363,7 +364,7 @@ func TestBuildAuthFileEntryHonorsExplicitEmptyDisplayTags(t *testing.T) {
 		},
 	}
 
-	entry := (&Handler{}).buildAuthFileEntry(auth)
+	entry := managementauthfiles.BuildEntry(auth, managementauthfiles.EntryOptions{})
 	if entry == nil {
 		t.Fatal("expected auth file entry")
 	}
@@ -390,7 +391,7 @@ func TestBuildAuthFileEntryReplacesStaleExplicitPlanDisplayTag(t *testing.T) {
 		},
 	}
 
-	entry := (&Handler{}).buildAuthFileEntry(auth)
+	entry := managementauthfiles.BuildEntry(auth, managementauthfiles.EntryOptions{})
 	if entry == nil {
 		t.Fatal("expected auth file entry")
 	}
@@ -430,7 +431,7 @@ func TestBuildAuthFileEntryExposesMetadataPlanTypeBeforeIDTokenClaim(t *testing.
 		},
 	}
 
-	entry := (&Handler{}).buildAuthFileEntry(auth)
+	entry := managementauthfiles.BuildEntry(auth, managementauthfiles.EntryOptions{})
 	if entry == nil {
 		t.Fatal("expected auth file entry")
 	}
@@ -479,7 +480,7 @@ func TestBuildAuthFileEntryIncludesActiveRestrictions(t *testing.T) {
 		},
 	}
 
-	entry := (&Handler{}).buildAuthFileEntry(auth)
+	entry := managementauthfiles.BuildEntry(auth, managementauthfiles.EntryOptions{})
 	if entry == nil {
 		t.Fatal("expected auth file entry")
 	}
@@ -547,7 +548,7 @@ func TestBuildAuthFileEntryDedupesDuplicateRestrictions(t *testing.T) {
 		},
 	}
 
-	entry := (&Handler{}).buildAuthFileEntry(auth)
+	entry := managementauthfiles.BuildEntry(auth, managementauthfiles.EntryOptions{})
 	if entry == nil {
 		t.Fatal("expected auth file entry")
 	}
@@ -584,7 +585,7 @@ func TestBuildAuthFileEntryIncludesSubscriptionExpiration(t *testing.T) {
 		},
 	}
 
-	entry := (&Handler{}).buildAuthFileEntry(auth)
+	entry := managementauthfiles.BuildEntry(auth, managementauthfiles.EntryOptions{})
 	if entry == nil {
 		t.Fatal("expected auth file entry")
 	}
@@ -617,7 +618,7 @@ func TestBuildAuthFileEntryIncludesSubscriptionStartAndPeriod(t *testing.T) {
 		},
 	}
 
-	entry := (&Handler{}).buildAuthFileEntry(auth)
+	entry := managementauthfiles.BuildEntry(auth, managementauthfiles.EntryOptions{})
 	if entry == nil {
 		t.Fatal("expected auth file entry")
 	}

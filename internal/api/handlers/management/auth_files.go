@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -86,17 +85,10 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		h.listAuthFilesFromDisk(c)
 		return
 	}
-	auths := h.authManager.List()
-	files := make([]gin.H, 0, len(auths))
-	for _, auth := range auths {
-		if entry := h.buildAuthFileEntry(auth); entry != nil {
-			files = append(files, entry)
-		}
-	}
-	sort.Slice(files, func(i, j int) bool {
-		nameI, _ := files[i]["name"].(string)
-		nameJ, _ := files[j]["name"].(string)
-		return strings.ToLower(nameI) < strings.ToLower(nameJ)
+	files := managementauthfiles.ListEntries(h.authManager.List(), managementauthfiles.EntryOptions{
+		OnStatError: func(path string, err error) {
+			log.WithError(err).Warnf("failed to stat auth file %s", path)
+		},
 	})
 	c.JSON(200, gin.H{"files": files})
 }
@@ -121,18 +113,6 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"files": files})
-}
-
-func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
-	entry := managementauthfiles.BuildEntry(auth, managementauthfiles.EntryOptions{
-		OnStatError: func(path string, err error) {
-			log.WithError(err).Warnf("failed to stat auth file %s", path)
-		},
-	})
-	if entry == nil {
-		return nil
-	}
-	return gin.H(entry)
 }
 
 // Download single auth file by name

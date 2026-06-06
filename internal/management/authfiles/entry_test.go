@@ -16,6 +16,40 @@ func TestBuildEntryRequiresPathForNonRuntimeAuth(t *testing.T) {
 	}
 }
 
+func TestListEntriesBuildsAndSortsAuthEntries(t *testing.T) {
+	auths := []*coreauth.Auth{
+		{
+			ID:       "zeta",
+			FileName: "zeta.json",
+			Provider: "codex",
+			Attributes: map[string]string{
+				"runtime_only": "true",
+			},
+		},
+		nil,
+		{
+			ID:       "alpha",
+			FileName: "alpha.json",
+			Provider: "claude",
+			Attributes: map[string]string{
+				"runtime_only": "true",
+			},
+		},
+		{
+			ID:       "hidden",
+			Provider: "codex",
+		},
+	}
+
+	got := ListEntries(auths, EntryOptions{})
+	if len(got) != 2 {
+		t.Fatalf("ListEntries() length = %d, want 2: %#v", len(got), got)
+	}
+	if got[0]["name"] != "alpha.json" || got[1]["name"] != "zeta.json" {
+		t.Fatalf("sorted names = %#v, want alpha then zeta", []any{got[0]["name"], got[1]["name"]})
+	}
+}
+
 func TestBuildEntryAllowsRuntimeOnlyAuthWithoutPath(t *testing.T) {
 	auth := &coreauth.Auth{
 		ID:       "runtime",
