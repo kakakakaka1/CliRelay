@@ -9,6 +9,11 @@ import (
 
 const PanelMetadataFileName = "panel-meta.json"
 
+var defaultPanelDirCandidates = []string{
+	"/home/web/html/relay-panel",
+	"/home/web/html/cliproxy-panel",
+}
+
 // PanelMetadata describes the management panel currently present on disk.
 // It lets update checks compare the actual served UI instead of stale binary build info.
 type PanelMetadata struct {
@@ -27,9 +32,7 @@ func ResolvePanelDir(configFilePath string) string {
 		}
 	}
 
-	candidates := []string{
-		"/home/web/html/cliproxy-panel",
-	}
+	candidates := append([]string(nil), defaultPanelDirCandidates...)
 	if staticDir := StaticDir(configFilePath); staticDir != "" {
 		candidates = append(candidates, staticDir)
 	}
