@@ -2,7 +2,6 @@ package management
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,10 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/bodyutil"
-	geminiAuth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/gemini"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
-	oauthcallback "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/callback"
 	antigravityprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/antigravity"
 	claudeprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/claude"
 	codexprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/codex"
@@ -24,23 +20,17 @@ import (
 	iflowprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/iflow"
 	kimiprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/kimi"
 	qwenprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/qwen"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
-	"github.com/tidwall/gjson"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 )
 
 const (
-	anthropicCallbackPort                     = 54545
-	geminiCallbackPort                        = 8085
-	codexCallbackPort                         = 1455
-	oauthCallbackWaitTimeout                  = oauthSessionTTL
-	managementOAuthProfileResponseLimit int64 = 64 << 10
+	anthropicCallbackPort    = 54545
+	geminiCallbackPort       = 8085
+	codexCallbackPort        = 1455
+	oauthCallbackWaitTimeout = oauthSessionTTL
 )
 
 func isWebUIRequest(c *gin.Context) bool {
@@ -440,253 +430,43 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 
 func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
-	proxyHTTPClient := util.SetProxy(&h.cfg.SDKConfig, util.NewHTTPClient(util.DefaultHTTPClientTimeout))
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, proxyHTTPClient)
 
-	// Optional project ID from query
-	projectID := c.Query("project_id")
-
-	fmt.Println("Initializing Google authentication...")
-
-	clientID, clientSecret := h.cfg.OAuthClientCredentials(config.OAuthClientGemini)
-	if strings.TrimSpace(clientID) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "gemini oauth client-id not configured"})
-		return
-	}
-
-	// OAuth2 configuration
-	conf := &oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		RedirectURL:  fmt.Sprintf("http://localhost:%d/oauth2callback", geminiAuth.DefaultCallbackPort),
-		Scopes:       geminiAuth.Scopes,
-		Endpoint:     google.Endpoint,
-	}
-
-	state, errState := misc.GenerateRandomState()
-	if errState != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate state parameter"})
-		return
-	}
-
-	RegisterOAuthSession(state, "gemini")
-
-	isWebUI := isWebUIRequest(c)
-	var forwarder *oauthcallback.Forwarder
-	callbackPort := geminiCallbackPort
-	if isWebUI {
-		targetURL, errTarget := h.managementCallbackURL("/google/callback")
-		if errTarget != nil {
-			log.WithError(errTarget).Error("failed to compute gemini callback target")
+	result, err := geminicli.StartOAuthLogin(ctx, geminicli.OAuthLoginOptions{
+		Config:              h.cfg,
+		ProjectID:           c.Query("project_id"),
+		WebUI:               isWebUIRequest(c),
+		CallbackPort:        geminiCallbackPort,
+		CallbackTarget:      h.managementCallbackURL,
+		WaitCallback:        WaitOAuthCallbackFile,
+		CallbackWaitTimeout: oauthCallbackWaitTimeout,
+		SaveRecord:          h.saveTokenRecord,
+		Sessions: geminicli.SessionCallbacks{
+			Register:         RegisterOAuthSession,
+			SetError:         SetOAuthSessionError,
+			Complete:         CompleteOAuthSession,
+			CompleteProvider: CompleteOAuthSessionsByProvider,
+		},
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, geminicli.ErrOAuthClientIDMissing):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "gemini oauth client-id not configured"})
+		case errors.Is(err, geminicli.ErrStateGeneration):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate state parameter"})
+		case errors.Is(err, geminicli.ErrCallbackUnavailable):
+			log.WithError(err).Error("failed to compute gemini callback target")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "callback server unavailable"})
-			return
-		}
-		var errStart error
-		if forwarder, callbackPort, errStart = oauthcallback.StartOnAvailablePort(geminiCallbackPort, "gemini", targetURL); errStart != nil {
-			log.WithError(errStart).Error("failed to start gemini callback forwarder")
+		case errors.Is(err, geminicli.ErrCallbackStart):
+			log.WithError(err).Error("failed to start gemini callback forwarder")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start callback server"})
-			return
+		default:
+			log.WithError(err).Error("failed to start gemini oauth flow")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start oauth flow"})
 		}
-		conf.RedirectURL = fmt.Sprintf("http://localhost:%d/oauth2callback", callbackPort)
+		return
 	}
 
-	// Build authorization URL after selecting the callback port.
-	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
-
-	go func() {
-		if isWebUI {
-			defer oauthcallback.StopInstance(ctx, callbackPort, forwarder)
-		}
-
-		fmt.Println("Waiting for authentication callback...")
-		resultMap, errWait := WaitOAuthCallbackFile(h.cfg.AuthDir, "gemini", state, oauthCallbackWaitTimeout)
-		if errWait != nil {
-			if errors.Is(errWait, errOAuthSessionNotPending) {
-				return
-			}
-			log.Error("oauth flow timed out")
-			SetOAuthSessionError(state, "OAuth flow timed out")
-			return
-		}
-		if errStr := resultMap["error"]; errStr != "" {
-			log.Errorf("Authentication failed: %s", errStr)
-			SetOAuthSessionError(state, "Authentication failed")
-			return
-		}
-		authCode := resultMap["code"]
-		if authCode == "" {
-			log.Errorf("Authentication failed: code not found")
-			SetOAuthSessionError(state, "Authentication failed: code not found")
-			return
-		}
-
-		// Exchange authorization code for token
-		token, err := conf.Exchange(ctx, authCode)
-		if err != nil {
-			log.Errorf("Failed to exchange token: %v", err)
-			SetOAuthSessionError(state, "Failed to exchange token")
-			return
-		}
-
-		requestedProjectID := strings.TrimSpace(projectID)
-
-		// Create token storage (mirrors internal/auth/gemini createTokenStorage)
-		authHTTPClient := conf.Client(ctx, token)
-		req, errNewRequest := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v1/userinfo?alt=json", nil)
-		if errNewRequest != nil {
-			log.Errorf("Could not get user info: %v", errNewRequest)
-			SetOAuthSessionError(state, "Could not get user info")
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
-
-		resp, errDo := authHTTPClient.Do(req)
-		if errDo != nil {
-			log.Errorf("Failed to execute request: %v", errDo)
-			SetOAuthSessionError(state, "Failed to execute request")
-			return
-		}
-		defer func() {
-			if errClose := resp.Body.Close(); errClose != nil {
-				log.Printf("warn: failed to close response body: %v", errClose)
-			}
-		}()
-
-		bodyBytes, errReadBody := bodyutil.ReadAll(resp.Body, managementOAuthProfileResponseLimit)
-		if errReadBody != nil {
-			if bodyutil.IsTooLarge(errReadBody) {
-				log.Error("Get user info response too large")
-				SetOAuthSessionError(state, "Get user info response too large")
-				return
-			}
-			log.Errorf("Could not read user info response: %v", errReadBody)
-			SetOAuthSessionError(state, "Could not read user info response")
-			return
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			log.Errorf("Get user info request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
-			SetOAuthSessionError(state, fmt.Sprintf("Get user info request failed with status %d", resp.StatusCode))
-			return
-		}
-
-		email := gjson.GetBytes(bodyBytes, "email").String()
-		if email != "" {
-			fmt.Printf("Authenticated user email: %s\n", email)
-		} else {
-			fmt.Println("Failed to get user email from token")
-		}
-
-		// Marshal/unmarshal oauth2.Token to generic map and enrich fields
-		var ifToken map[string]any
-		jsonData, _ := json.Marshal(token)
-		if errUnmarshal := json.Unmarshal(jsonData, &ifToken); errUnmarshal != nil {
-			log.Errorf("Failed to unmarshal token: %v", errUnmarshal)
-			SetOAuthSessionError(state, "Failed to unmarshal token")
-			return
-		}
-
-		ifToken = geminiAuth.EnrichOAuthTokenMap(ifToken, conf)
-
-		ts := geminiAuth.GeminiTokenStorage{
-			Token:     ifToken,
-			ProjectID: requestedProjectID,
-			Email:     email,
-			Auto:      requestedProjectID == "",
-		}
-
-		// Initialize authenticated HTTP client via GeminiAuth to honor proxy settings
-		gemAuth := geminiAuth.NewGeminiAuth()
-		gemClient, errGetClient := gemAuth.GetAuthenticatedClient(ctx, &ts, h.cfg, &geminiAuth.WebLoginOptions{
-			NoBrowser: true,
-		})
-		if errGetClient != nil {
-			log.Errorf("failed to get authenticated client: %v", errGetClient)
-			SetOAuthSessionError(state, "Failed to get authenticated client")
-			return
-		}
-		fmt.Println("Authentication successful.")
-
-		if strings.EqualFold(requestedProjectID, "ALL") {
-			ts.Auto = false
-			projects, errAll := geminicli.OnboardAllProjects(ctx, gemClient, &ts)
-			if errAll != nil {
-				log.Errorf("Failed to complete Gemini CLI onboarding: %v", errAll)
-				SetOAuthSessionError(state, "Failed to complete Gemini CLI onboarding")
-				return
-			}
-			if errVerify := geminicli.EnsureProjectsEnabled(ctx, gemClient, projects); errVerify != nil {
-				log.Errorf("Failed to verify Cloud AI API status: %v", errVerify)
-				SetOAuthSessionError(state, "Failed to verify Cloud AI API status")
-				return
-			}
-			ts.ProjectID = strings.Join(projects, ",")
-			ts.Checked = true
-		} else if strings.EqualFold(requestedProjectID, "GOOGLE_ONE") {
-			ts.Auto = false
-			if errSetup := geminicli.PerformSetup(ctx, gemClient, &ts, ""); errSetup != nil {
-				log.Errorf("Google One auto-discovery failed: %v", errSetup)
-				SetOAuthSessionError(state, "Google One auto-discovery failed")
-				return
-			}
-			if strings.TrimSpace(ts.ProjectID) == "" {
-				log.Error("Google One auto-discovery returned empty project ID")
-				SetOAuthSessionError(state, "Google One auto-discovery returned empty project ID")
-				return
-			}
-			isChecked, errCheck := geminicli.CheckCloudAPIIsEnabled(ctx, gemClient, ts.ProjectID)
-			if errCheck != nil {
-				log.Errorf("Failed to verify Cloud AI API status: %v", errCheck)
-				SetOAuthSessionError(state, "Failed to verify Cloud AI API status")
-				return
-			}
-			ts.Checked = isChecked
-			if !isChecked {
-				log.Error("Cloud AI API is not enabled for the auto-discovered project")
-				SetOAuthSessionError(state, "Cloud AI API not enabled")
-				return
-			}
-		} else {
-			if errEnsure := geminicli.EnsureProjectAndOnboard(ctx, gemClient, &ts, requestedProjectID); errEnsure != nil {
-				log.Errorf("Failed to complete Gemini CLI onboarding: %v", errEnsure)
-				SetOAuthSessionError(state, "Failed to complete Gemini CLI onboarding")
-				return
-			}
-
-			if strings.TrimSpace(ts.ProjectID) == "" {
-				log.Error("Onboarding did not return a project ID")
-				SetOAuthSessionError(state, "Failed to resolve project ID")
-				return
-			}
-
-			isChecked, errCheck := geminicli.CheckCloudAPIIsEnabled(ctx, gemClient, ts.ProjectID)
-			if errCheck != nil {
-				log.Errorf("Failed to verify Cloud AI API status: %v", errCheck)
-				SetOAuthSessionError(state, "Failed to verify Cloud AI API status")
-				return
-			}
-			ts.Checked = isChecked
-			if !isChecked {
-				log.Error("Cloud AI API is not enabled for the selected project")
-				SetOAuthSessionError(state, "Cloud AI API not enabled")
-				return
-			}
-		}
-
-		record := geminicli.RecordFromTokenStorage(&ts)
-		savedPath, errSave := h.saveTokenRecord(ctx, record)
-		if errSave != nil {
-			log.Errorf("Failed to save token to file: %v", errSave)
-			SetOAuthSessionError(state, "Failed to save token to file")
-			return
-		}
-
-		CompleteOAuthSession(state)
-		CompleteOAuthSessionsByProvider("gemini")
-		fmt.Printf("You can now use Gemini CLI services through this CLI; token saved to %s\n", savedPath)
-	}()
-
-	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
+	c.JSON(200, gin.H{"status": "ok", "url": result.AuthURL, "state": result.State})
 }
 
 func (h *Handler) RequestCodexToken(c *gin.Context) {

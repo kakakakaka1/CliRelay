@@ -18,19 +18,19 @@ docs/internal-review/backend-structure-allowlist.json
 
 ## 当前结构指标
 
-基于 `origin/dev` 的 2026-06-06 基线：
+基于 2026-06-06 Phase 1 Gemini CLI OAuth flow 拆分后的基线：
 
 | 指标 | 数量 |
 | --- | ---: |
-| Go 文件总数 | 648 |
-| 生产 Go 文件 | 437 |
-| 测试 Go 文件 | 211 |
-| `internal/` Go 文件 | 525 |
-| `internal/` 生产 Go 文件 | 366 |
-| `internal/` 测试 Go 文件 | 159 |
-| 生产 Go 文件中 `>800` 行 | 26 |
+| Go 文件总数 | 650 |
+| 生产 Go 文件 | 438 |
+| 测试 Go 文件 | 212 |
+| `internal/` Go 文件 | 527 |
+| `internal/` 生产 Go 文件 | 367 |
+| `internal/` 测试 Go 文件 | 160 |
+| 生产 Go 文件中 `>800` 行 | 25 |
 | 生产 Go 文件中 `>1200` 行 | 13 |
-| `internal/` 生产 Go 文件中 `>800` 行 | 23 |
+| `internal/` 生产 Go 文件中 `>800` 行 | 22 |
 | `internal/` 生产 Go 文件中 `>1200` 行 | 11 |
 | 生产 `sdk/**` 中直接导入 `internal/**` 的文件 | 40 |
 | 管理端 `Handler` receiver 方法 | 248 |
