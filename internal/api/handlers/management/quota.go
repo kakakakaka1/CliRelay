@@ -111,6 +111,7 @@ func (h *Handler) PostAuthFileQuotaSnapshot(c *gin.Context) {
 	}
 
 	provider := strings.TrimSpace(body.Provider)
+	authSubjectID := ""
 	if h.authManager != nil {
 		auth := h.authByIndex(authIndex)
 		if auth == nil {
@@ -120,10 +121,13 @@ func (h *Handler) PostAuthFileQuotaSnapshot(c *gin.Context) {
 		if provider == "" {
 			provider = strings.TrimSpace(auth.Provider)
 		}
+		if identity := usage.ResolveAuthSubjectIdentity(auth); identity != nil {
+			authSubjectID = identity.ID
+		}
 	}
 
 	if len(body.Quotas) > 0 {
-		if err := usage.RecordDailyQuotaSnapshot(authIndex, provider, body.Quotas); err != nil {
+		if err := usage.RecordDailyQuotaSnapshotIdentity(authIndex, authSubjectID, provider, body.Quotas); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -162,7 +166,7 @@ func (h *Handler) PostAuthFileQuotaSnapshot(c *gin.Context) {
 				WindowSeconds: windowSeconds,
 			})
 		}
-		if err := usage.RecordQuotaSnapshotPoints(authIndex, provider, points); err != nil {
+		if err := usage.RecordQuotaSnapshotPointsIdentity(authIndex, authSubjectID, provider, points); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

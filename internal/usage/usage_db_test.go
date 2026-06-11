@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
 )
 
@@ -251,6 +252,116 @@ func TestQuotaSnapshotPointsKeepFineGrainedSeries(t *testing.T) {
 	}
 }
 
+func TestRecordQuotaSnapshotPointsIdentityStoresWeeklyCycleBySubject(t *testing.T) {
+	initTestUsageDB(t, config.RequestLogStorageConfig{})
+
+	recordedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	resetAt := recordedAt.Add(6 * 24 * time.Hour)
+	remaining := 93.0
+
+	err := RecordQuotaSnapshotPointsIdentity("auth-pro", "authsub_test", "codex", []QuotaSnapshotPoint{
+		{
+			RecordedAt:    recordedAt,
+			QuotaKey:      "code_week",
+			QuotaLabel:    "m_quota.code_weekly",
+			Percent:       &remaining,
+			ResetAt:       &resetAt,
+			WindowSeconds: 604800,
+		},
+	})
+	if err != nil {
+		t.Fatalf("RecordQuotaSnapshotPointsIdentity() error = %v", err)
+	}
+
+	cycle, err := QueryLatestWeeklyQuotaCycleByAuthSubject("authsub_test")
+	if err != nil {
+		t.Fatalf("QueryLatestWeeklyQuotaCycleByAuthSubject() error = %v", err)
+	}
+	if cycle == nil {
+		t.Fatal("expected weekly cycle, got nil")
+	}
+	if cycle.AuthIndex != "auth-pro" {
+		t.Fatalf("AuthIndex = %q, want auth-pro", cycle.AuthIndex)
+	}
+	if cycle.QuotaKey != "code_week" {
+		t.Fatalf("QuotaKey = %q, want code_week", cycle.QuotaKey)
+	}
+	wantStart := resetAt.Add(-7 * 24 * time.Hour)
+	if !cycle.CycleStartAt.Equal(wantStart) {
+		t.Fatalf("CycleStartAt = %s, want %s", cycle.CycleStartAt.Format(time.RFC3339), wantStart.Format(time.RFC3339))
+	}
+	if !cycle.ResetAt.Equal(resetAt) {
+		t.Fatalf("ResetAt = %s, want %s", cycle.ResetAt.Format(time.RFC3339), resetAt.Format(time.RFC3339))
+	}
+}
+
+func TestQueryUsageByAuthSubjectMatchesLegacyEmailRows(t *testing.T) {
+	initTestUsageDB(t, config.RequestLogStorageConfig{})
+
+	auth := &coreauth.Auth{
+		ID:       "codex-pro-auth",
+		FileName: "codex-user@example.com-pro.json",
+		Provider: "codex",
+		Label:    "user@example.com",
+		Metadata: map[string]any{
+			"email":      "user@example.com",
+			"account_id": "acct_user_1",
+			"plan_type":  "pro",
+		},
+	}
+	auth.EnsureIndex()
+	identity := ResolveAuthSubjectIdentity(auth)
+	if identity == nil || identity.ID == "" {
+		t.Fatalf("ResolveAuthSubjectIdentity() = %+v, want non-empty subject id", identity)
+	}
+	matcher := BuildAuthSubjectMatcher(auth, []*coreauth.Auth{auth})
+
+	if err := UpsertModelPricing("gpt-5.4", 1, 2, 0); err != nil {
+		t.Fatalf("UpsertModelPricing: %v", err)
+	}
+
+	now := time.Now().UTC()
+	start := now.Add(-24 * time.Hour)
+	InsertLog("", "", "gpt-5.4", "user@example.com", "user@example.com", "legacy-plus-index", false, now.Add(-2*time.Hour), 1, 1, TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 2000,
+		TotalTokens:  3000,
+	}, "", "")
+	InsertLogWithDetailsIdentitySubject("", "", identity.ID, "", "gpt-5.4", "user@example.com", "user@example.com", auth.Index, false, now.Add(-time.Hour), 1, 1, TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 1000,
+		TotalTokens:  2000,
+	}, "", "", "")
+
+	count, err := QueryRequestCountByAuthSubjectSince(matcher, start)
+	if err != nil {
+		t.Fatalf("QueryRequestCountByAuthSubjectSince() error = %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+
+	cost, err := QueryCostByAuthSubjectSince(matcher, start)
+	if err != nil {
+		t.Fatalf("QueryCostByAuthSubjectSince() error = %v", err)
+	}
+	if math.Abs(cost-0.008) > 1e-12 {
+		t.Fatalf("cost = %v, want 0.008", cost)
+	}
+
+	daily, err := QueryDailyCallsByAuthSubject(matcher, 2)
+	if err != nil {
+		t.Fatalf("QueryDailyCallsByAuthSubject() error = %v", err)
+	}
+	var total int64
+	for _, point := range daily {
+		total += point.Requests
+	}
+	if total != 2 {
+		t.Fatalf("daily total requests = %d, want 2 (%+v)", total, daily)
+	}
+}
+
 func TestQueryLogsSupportsSystemRequestLogFilterValue(t *testing.T) {
 	initTestUsageDB(t, config.RequestLogStorageConfig{})
 
@@ -462,6 +573,107 @@ func TestInitDBMigratesFirstTokenColumn(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected first_token_ms column to exist after InitDB migration")
+	}
+}
+
+func TestInitDBMigratesAuthSubjectColumnsAndCycleTable(t *testing.T) {
+	CloseDB()
+	dbPath := filepath.Join(t.TempDir(), "usage.db")
+
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if _, err := legacyDB.Exec(`
+		CREATE TABLE request_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME NOT NULL,
+			api_key TEXT NOT NULL DEFAULT '',
+			api_key_name TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			channel_name TEXT NOT NULL DEFAULT '',
+			auth_index TEXT NOT NULL DEFAULT '',
+			failed INTEGER NOT NULL DEFAULT 0,
+			latency_ms INTEGER NOT NULL DEFAULT 0,
+			first_token_ms INTEGER NOT NULL DEFAULT 0,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+			cached_tokens INTEGER NOT NULL DEFAULT 0,
+			total_tokens INTEGER NOT NULL DEFAULT 0,
+			cost REAL NOT NULL DEFAULT 0,
+			input_content TEXT NOT NULL DEFAULT '',
+			output_content TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE auth_file_quota_snapshots (
+			date_key TEXT NOT NULL,
+			auth_index TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT '',
+			quota_key TEXT NOT NULL,
+			percent REAL,
+			recorded_at DATETIME NOT NULL,
+			PRIMARY KEY (date_key, auth_index, quota_key)
+		);
+		CREATE TABLE auth_file_quota_snapshot_points (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at DATETIME NOT NULL,
+			auth_index TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT '',
+			quota_key TEXT NOT NULL,
+			quota_label TEXT NOT NULL DEFAULT '',
+			percent REAL,
+			reset_at DATETIME,
+			window_seconds INTEGER NOT NULL DEFAULT 0
+		);
+	`); err != nil {
+		t.Fatalf("create legacy tables: %v", err)
+	}
+	if err := legacyDB.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	if err := InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB() error = %v", err)
+	}
+	stopRequestLogMaintenance()
+	t.Cleanup(CloseDB)
+
+	db := getDB()
+	assertColumnExists := func(table string, want string) {
+		t.Helper()
+		rows, err := db.Query("PRAGMA table_info(" + table + ")")
+		if err != nil {
+			t.Fatalf("PRAGMA table_info(%s): %v", table, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var cid int
+			var name, dataType string
+			var notNull int
+			var defaultValue any
+			var pk int
+			if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+				t.Fatalf("scan table info for %s: %v", table, err)
+			}
+			if name == want {
+				return
+			}
+		}
+		t.Fatalf("expected %s.%s to exist after InitDB migration", table, want)
+	}
+
+	assertColumnExists("request_logs", "auth_subject_id")
+	assertColumnExists("auth_file_quota_snapshots", "auth_subject_id")
+	assertColumnExists("auth_file_quota_snapshot_points", "auth_subject_id")
+
+	var cycleTableName string
+	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_subject_quota_cycles'").Scan(&cycleTableName); err != nil {
+		t.Fatalf("query auth_subject_quota_cycles existence: %v", err)
+	}
+	if cycleTableName != "auth_subject_quota_cycles" {
+		t.Fatalf("cycle table name = %q, want auth_subject_quota_cycles", cycleTableName)
 	}
 }
 

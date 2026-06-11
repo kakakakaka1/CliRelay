@@ -18,18 +18,19 @@ import (
 const usageReporterOutputMemoryLimit = 256 * 1024
 
 type usageReporter struct {
-	provider    string
-	model       string
-	authID      string
-	authIndex   string
-	apiKey      string
-	apiKeyID    string
-	apiKeyName  string
-	source      string
-	channelName string
-	requestedAt time.Time
-	once        sync.Once
-	contentMu   sync.Mutex
+	provider      string
+	model         string
+	authID        string
+	authIndex     string
+	authSubjectID string
+	apiKey        string
+	apiKeyID      string
+	apiKeyName    string
+	source        string
+	channelName   string
+	requestedAt   time.Time
+	once          sync.Once
+	contentMu     sync.Mutex
 
 	// Content captured for log detail viewer
 	inputContent  string
@@ -55,6 +56,9 @@ func newUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 	if auth != nil {
 		reporter.authID = auth.ID
 		reporter.authIndex = auth.EnsureIndex()
+		if identity := internalusage.ResolveAuthSubjectIdentity(auth); identity != nil {
+			reporter.authSubjectID = identity.ID
+		}
 		reporter.channelName = strings.TrimSpace(auth.ChannelName())
 	}
 	return reporter
@@ -227,6 +231,7 @@ func (r *usageReporter) publishWithOutcome(ctx context.Context, detail coreusage
 			APIKeyName:    r.apiKeyName,
 			AuthID:        r.authID,
 			AuthIndex:     r.authIndex,
+			AuthSubjectID: r.authSubjectID,
 			RequestedAt:   r.requestedAt,
 			LatencyMs:     latencyMs,
 			FirstTokenMs:  firstTokenMs,
@@ -264,6 +269,7 @@ func (r *usageReporter) ensurePublished(ctx context.Context) {
 			APIKeyName:    r.apiKeyName,
 			AuthID:        r.authID,
 			AuthIndex:     r.authIndex,
+			AuthSubjectID: r.authSubjectID,
 			RequestedAt:   r.requestedAt,
 			LatencyMs:     latencyMs,
 			FirstTokenMs:  firstTokenMs,

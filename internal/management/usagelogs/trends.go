@@ -6,26 +6,11 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
 func (s *Service) AuthExists(authIndex string) bool {
-	if s == nil || s.authManager == nil {
-		return true
-	}
-	authIndex = strings.TrimSpace(authIndex)
-	if authIndex == "" {
-		return false
-	}
-	for _, auth := range s.authManager.List() {
-		if auth == nil {
-			continue
-		}
-		auth.EnsureIndex()
-		if strings.TrimSpace(auth.Index) == authIndex {
-			return true
-		}
-	}
-	return false
+	return s.authByIndex(authIndex) != nil
 }
 
 func (s *Service) AuthFileGroupTrend(group string, days int) (AuthFileGroupTrendResponse, error) {
@@ -51,17 +36,19 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 	if strings.TrimSpace(authIndex) == "" {
 		return http.StatusBadRequest, map[string]any{"error": "auth_index is required"}
 	}
-	if !s.AuthExists(authIndex) {
+	auth := s.authByIndex(authIndex)
+	if auth == nil {
 		return http.StatusNotFound, map[string]any{"error": "auth not found"}
 	}
+	matcher := s.authSubjectMatcher(auth)
 
-	dailyRaw, err := usage.QueryDailyCallsByAuthIndexes([]string{authIndex}, days)
+	dailyRaw, err := usage.QueryDailyCallsByAuthSubject(matcher, days)
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 	daily := fillDailyCountPoints(dailyRaw, days)
 
-	hourly, err := usage.QueryHourlyCallsByAuthIndex(authIndex, hours)
+	hourly, err := usage.QueryHourlyCallsByAuthSubject(matcher, hours)
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
@@ -70,14 +57,14 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 	}
 
 	cutoff := usage.CutoffStartUTC(days)
-	requestTotal, err := usage.QueryRequestCountByAuthIndexSince(authIndex, cutoff)
+	requestTotal, err := usage.QueryRequestCountByAuthSubjectSince(matcher, cutoff)
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 
 	trendStart := time.Now().AddDate(0, 0, -7)
 	trendEnd := time.Now().Add(time.Minute)
-	series, err := usage.QueryQuotaSnapshotSeries(authIndex, trendStart, trendEnd)
+	series, err := usage.QueryQuotaSnapshotSeriesByAuthSubject(matcher, trendStart, trendEnd)
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
@@ -85,19 +72,40 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 		series = []usage.QuotaSnapshotSeries{}
 	}
 
-	cycleStart := cutoff
-	if weeklyCycleStart, ok := latestWeeklyQuotaCycleStart(series); ok && weeklyCycleStart.After(cutoff) {
-		cycleStart = weeklyCycleStart
+	var cycleStart time.Time
+	if identity := usage.ResolveAuthSubjectIdentity(auth); identity != nil && identity.ID != "" {
+		cycle, err := usage.QueryLatestWeeklyQuotaCycleByAuthSubject(identity.ID)
+		if err != nil {
+			return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+		}
+		if cycle != nil {
+			cycleStart = cycle.CycleStartAt.UTC()
+		}
 	}
-	cycleRequestTotal, err := usage.QueryRequestCountByAuthIndexSince(authIndex, cycleStart)
-	if err != nil {
-		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
-	}
-	cycleCostTotal, err := usage.QueryCostByAuthIndexSince(authIndex, cycleStart)
-	if err != nil {
-		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+	if cycleStart.IsZero() {
+		if weeklyCycleStart, ok := latestWeeklyQuotaCycleStart(series); ok {
+			cycleStart = weeklyCycleStart
+		}
 	}
 
+	var cycleRequestTotal int64
+	var cycleCostTotal float64
+	cycleKnown := !cycleStart.IsZero()
+	if cycleKnown {
+		cycleRequestTotal, err = usage.QueryRequestCountByAuthSubjectSince(matcher, cycleStart)
+		if err != nil {
+			return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+		}
+		cycleCostTotal, err = usage.QueryCostByAuthSubjectSince(matcher, cycleStart)
+		if err != nil {
+			return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+		}
+	}
+
+	cycleStartStr := ""
+	if cycleKnown {
+		cycleStartStr = cycleStart.UTC().Format(time.RFC3339)
+	}
 	return http.StatusOK, AuthFileTrendResponse{
 		AuthIndex:         authIndex,
 		Days:              days,
@@ -105,7 +113,8 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 		RequestTotal:      requestTotal,
 		CycleRequestTotal: cycleRequestTotal,
 		CycleCostTotal:    cycleCostTotal,
-		CycleStart:        cycleStart.UTC().Format(time.RFC3339),
+		CycleKnown:        cycleKnown,
+		CycleStart:        cycleStartStr,
 		DailyUsage:        daily,
 		HourlyUsage:       hourly,
 		QuotaSeries:       series,
@@ -174,4 +183,35 @@ func (s *Service) authIndexesForProviderGroup(group string) []string {
 		}
 	}
 	return indexes
+}
+
+func (s *Service) authByIndex(authIndex string) *coreauth.Auth {
+	if s == nil || s.authManager == nil {
+		return nil
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return nil
+	}
+	for _, auth := range s.authManager.List() {
+		if auth == nil {
+			continue
+		}
+		auth.EnsureIndex()
+		if strings.TrimSpace(auth.Index) == authIndex {
+			return auth
+		}
+	}
+	return nil
+}
+
+func (s *Service) authSubjectMatcher(auth *coreauth.Auth) usage.AuthSubjectMatcher {
+	if auth == nil {
+		return usage.AuthSubjectMatcher{}
+	}
+	auths := []*coreauth.Auth{}
+	if s != nil && s.authManager != nil {
+		auths = s.authManager.List()
+	}
+	return usage.BuildAuthSubjectMatcher(auth, auths)
 }

@@ -875,6 +875,119 @@ func TestGetAuthFileTrendUsesWeeklyResetCycleForRequestTotal(t *testing.T) {
 	}
 }
 
+func TestGetAuthFileTrendKeepsWeeklyCycleAcrossCodexPlanRename(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		usage.CloseDB()
+		_ = os.Remove(dbPath)
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+	})
+
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "codex-auth-file-pro",
+		FileName: "codex-user@example.com-pro.json",
+		Provider: "codex",
+		Label:    "user@example.com",
+		Metadata: map[string]any{
+			"email":      "user@example.com",
+			"account_id": "acct_same_user",
+			"plan_type":  "pro",
+		},
+	})
+	if err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+	identity := usage.ResolveAuthSubjectIdentity(auth)
+	if identity == nil || identity.ID == "" {
+		t.Fatalf("ResolveAuthSubjectIdentity() returned empty identity: %+v", identity)
+	}
+
+	now := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	resetAt := now.Add(4 * 24 * time.Hour)
+	cycleStart := resetAt.Add(-7 * 24 * time.Hour)
+
+	if err := usage.UpsertModelPricing("gpt-5.4", 1, 2, 0); err != nil {
+		t.Fatalf("UpsertModelPricing: %v", err)
+	}
+
+	legacyPlusIndex := "legacy-plus-index"
+	usage.InsertLog("", "", "gpt-5.4", "user@example.com", "user@example.com", legacyPlusIndex, false, cycleStart.Add(-time.Hour), 1, 1, usage.TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 2000,
+		TotalTokens:  3000,
+	}, "", "")
+	usage.InsertLog("", "", "gpt-5.4", "user@example.com", "user@example.com", legacyPlusIndex, false, cycleStart.Add(time.Hour), 1, 1, usage.TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 2000,
+		TotalTokens:  3000,
+	}, "", "")
+	usage.InsertLogWithDetailsIdentitySubject("", "", identity.ID, "", "gpt-5.4", "user@example.com", "user@example.com", auth.Index, false, now.Add(-time.Hour), 1, 1, usage.TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 1000,
+		TotalTokens:  2000,
+	}, "", "", "")
+
+	weeklyRemaining := 93.0
+	if err := usage.RecordQuotaSnapshotPointsIdentity(auth.Index, identity.ID, "codex", []usage.QuotaSnapshotPoint{
+		{
+			RecordedAt:    now,
+			QuotaKey:      "code_week",
+			QuotaLabel:    "m_quota.code_weekly",
+			Percent:       &weeklyRemaining,
+			ResetAt:       &resetAt,
+			WindowSeconds: 604800,
+		},
+	}); err != nil {
+		t.Fatalf("record quota snapshot point: %v", err)
+	}
+
+	h := &Handler{cfg: &config.Config{}, authManager: manager}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/usage/auth-file-trend?auth_index="+auth.Index+"&days=7&hours=5", nil)
+
+	h.UsageLogs().GetAuthFileTrend(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		RequestTotal      int64   `json:"request_total"`
+		CycleRequestTotal int64   `json:"cycle_request_total"`
+		CycleCostTotal    float64 `json:"cycle_cost_total"`
+		CycleKnown        bool    `json:"cycle_known"`
+		CycleStart        string  `json:"cycle_start"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.RequestTotal != 3 {
+		t.Fatalf("request_total = %d, want 3", payload.RequestTotal)
+	}
+	if payload.CycleRequestTotal != 2 {
+		t.Fatalf("cycle_request_total = %d, want 2", payload.CycleRequestTotal)
+	}
+	if math.Abs(payload.CycleCostTotal-0.008) > 1e-12 {
+		t.Fatalf("cycle_cost_total = %v, want 0.008", payload.CycleCostTotal)
+	}
+	if !payload.CycleKnown {
+		t.Fatalf("cycle_known = false, want true")
+	}
+	if payload.CycleStart != cycleStart.Format(time.RFC3339) {
+		t.Fatalf("cycle_start = %q, want %q", payload.CycleStart, cycleStart.Format(time.RFC3339))
+	}
+}
+
 func TestPostAuthFileQuotaSnapshotStoresFineGrainedPoints(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
