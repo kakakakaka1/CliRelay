@@ -58,16 +58,13 @@ func newProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 
 	// If we have a proxy URL configured, set up the transport
 	if proxyURL != "" {
-		transport := util.BuildProxyTransport(proxyURL, cfg != nil && cfg.PreferIPv4)
+		transport := cachedProxyTransport(proxyURL, cfgToSDKCfg(cfg))
 		if transport != nil {
 			httpClient.Transport = transport
-			if sdkCfg := cfgToSDKCfg(cfg); sdkCfg != nil {
-				util.ApplyTLSConfig(transport, sdkCfg)
-			}
 			return httpClient
 		}
 		// If proxy setup failed, log and fall through to context RoundTripper
-		log.Debugf("failed to setup proxy from URL: %s, falling back to context transport", proxyURL)
+		log.Debugf("failed to setup proxy from URL: %s, falling back to context transport", maskProxyURLHost(proxyURL))
 	}
 
 	// Priority 4: Use RoundTripper from context (typically from RoundTripperFor)

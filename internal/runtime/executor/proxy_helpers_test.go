@@ -117,3 +117,65 @@ func TestNewProxyAwareHTTPClientHonorsPreferIPv4ForHTTPProxy(t *testing.T) {
 		t.Fatalf("proxy hits = %d, want 0 when preferIPv4 blocks IPv6-only proxy", proxyHits)
 	}
 }
+
+func TestNewProxyAwareHTTPClientReusesProxyTransport(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	auth := &cliproxyauth.Auth{ProxyURL: "http://proxy-reuse.example:8080"}
+
+	first := newProxyAwareHTTPClient(context.Background(), cfg, auth, 0)
+	second := newProxyAwareHTTPClient(context.Background(), cfg, auth, 0)
+
+	if first.Transport == nil || second.Transport == nil {
+		t.Fatalf("expected proxy transports to be configured")
+	}
+	if first.Transport != second.Transport {
+		t.Fatalf("expected same proxy transport to be reused")
+	}
+}
+
+func TestNewProxyAwareHTTPClientSeparatesProxyTransportByPreferIPv4(t *testing.T) {
+	t.Parallel()
+
+	auth := &cliproxyauth.Auth{ProxyURL: "http://proxy-ip-mode.example:8080"}
+	ipv6Allowed := &config.Config{}
+	ipv4Only := &config.Config{}
+	ipv4Only.PreferIPv4 = true
+
+	first := newProxyAwareHTTPClient(context.Background(), ipv6Allowed, auth, 0)
+	second := newProxyAwareHTTPClient(context.Background(), ipv4Only, auth, 0)
+
+	if first.Transport == nil || second.Transport == nil {
+		t.Fatalf("expected proxy transports to be configured")
+	}
+	if first.Transport == second.Transport {
+		t.Fatalf("expected prefer-ipv4 change to use a distinct proxy transport")
+	}
+}
+
+func TestNewProxyAwareHTTPClientSeparatesProxyTransportByTLSConfig(t *testing.T) {
+	t.Parallel()
+
+	auth := &cliproxyauth.Auth{ProxyURL: "http://proxy-tls-mode.example:8080"}
+	normalTLS := &config.Config{}
+	insecureTLS := &config.Config{}
+	insecureTLS.InsecureSkipVerify = true
+
+	first := newProxyAwareHTTPClient(context.Background(), normalTLS, auth, 0)
+	second := newProxyAwareHTTPClient(context.Background(), insecureTLS, auth, 0)
+
+	if first.Transport == nil || second.Transport == nil {
+		t.Fatalf("expected proxy transports to be configured")
+	}
+	if first.Transport == second.Transport {
+		t.Fatalf("expected TLS config change to use a distinct proxy transport")
+	}
+	transport, ok := second.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("second transport type = %T, want *http.Transport", second.Transport)
+	}
+	if transport.TLSClientConfig == nil || !transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatalf("expected insecure TLS setting to be applied to cached proxy transport")
+	}
+}
