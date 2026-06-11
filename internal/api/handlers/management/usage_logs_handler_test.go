@@ -988,6 +988,235 @@ func TestGetAuthFileTrendKeepsWeeklyCycleAcrossCodexPlanRename(t *testing.T) {
 	}
 }
 
+func TestGetAuthFileTrendPrefersPrimaryCodeWeekOverAdditionalWeeklyCycle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		usage.CloseDB()
+		_ = os.Remove(dbPath)
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+	})
+
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "codex-auth-file-primary-week",
+		FileName: "codex-user@example.com-pro.json",
+		Provider: "codex",
+		Label:    "user@example.com",
+		Metadata: map[string]any{
+			"email":      "user@example.com",
+			"account_id": "acct_same_user",
+			"plan_type":  "pro",
+		},
+	})
+	if err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+	identity := usage.ResolveAuthSubjectIdentity(auth)
+	if identity == nil || identity.ID == "" {
+		t.Fatalf("ResolveAuthSubjectIdentity() returned empty identity: %+v", identity)
+	}
+
+	recordedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	codeResetAt := recordedAt.Add(4 * 24 * time.Hour)
+	codeCycleStart := codeResetAt.Add(-7 * 24 * time.Hour)
+	additionalResetAt := codeResetAt.Add(2 * time.Hour)
+	additionalCycleStart := additionalResetAt.Add(-7 * 24 * time.Hour)
+
+	if err := usage.UpsertModelPricing("gpt-5.4", 1, 2, 0); err != nil {
+		t.Fatalf("UpsertModelPricing: %v", err)
+	}
+
+	usage.InsertLogWithDetailsIdentitySubject("", "", identity.ID, "", "gpt-5.4", "user@example.com", "user@example.com", auth.Index, false, codeCycleStart.Add(-time.Hour), 1, 1, usage.TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 2000,
+		TotalTokens:  3000,
+	}, "", "", "")
+	usage.InsertLogWithDetailsIdentitySubject("", "", identity.ID, "", "gpt-5.4", "user@example.com", "user@example.com", auth.Index, false, codeCycleStart.Add(30*time.Minute), 1, 1, usage.TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 1000,
+		TotalTokens:  2000,
+	}, "", "", "")
+	usage.InsertLogWithDetailsIdentitySubject("", "", identity.ID, "", "gpt-5.4", "user@example.com", "user@example.com", auth.Index, false, additionalCycleStart.Add(30*time.Minute), 1, 1, usage.TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 1000,
+		TotalTokens:  2000,
+	}, "", "", "")
+
+	codeRemaining := 99.0
+	additionalRemaining := 100.0
+	if err := usage.RecordQuotaSnapshotPointsIdentity(auth.Index, identity.ID, "codex", []usage.QuotaSnapshotPoint{
+		{
+			RecordedAt:    recordedAt,
+			QuotaKey:      "code_week",
+			QuotaLabel:    "m_quota.code_weekly",
+			Percent:       &codeRemaining,
+			ResetAt:       &codeResetAt,
+			WindowSeconds: 604800,
+		},
+		{
+			RecordedAt:    recordedAt,
+			QuotaKey:      "additional:codex_bengalfox:week",
+			QuotaLabel:    "GPT-5.3-Codex-Spark: Weekly",
+			Percent:       &additionalRemaining,
+			ResetAt:       &additionalResetAt,
+			WindowSeconds: 604800,
+		},
+	}); err != nil {
+		t.Fatalf("record quota snapshot point: %v", err)
+	}
+
+	h := &Handler{cfg: &config.Config{}, authManager: manager}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/usage/auth-file-trend?auth_index="+auth.Index+"&days=7&hours=5", nil)
+
+	h.UsageLogs().GetAuthFileTrend(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		CycleKnown        bool    `json:"cycle_known"`
+		CycleStart        string  `json:"cycle_start"`
+		CycleRequestTotal int64   `json:"cycle_request_total"`
+		CycleCostTotal    float64 `json:"cycle_cost_total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !payload.CycleKnown {
+		t.Fatalf("cycle_known = false, want true")
+	}
+	if payload.CycleStart != codeCycleStart.Format(time.RFC3339) {
+		t.Fatalf("cycle_start = %q, want %q", payload.CycleStart, codeCycleStart.Format(time.RFC3339))
+	}
+	if payload.CycleRequestTotal != 2 {
+		t.Fatalf("cycle_request_total = %d, want 2", payload.CycleRequestTotal)
+	}
+	if math.Abs(payload.CycleCostTotal-0.006) > 1e-12 {
+		t.Fatalf("cycle_cost_total = %v, want 0.006", payload.CycleCostTotal)
+	}
+}
+
+func TestGetAuthFileTrendFallbackSeriesPrefersPrimaryCodeWeekOverAdditionalWeeklyCycle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		usage.CloseDB()
+		_ = os.Remove(dbPath)
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+	})
+
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	auth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "codex-auth-file-fallback-week",
+		FileName: "codex-fallback.json",
+		Provider: "codex",
+		Label:    "fallback",
+	})
+	if err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+
+	recordedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	codeResetAt := recordedAt.Add(4 * 24 * time.Hour)
+	codeCycleStart := codeResetAt.Add(-7 * 24 * time.Hour)
+	additionalResetAt := codeResetAt.Add(2 * time.Hour)
+	additionalCycleStart := additionalResetAt.Add(-7 * 24 * time.Hour)
+
+	if err := usage.UpsertModelPricing("gpt-5.4", 1, 2, 0); err != nil {
+		t.Fatalf("UpsertModelPricing: %v", err)
+	}
+
+	usage.InsertLog("", "", "gpt-5.4", "codex", "fallback", auth.Index, false, codeCycleStart.Add(-time.Hour), 1, 1, usage.TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 2000,
+		TotalTokens:  3000,
+	}, "", "")
+	usage.InsertLog("", "", "gpt-5.4", "codex", "fallback", auth.Index, false, codeCycleStart.Add(30*time.Minute), 1, 1, usage.TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 1000,
+		TotalTokens:  2000,
+	}, "", "")
+	usage.InsertLog("", "", "gpt-5.4", "codex", "fallback", auth.Index, false, additionalCycleStart.Add(30*time.Minute), 1, 1, usage.TokenStats{
+		InputTokens:  1000,
+		OutputTokens: 1000,
+		TotalTokens:  2000,
+	}, "", "")
+
+	codeRemaining := 99.0
+	additionalRemaining := 100.0
+	if err := usage.RecordQuotaSnapshotPoints(auth.Index, "codex", []usage.QuotaSnapshotPoint{
+		{
+			RecordedAt:    recordedAt,
+			QuotaKey:      "code_week",
+			QuotaLabel:    "m_quota.code_weekly",
+			Percent:       &codeRemaining,
+			ResetAt:       &codeResetAt,
+			WindowSeconds: 604800,
+		},
+		{
+			RecordedAt:    recordedAt,
+			QuotaKey:      "additional:codex_bengalfox:week",
+			QuotaLabel:    "GPT-5.3-Codex-Spark: Weekly",
+			Percent:       &additionalRemaining,
+			ResetAt:       &additionalResetAt,
+			WindowSeconds: 604800,
+		},
+	}); err != nil {
+		t.Fatalf("record quota snapshot point: %v", err)
+	}
+
+	h := &Handler{cfg: &config.Config{}, authManager: manager}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/usage/auth-file-trend?auth_index="+auth.Index+"&days=7&hours=5", nil)
+
+	h.UsageLogs().GetAuthFileTrend(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		CycleKnown        bool    `json:"cycle_known"`
+		CycleStart        string  `json:"cycle_start"`
+		CycleRequestTotal int64   `json:"cycle_request_total"`
+		CycleCostTotal    float64 `json:"cycle_cost_total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !payload.CycleKnown {
+		t.Fatalf("cycle_known = false, want true")
+	}
+	if payload.CycleStart != codeCycleStart.Format(time.RFC3339) {
+		t.Fatalf("cycle_start = %q, want %q", payload.CycleStart, codeCycleStart.Format(time.RFC3339))
+	}
+	if payload.CycleRequestTotal != 2 {
+		t.Fatalf("cycle_request_total = %d, want 2", payload.CycleRequestTotal)
+	}
+	if math.Abs(payload.CycleCostTotal-0.006) > 1e-12 {
+		t.Fatalf("cycle_cost_total = %v, want 0.006", payload.CycleCostTotal)
+	}
+}
+
 func TestPostAuthFileQuotaSnapshotStoresFineGrainedPoints(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

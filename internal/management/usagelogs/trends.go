@@ -41,6 +41,7 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 		return http.StatusNotFound, map[string]any{"error": "auth not found"}
 	}
 	matcher := s.authSubjectMatcher(auth)
+	preferredWeeklyQuotaKeys := primaryWeeklyQuotaKeysForProvider(auth.Provider)
 
 	dailyRaw, err := usage.QueryDailyCallsByAuthSubject(matcher, days)
 	if err != nil {
@@ -74,7 +75,7 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 
 	var cycleStart time.Time
 	if identity := usage.ResolveAuthSubjectIdentity(auth); identity != nil && identity.ID != "" {
-		cycle, err := usage.QueryLatestWeeklyQuotaCycleByAuthSubject(identity.ID)
+		cycle, err := usage.QueryLatestWeeklyQuotaCycleByAuthSubject(identity.ID, preferredWeeklyQuotaKeys...)
 		if err != nil {
 			return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 		}
@@ -83,7 +84,7 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 		}
 	}
 	if cycleStart.IsZero() {
-		if weeklyCycleStart, ok := latestWeeklyQuotaCycleStart(series); ok {
+		if weeklyCycleStart, ok := latestWeeklyQuotaCycleStart(series, preferredWeeklyQuotaKeys...); ok {
 			cycleStart = weeklyCycleStart
 		}
 	}
@@ -138,12 +139,24 @@ func fillDailyCountPoints(points []usage.DailyCountPoint, days int) []usage.Dail
 	return result
 }
 
-func latestWeeklyQuotaCycleStart(series []usage.QuotaSnapshotSeries) (time.Time, bool) {
+func latestWeeklyQuotaCycleStart(series []usage.QuotaSnapshotSeries, preferredQuotaKeys ...string) (time.Time, bool) {
+	preferred := make(map[string]struct{}, len(preferredQuotaKeys))
+	for _, quotaKey := range preferredQuotaKeys {
+		if trimmed := strings.TrimSpace(quotaKey); trimmed != "" {
+			preferred[trimmed] = struct{}{}
+		}
+	}
+	requiresPreferredKey := len(preferred) > 0
 	var latestPoint *usage.QuotaSnapshotSeriesPoint
 	var latestWindow int64
 	for i := range series {
 		if series[i].WindowSeconds < 604800 {
 			continue
+		}
+		if requiresPreferredKey {
+			if _, ok := preferred[strings.TrimSpace(series[i].QuotaKey)]; !ok {
+				continue
+			}
 		}
 		windowSeconds := series[i].WindowSeconds
 		for j := range series[i].Points {
@@ -161,6 +174,17 @@ func latestWeeklyQuotaCycleStart(series []usage.QuotaSnapshotSeries) (time.Time,
 		return time.Time{}, false
 	}
 	return latestPoint.ResetAt.Add(-time.Duration(latestWindow) * time.Second).UTC(), true
+}
+
+func primaryWeeklyQuotaKeysForProvider(provider string) []string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "anthropic", "claude":
+		return []string{"seven_day"}
+	case "codex", "kimi":
+		return []string{"code_week"}
+	default:
+		return nil
+	}
 }
 
 func (s *Service) authIndexesForProviderGroup(group string) []string {

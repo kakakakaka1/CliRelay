@@ -295,6 +295,52 @@ func TestRecordQuotaSnapshotPointsIdentityStoresWeeklyCycleBySubject(t *testing.
 	}
 }
 
+func TestQueryLatestWeeklyQuotaCycleByAuthSubjectFiltersPreferredQuotaKeys(t *testing.T) {
+	initTestUsageDB(t, config.RequestLogStorageConfig{})
+
+	recordedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	codeResetAt := recordedAt.Add(6 * 24 * time.Hour)
+	additionalResetAt := codeResetAt.Add(3 * time.Hour)
+	codeRemaining := 99.0
+	additionalRemaining := 100.0
+
+	err := RecordQuotaSnapshotPointsIdentity("auth-pro", "authsub_test", "codex", []QuotaSnapshotPoint{
+		{
+			RecordedAt:    recordedAt,
+			QuotaKey:      "code_week",
+			QuotaLabel:    "m_quota.code_weekly",
+			Percent:       &codeRemaining,
+			ResetAt:       &codeResetAt,
+			WindowSeconds: 604800,
+		},
+		{
+			RecordedAt:    recordedAt,
+			QuotaKey:      "additional:codex_bengalfox:week",
+			QuotaLabel:    "GPT-5.3-Codex-Spark: Weekly",
+			Percent:       &additionalRemaining,
+			ResetAt:       &additionalResetAt,
+			WindowSeconds: 604800,
+		},
+	})
+	if err != nil {
+		t.Fatalf("RecordQuotaSnapshotPointsIdentity() error = %v", err)
+	}
+
+	cycle, err := QueryLatestWeeklyQuotaCycleByAuthSubject("authsub_test", "code_week")
+	if err != nil {
+		t.Fatalf("QueryLatestWeeklyQuotaCycleByAuthSubject() error = %v", err)
+	}
+	if cycle == nil {
+		t.Fatal("expected filtered weekly cycle, got nil")
+	}
+	if cycle.QuotaKey != "code_week" {
+		t.Fatalf("QuotaKey = %q, want code_week", cycle.QuotaKey)
+	}
+	if !cycle.CycleStartAt.Equal(codeResetAt.Add(-7 * 24 * time.Hour)) {
+		t.Fatalf("CycleStartAt = %s, want %s", cycle.CycleStartAt.Format(time.RFC3339), codeResetAt.Add(-7*24*time.Hour).Format(time.RFC3339))
+	}
+}
+
 func TestQueryUsageByAuthSubjectMatchesLegacyEmailRows(t *testing.T) {
 	initTestUsageDB(t, config.RequestLogStorageConfig{})
 

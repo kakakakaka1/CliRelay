@@ -285,7 +285,7 @@ func QueryQuotaSnapshotPointsByAuthSubject(matcher AuthSubjectMatcher, start, en
 	return result, rows.Err()
 }
 
-func QueryLatestWeeklyQuotaCycleByAuthSubject(subjectID string) (*AuthSubjectQuotaCycle, error) {
+func QueryLatestWeeklyQuotaCycleByAuthSubject(subjectID string, quotaKeys ...string) (*AuthSubjectQuotaCycle, error) {
 	db := getDB()
 	if db == nil {
 		return nil, nil
@@ -294,18 +294,31 @@ func QueryLatestWeeklyQuotaCycleByAuthSubject(subjectID string) (*AuthSubjectQuo
 	if subjectID == "" {
 		return nil, nil
 	}
+	normalizedKeys := dedupeExactStrings(quotaKeys)
 
 	var cycle AuthSubjectQuotaCycle
 	var cycleStartRaw string
 	var resetRaw string
 	var verifiedRaw string
-	err := db.QueryRow(`
+	query := `
 		SELECT subject_id, auth_index, provider, quota_key, cycle_start_at, reset_at, window_seconds, last_verified_at
 		FROM auth_subject_quota_cycles
 		WHERE subject_id = ? AND window_seconds >= 604800
+	`
+	args := make([]interface{}, 0, 1+len(normalizedKeys))
+	args = append(args, subjectID)
+	if len(normalizedKeys) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(normalizedKeys)), ",")
+		query += " AND quota_key IN (" + placeholders + ")"
+		for _, quotaKey := range normalizedKeys {
+			args = append(args, quotaKey)
+		}
+	}
+	query += `
 		ORDER BY last_verified_at DESC, reset_at DESC
 		LIMIT 1
-	`, subjectID).Scan(
+	`
+	err := db.QueryRow(query, args...).Scan(
 		&cycle.SubjectID,
 		&cycle.AuthIndex,
 		&cycle.Provider,
