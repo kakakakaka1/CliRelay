@@ -8,9 +8,9 @@ PR：<https://github.com/kittors/CliRelay/pull/430>
 
 ## 结论
 
-本轮已经完成针对“OpenAI Chat Completions 空/空白 `function.name` 转 Claude `tool_use`”问题的系统分析、功能测试、接口级测试、场景链路测试、高保真模拟测试和全仓回归。
+本轮已经完成针对“OpenAI Chat Completions 空/空白 `function.name` 转 Claude `tool_use`”问题的系统分析、功能测试、接口级测试、场景链路测试、高保真模拟测试、不变量生成测试和全仓回归。
 
-当前修复不是宣称数学意义上的“绝对保证”。更准确的结论是：本项目内与该问题相关的转换边界、SDK 注册链路、executor HTTP 接口链路、历史回放链路、参考项目推理出的 provider-shaped chunk 序列和全仓回归均已覆盖并通过；真实第三方供应商未来可能输出新的非标准事件形态，仍需要后续按样本补充回归。
+当前修复不能宣称覆盖未来所有第三方 provider 可能发明的新协议形态；但对本项目当前声明支持的 OpenAI Chat Completions ↔ Claude Messages 相关状态空间，已经把“不得出现空工具名、不得出现孤儿工具 delta/stop、不得误报 `stop_reason=tool_use`、不得在下一轮回放产生孤儿 `tool` message”转成不变量，并用生成测试覆盖通过。
 
 ## 问题范围
 
@@ -87,6 +87,46 @@ PR：<https://github.com/kittors/CliRelay/pull/430>
 - executor 接口层新增 `TestOpenAICompatExecutorClaudeStreamSkipsMissingToolNameArgumentsEndToEnd`：Claude dirty history -> OpenAI upstream request -> provider-shaped missing-name stream -> Claude response 全链路。
 - executor 接口层新增 `TestOpenAICompatExecutorClaudeStreamPreservesValidParallelToolWhenEmptyIndexFirstEndToEnd`：mock OpenAI-compatible HTTP SSE 返回空 index + 有效 index，验证最终 Claude stream 只保留有效工具。
 
+## 不变量生成测试
+
+为把“绝对没问题”落到可验证边界，本轮新增有限状态空间生成测试，而不是只靠固定样例。
+
+输出侧不变量：
+
+- 任意 `tool_use` content block 的 `name` 必须 `TrimSpace(name) != ""`。
+- 任意 `input_json_delta` 必须挂在已经打开的 `tool_use` block 上。
+- 任意 `text_delta` 必须挂在已经打开的 `text` block 上。
+- 任意 `thinking_delta` 必须挂在已经打开的 `thinking` block 上。
+- 任意 `content_block_stop` 必须有对应的 `content_block_start`。
+- 流结束时不能留下未关闭 content block。
+- 若没有实际发出有效 `tool_use`，`message_delta.delta.stop_reason` 不能是 `tool_use`。
+- 每条流必须且只能有一个 `message_stop`。
+
+生成覆盖：
+
+- `function.name` 状态：字段缺失、空字符串、空白字符串、首 chunk 有效、后续 chunk 有效。
+- `function.arguments` 状态：无参数、首 chunk 参数、参数分片、后续 chunk 参数。
+- finish reason：`tool_calls` 与 legacy `function_call`。
+- usage：有 usage-only chunk 与无 usage-only chunk。
+- 并行工具：无效 `index=0` 与有效 `index=1` 同时/随后出现。
+- 非流式形态：`message.tool_calls` 与 content-array `tool_calls`。
+
+请求侧不变量：
+
+- Claude 历史中的空/空白/缺失 `tool_use.name` 不能转成 OpenAI `tool_calls`。
+- 被跳过的 `tool_use` 对应 `tool_result` 不能转成 OpenAI `role=tool`。
+- 有效 `tool_use` 必须保留对应 `tool_calls` 与 `tool_result`。
+- 空/空白/缺失 `tools[].name` 不能进入 OpenAI `tools`。
+- 空/空白/缺失 `tool_choice.name` 必须降级为 `auto`。
+
+新增生成测试：
+
+- `TestOpenAIStreamingToolNameStateInvariantsGenerated`
+- `TestOpenAIStreamingParallelToolNameStateInvariantsGenerated`
+- `TestOpenAINonStreamingToolNameStateInvariantsGenerated`
+- `TestConvertClaudeRequestToOpenAI_ToolUseNameInvariantsGenerated`
+- `TestConvertClaudeRequestToOpenAI_ToolsAndToolChoiceNameInvariantsGenerated`
+
 ## 功能测试
 
 文件：`internal/translator/openai/claude/openai_claude_response_test.go`
@@ -116,7 +156,7 @@ PR：<https://github.com/kittors/CliRelay/pull/430>
 
 ```text
 rtk go test ./internal/translator/openai/claude -count=1 -v
-Go test: 35 passed in 1 packages
+Go test: 174 passed in 1 packages
 ```
 
 ## 场景链路测试
@@ -172,7 +212,7 @@ Go test: 4 passed in 1 packages
 
 ```text
 rtk go test ./internal/translator/... -count=1
-Go test: 110 passed in 30 packages
+Go test: 249 passed in 30 packages
 
 rtk go test ./test -count=1
 Go test: 276 passed in 1 packages
@@ -185,7 +225,7 @@ Go test: 221 passed in 1 packages
 
 ```text
 rtk go test ./... -count=1
-Go test: 2044 passed in 147 packages
+Go test: 2183 passed in 147 packages
 
 rtk go vet ./...
 Go vet: No issues found

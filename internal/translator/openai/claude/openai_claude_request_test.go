@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -679,5 +681,124 @@ func TestConvertClaudeRequestToOpenAI_SkipsEmptyToolsAndDowngradesEmptyToolChoic
 	}
 	if got := resultJSON.Get("tool_choice").String(); got != "auto" {
 		t.Fatalf("Expected empty tool_choice name to downgrade to auto, got %q: %s", got, result)
+	}
+}
+
+func TestConvertClaudeRequestToOpenAI_ToolUseNameInvariantsGenerated(t *testing.T) {
+	names := []struct {
+		name        string
+		field       string
+		expectValid bool
+	}{
+		{name: "missing", field: "", expectValid: false},
+		{name: "empty", field: `"name": "",`, expectValid: false},
+		{name: "blank", field: `"name": " \t ",`, expectValid: false},
+		{name: "valid", field: `"name": "Read",`, expectValid: true},
+	}
+
+	for _, tc := range names {
+		t.Run(tc.name, func(t *testing.T) {
+			inputJSON := fmt.Sprintf(`{
+				"model": "claude-3-opus",
+				"messages": [
+					{
+						"role": "assistant",
+						"content": [
+							{"type": "tool_use", "id": "call_%s", %s "input": {"file_path": "a.go"}}
+						]
+					},
+					{
+						"role": "user",
+						"content": [
+							{"type": "tool_result", "tool_use_id": "call_%s", "content": "file contents"}
+						]
+					}
+				]
+			}`, tc.name, tc.field, tc.name)
+
+			result := ConvertClaudeRequestToOpenAI("test-model", []byte(inputJSON), false)
+			resultJSON := gjson.ParseBytes(result)
+			messages := resultJSON.Get("messages").Array()
+			hasToolCalls := false
+			hasToolResult := false
+			for _, msg := range messages {
+				if msg.Get("tool_calls").Exists() {
+					hasToolCalls = true
+					msg.Get("tool_calls").ForEach(func(_, call gjson.Result) bool {
+						if strings.TrimSpace(call.Get("function.name").String()) == "" {
+							t.Fatalf("OpenAI tool_calls contains empty function.name: %s", result)
+						}
+						return true
+					})
+				}
+				if msg.Get("role").String() == "tool" {
+					hasToolResult = true
+				}
+			}
+
+			if hasToolCalls != tc.expectValid {
+				t.Fatalf("tool_calls presence = %v, want %v: %s", hasToolCalls, tc.expectValid, result)
+			}
+			if hasToolResult != tc.expectValid {
+				t.Fatalf("tool result presence = %v, want %v: %s", hasToolResult, tc.expectValid, result)
+			}
+			if tc.expectValid {
+				if got := resultJSON.Get("messages.0.tool_calls.0.function.name").String(); got != "Read" {
+					t.Fatalf("valid tool function.name = %q, want Read: %s", got, result)
+				}
+				if got := resultJSON.Get("messages.1.tool_call_id").String(); got != "call_valid" {
+					t.Fatalf("valid tool result id = %q, want call_valid: %s", got, result)
+				}
+			}
+		})
+	}
+}
+
+func TestConvertClaudeRequestToOpenAI_ToolsAndToolChoiceNameInvariantsGenerated(t *testing.T) {
+	choices := []struct {
+		name        string
+		field       string
+		expectValid bool
+	}{
+		{name: "missing", field: "", expectValid: false},
+		{name: "empty", field: `"name": "",`, expectValid: false},
+		{name: "blank", field: `"name": " \t ",`, expectValid: false},
+		{name: "valid", field: `"name": "Read",`, expectValid: true},
+	}
+
+	for _, tc := range choices {
+		t.Run(tc.name, func(t *testing.T) {
+			toolObject := fmt.Sprintf(`{%s "description": "read", "input_schema": {"type": "object"}}`, tc.field)
+			toolChoice := fmt.Sprintf(`{"type": "tool", %s "disable_parallel_tool_use": false}`, tc.field)
+			inputJSON := fmt.Sprintf(`{
+				"model": "claude-3-opus",
+				"messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+				"tools": [%s],
+				"tool_choice": %s
+			}`, toolObject, toolChoice)
+
+			result := ConvertClaudeRequestToOpenAI("test-model", []byte(inputJSON), false)
+			resultJSON := gjson.ParseBytes(result)
+
+			hasTools := resultJSON.Get("tools").Exists()
+			if hasTools != tc.expectValid {
+				t.Fatalf("tools presence = %v, want %v: %s", hasTools, tc.expectValid, result)
+			}
+			if tc.expectValid {
+				if got := resultJSON.Get("tools.0.function.name").String(); got != "Read" {
+					t.Fatalf("tool name = %q, want Read: %s", got, result)
+				}
+				if got := resultJSON.Get("tool_choice.function.name").String(); got != "Read" {
+					t.Fatalf("tool_choice function.name = %q, want Read: %s", got, result)
+				}
+			} else {
+				if resultJSON.Get("tools.0.function.name").Exists() {
+					t.Fatalf("invalid tool name should not be emitted: %s", result)
+				}
+				if got := resultJSON.Get("tool_choice").String(); got != "auto" {
+					t.Fatalf("invalid tool_choice should downgrade to auto, got %q: %s", got, result)
+				}
+			}
+		})
 	}
 }
