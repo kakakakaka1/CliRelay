@@ -243,6 +243,9 @@ type OpenCodeGoKey struct {
 	// ProxyID references a reusable proxy-pool entry. When valid, it takes precedence over ProxyURL.
 	ProxyID string `yaml:"proxy-id,omitempty" json:"proxy-id,omitempty"`
 
+	// Models defines the OpenCode Go model IDs explicitly enabled for this key.
+	Models []OpenCodeGoModel `yaml:"models,omitempty" json:"models,omitempty"`
+
 	// Headers optionally adds extra HTTP headers for requests sent with this key.
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 
@@ -258,3 +261,11 @@ type OpenCodeGoKey struct {
 	// AuthCookie stores the OpenCode dashboard auth cookie value used for usage checks.
 	AuthCookie string `yaml:"-" json:"auth-cookie,omitempty"`
 }
+
+// OpenCodeGoModel describes a model explicitly enabled for OpenCode Go routing.
+type OpenCodeGoModel struct {
+	Name string `yaml:"name" json:"name"`
+}
+
+func (m OpenCodeGoModel) GetName() string  { return m.Name }
+func (m OpenCodeGoModel) GetAlias() string { return "" }

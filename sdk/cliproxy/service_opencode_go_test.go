@@ -51,8 +51,8 @@ func TestRegisterModelsForAuth_OpenCodeGoRegistersAllDefaultModels(t *testing.T)
 	service.registerModelsForAuth(context.Background(), auth)
 
 	models := registry.GetAvailableModelsByProvider("opencode-go")
-	if len(models) != 14 {
-		t.Fatalf("expected 14 registered opencode-go models, got %d: %+v", len(models), models)
+	if len(models) != 20 {
+		t.Fatalf("expected 20 registered opencode-go models, got %d: %+v", len(models), models)
 	}
 	ids := make(map[string]struct{}, len(models))
 	for _, model := range models {
@@ -65,5 +65,51 @@ func TestRegisterModelsForAuth_OpenCodeGoRegistersAllDefaultModels(t *testing.T)
 	}
 	if _, ok := ids["minimax-m2.7"]; !ok {
 		t.Fatalf("minimax-m2.7 not registered; got ids %#v", ids)
+	}
+	if _, ok := ids["kimi-k2.7-code"]; !ok {
+		t.Fatalf("kimi-k2.7-code not registered; got ids %#v", ids)
+	}
+}
+
+func TestRegisterModelsForAuth_OpenCodeGoUsesExplicitModels(t *testing.T) {
+	service := &Service{cfg: &config.Config{
+		OpenCodeGoKey: []config.OpenCodeGoKey{{
+			APIKey: "go-key-explicit",
+			Models: []config.OpenCodeGoModel{
+				{Name: "qwen3.7-max"},
+				{Name: "official-new-model"},
+			},
+		}},
+	}}
+	auth := &coreauth.Auth{
+		ID:       "opencode-go-auth-explicit-models",
+		Provider: "opencode-go",
+		Status:   coreauth.StatusActive,
+		Attributes: map[string]string{
+			"auth_kind": "apikey",
+			"api_key":   "go-key-explicit",
+		},
+	}
+
+	registry := GlobalModelRegistry()
+	registry.UnregisterClient(auth.ID)
+	t.Cleanup(func() {
+		registry.UnregisterClient(auth.ID)
+	})
+
+	service.registerModelsForAuth(context.Background(), auth)
+
+	models := registry.GetModelsForClient(auth.ID)
+	if len(models) != 2 {
+		t.Fatalf("expected 2 explicit opencode-go models, got %d: %+v", len(models), models)
+	}
+	if !hasModelID(models, "qwen3.7-max") {
+		t.Fatalf("qwen3.7-max not registered; got %+v", models)
+	}
+	if !hasModelID(models, "official-new-model") {
+		t.Fatalf("official-new-model not registered; got %+v", models)
+	}
+	if hasModelID(models, "deepseek-v4-flash") {
+		t.Fatalf("deepseek-v4-flash should not be registered from explicit models; got %+v", models)
 	}
 }

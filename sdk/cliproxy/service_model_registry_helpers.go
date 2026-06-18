@@ -324,6 +324,53 @@ func buildCodexConfigModels(entry *config.CodexKey, resolveThinking staticThinki
 	return buildConfigModels(entry.Models, "openai", "openai", resolveThinking)
 }
 
+func buildOpenCodeGoConfigModels(entry *config.OpenCodeGoKey, staticModels []*ModelInfo) []*ModelInfo {
+	if entry == nil || len(entry.Models) == 0 {
+		return nil
+	}
+	staticByID := make(map[string]*ModelInfo, len(staticModels))
+	for _, model := range staticModels {
+		if model == nil {
+			continue
+		}
+		if id := strings.ToLower(strings.TrimSpace(model.ID)); id != "" {
+			staticByID[id] = model
+		}
+	}
+
+	now := time.Now().Unix()
+	seen := make(map[string]struct{}, len(entry.Models))
+	out := make([]*ModelInfo, 0, len(entry.Models))
+	for i := range entry.Models {
+		name := strings.TrimSpace(entry.Models[i].Name)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		if model := staticByID[key]; model != nil {
+			clone := *model
+			clone.UserDefined = true
+			out = append(out, &clone)
+			continue
+		}
+		out = append(out, &ModelInfo{
+			ID:          name,
+			Object:      "model",
+			Created:     now,
+			OwnedBy:     "opencode",
+			Type:        "opencode-go",
+			DisplayName: name,
+			UserDefined: true,
+		})
+	}
+	return out
+}
+
 func rewriteModelInfoName(name, oldID, newID string) string {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {

@@ -22,6 +22,7 @@ func (s *Service) ConfiguredAvailability(allowedChannelsRaw, allowedGroupsRaw st
 	for _, row := range allConfigRows {
 		configByID[strings.ToLower(strings.TrimSpace(row.ModelID))] = row
 	}
+	authByID := s.authByID()
 
 	data := make([]map[string]any, 0, len(allModels))
 	activeMetadata := make([]map[string]any, 0, len(allModels))
@@ -38,6 +39,9 @@ func (s *Service) ConfiguredAvailability(allowedChannelsRaw, allowedGroupsRaw st
 		}
 		if ownedBy, exists := model["owned_by"]; exists {
 			entry["owned_by"] = ownedBy
+		}
+		if sources := s.modelSourceEntries(modelRegistry, id, authByID); len(sources) > 0 {
+			entry["sources"] = sources
 		}
 		if row, ok := configByID[strings.ToLower(id)]; ok {
 			attachModelConfigCapabilities(entry, row)
@@ -225,6 +229,82 @@ func (s *Service) scopedModelConfigRows(allowedChannelsRaw, allowedGroupsRaw str
 		if ownerKeys[normalizeModelOwnerKey(row.OwnedBy)] || ownerKeys[normalizeModelOwnerKey(row.Source)] {
 			out = append(out, row)
 		}
+	}
+	return out
+}
+
+func (s *Service) authByID() map[string]*coreauth.Auth {
+	if s == nil || s.authManager == nil {
+		return nil
+	}
+	auths := s.authManager.List()
+	if len(auths) == 0 {
+		return nil
+	}
+	out := make(map[string]*coreauth.Auth, len(auths))
+	for _, auth := range auths {
+		if auth == nil || strings.TrimSpace(auth.ID) == "" {
+			continue
+		}
+		out[auth.ID] = auth
+	}
+	return out
+}
+
+func (s *Service) modelSourceEntries(modelRegistry *registry.ModelRegistry, modelID string, authByID map[string]*coreauth.Auth) []map[string]any {
+	if modelRegistry == nil {
+		return nil
+	}
+	rawSources := modelRegistry.GetModelClientSources(modelID)
+	if len(rawSources) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(rawSources))
+	seen := make(map[string]struct{}, len(rawSources))
+	for _, raw := range rawSources {
+		clientID := strings.TrimSpace(raw.ClientID)
+		provider := strings.TrimSpace(raw.Provider)
+		channel := ""
+		source := ""
+		if auth := authByID[clientID]; auth != nil {
+			if provider == "" {
+				provider = strings.TrimSpace(auth.Provider)
+			}
+			channel = strings.TrimSpace(auth.ChannelName())
+			if auth.Attributes != nil {
+				source = strings.TrimSpace(auth.Attributes["source"])
+			}
+		}
+
+		label := provider
+		if channel != "" {
+			label = channel
+			if provider != "" && !strings.EqualFold(provider, channel) {
+				label = provider + " · " + channel
+			}
+		}
+		if label == "" {
+			label = clientID
+		}
+		key := provider + "\x00" + channel + "\x00" + label + "\x00" + source + "\x00" + clientID
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		entry := map[string]any{
+			"label":     label,
+			"provider":  provider,
+			"client_id": clientID,
+			"model_id":  strings.TrimSpace(raw.ModelID),
+		}
+		if channel != "" {
+			entry["channel"] = channel
+		}
+		if source != "" {
+			entry["source"] = source
+		}
+		out = append(out, entry)
 	}
 	return out
 }

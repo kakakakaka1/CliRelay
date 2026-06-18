@@ -32,6 +32,7 @@ type ClaudeKey = bridgeconfig.ClaudeKey
 type BedrockKey = bridgeconfig.BedrockKey
 type BedrockModel = bridgeconfig.BedrockModel
 type OpenCodeGoKey = bridgeconfig.OpenCodeGoKey
+type OpenCodeGoModel = bridgeconfig.OpenCodeGoModel
 type VertexCompatKey = bridgeconfig.VertexCompatKey
 type VertexCompatModel = bridgeconfig.VertexCompatModel
 type OpenAICompatibility = bridgeconfig.OpenAICompatibility

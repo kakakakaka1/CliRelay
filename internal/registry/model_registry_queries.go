@@ -12,6 +12,12 @@ import (
 // - Responsibility: compute public availability snapshots, provider views, and lookup helpers.
 // - Non-goals: client registration reconciliation and quota/suspension mutation.
 
+type ModelClientSource struct {
+	ClientID string `json:"client_id"`
+	Provider string `json:"provider"`
+	ModelID  string `json:"model_id"`
+}
+
 // GetAvailableModels returns all models that have at least one available client.
 func (r *ModelRegistry) GetAvailableModels(handlerType string) []map[string]any {
 	r.mutex.RLock()
@@ -243,6 +249,49 @@ func (r *ModelRegistry) GetModelProviders(modelID string) []string {
 		result = append(result, item.name)
 	}
 	return result
+}
+
+func (r *ModelRegistry) GetModelClientSources(modelID string) []ModelClientSource {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return nil
+	}
+	target := strings.ToLower(modelID)
+
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	out := make([]ModelClientSource, 0)
+	seen := make(map[string]struct{})
+	for clientID, modelIDs := range r.clientModels {
+		if strings.TrimSpace(clientID) == "" {
+			continue
+		}
+		provider := r.clientProviders[clientID]
+		for _, registeredID := range modelIDs {
+			registeredID = strings.TrimSpace(registeredID)
+			if registeredID == "" || strings.ToLower(registeredID) != target {
+				continue
+			}
+			key := clientID + "\x00" + provider + "\x00" + registeredID
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, ModelClientSource{
+				ClientID: clientID,
+				Provider: provider,
+				ModelID:  registeredID,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Provider == out[j].Provider {
+			return out[i].ClientID < out[j].ClientID
+		}
+		return out[i].Provider < out[j].Provider
+	})
+	return out
 }
 
 // GetModelInfo returns ModelInfo, prioritizing provider-specific definition if available.

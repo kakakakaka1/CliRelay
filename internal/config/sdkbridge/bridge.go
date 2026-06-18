@@ -31,6 +31,7 @@ type ClaudeKey = coreconfig.ClaudeKey
 type BedrockKey = coreconfig.BedrockKey
 type BedrockModel = coreconfig.BedrockModel
 type OpenCodeGoKey = coreconfig.OpenCodeGoKey
+type OpenCodeGoModel = coreconfig.OpenCodeGoModel
 type VertexCompatKey = coreconfig.VertexCompatKey
 type VertexCompatModel = coreconfig.VertexCompatModel
 type OpenAICompatibility = coreconfig.OpenAICompatibility

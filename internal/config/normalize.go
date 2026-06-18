@@ -225,6 +225,7 @@ func (cfg *Config) SanitizeOpenCodeGoKeys() {
 		entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
 		entry.ProxyID = strings.TrimSpace(entry.ProxyID)
 		entry.Headers = NormalizeHeaders(entry.Headers)
+		entry.Models = NormalizeOpenCodeGoModels(entry.Models)
 		entry.ExcludedModels = NormalizeExcludedModels(entry.ExcludedModels)
 		entry.VisionFallbackModel = strings.TrimSpace(entry.VisionFallbackModel)
 		entry.WorkspaceID = strings.TrimSpace(entry.WorkspaceID)
@@ -232,6 +233,27 @@ func (cfg *Config) SanitizeOpenCodeGoKeys() {
 		out = append(out, entry)
 	}
 	cfg.OpenCodeGoKey = out
+}
+
+func NormalizeOpenCodeGoModels(models []OpenCodeGoModel) []OpenCodeGoModel {
+	if len(models) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(models))
+	out := make([]OpenCodeGoModel, 0, len(models))
+	for i := range models {
+		name := strings.TrimSpace(models[i].Name)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, OpenCodeGoModel{Name: name})
+	}
+	return out
 }
 
 // SanitizeGeminiKeys deduplicates and normalizes Gemini credentials.

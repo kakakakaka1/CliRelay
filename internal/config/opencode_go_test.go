@@ -20,6 +20,10 @@ opencode-go-api-key:
       X-Test: " yes "
     excluded-models:
       - " deepseek-v4-pro "
+    models:
+      - name: " qwen3.7-max "
+      - name: " qwen3.7-max "
+      - name: " kimi-k2.7-code "
     vision-fallback-model: " qwen3.5-plus "
 `), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -45,6 +49,9 @@ opencode-go-api-key:
 	if len(got.ExcludedModels) != 1 || got.ExcludedModels[0] != "deepseek-v4-pro" {
 		t.Fatalf("excluded models = %#v", got.ExcludedModels)
 	}
+	if len(got.Models) != 2 || got.Models[0].Name != "qwen3.7-max" || got.Models[1].Name != "kimi-k2.7-code" {
+		t.Fatalf("models = %#v", got.Models)
+	}
 	if got.VisionFallbackModel != "qwen3.5-plus" {
 		t.Fatalf("vision fallback model = %q, want qwen3.5-plus", got.VisionFallbackModel)
 	}
@@ -56,7 +63,7 @@ func TestSanitizeOpenCodeGoKeysDropsEmptyAndDeduplicates(t *testing.T) {
 			{APIKey: " "},
 			{APIKey: "go-key", Prefix: " team "},
 			{APIKey: "go-key", Prefix: "duplicate"},
-			{APIKey: "go-key-2", Headers: map[string]string{" X-Trace ": " on "}, VisionFallbackModel: " qwen3.6-plus ", WorkspaceID: " wrk_123 ", AuthCookie: " auth-token "},
+			{APIKey: "go-key-2", Headers: map[string]string{" X-Trace ": " on "}, Models: []OpenCodeGoModel{{Name: " glm-5.2 "}, {Name: "GLM-5.2"}, {Name: " "}}, VisionFallbackModel: " qwen3.6-plus ", WorkspaceID: " wrk_123 ", AuthCookie: " auth-token "},
 		},
 	}
 
@@ -73,6 +80,9 @@ func TestSanitizeOpenCodeGoKeysDropsEmptyAndDeduplicates(t *testing.T) {
 	}
 	if cfg.OpenCodeGoKey[1].VisionFallbackModel != "qwen3.6-plus" {
 		t.Fatalf("vision fallback model = %q, want qwen3.6-plus", cfg.OpenCodeGoKey[1].VisionFallbackModel)
+	}
+	if len(cfg.OpenCodeGoKey[1].Models) != 1 || cfg.OpenCodeGoKey[1].Models[0].Name != "glm-5.2" {
+		t.Fatalf("models = %#v, want normalized unique model", cfg.OpenCodeGoKey[1].Models)
 	}
 	if cfg.OpenCodeGoKey[1].WorkspaceID != "wrk_123" || cfg.OpenCodeGoKey[1].AuthCookie != "auth-token" {
 		t.Fatalf("usage fields not normalized: %+v", cfg.OpenCodeGoKey[1])

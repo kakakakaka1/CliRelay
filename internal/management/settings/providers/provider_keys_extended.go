@@ -177,17 +177,18 @@ func (s *Service) deleteBedrockKeys(match func(config.BedrockKey) bool) bool {
 }
 
 type OpenCodeGoPatch struct {
-	APIKey         *string            `json:"api-key"`
-	Name           *string            `json:"name"`
-	Priority       *int               `json:"priority"`
-	Prefix         *string            `json:"prefix"`
-	ProxyURL       *string            `json:"proxy-url"`
-	ProxyID        *string            `json:"proxy-id"`
-	Headers        *map[string]string `json:"headers"`
-	ExcludedModels *[]string          `json:"excluded-models"`
-	VisionFallback *string            `json:"vision-fallback-model"`
-	WorkspaceID    *string            `json:"workspace-id"`
-	AuthCookie     *string            `json:"auth-cookie"`
+	APIKey         *string                   `json:"api-key"`
+	Name           *string                   `json:"name"`
+	Priority       *int                      `json:"priority"`
+	Prefix         *string                   `json:"prefix"`
+	ProxyURL       *string                   `json:"proxy-url"`
+	ProxyID        *string                   `json:"proxy-id"`
+	Headers        *map[string]string        `json:"headers"`
+	Models         *[]config.OpenCodeGoModel `json:"models"`
+	ExcludedModels *[]string                 `json:"excluded-models"`
+	VisionFallback *string                   `json:"vision-fallback-model"`
+	WorkspaceID    *string                   `json:"workspace-id"`
+	AuthCookie     *string                   `json:"auth-cookie"`
 }
 
 func (s *Service) OpenCodeGoKeys() []config.OpenCodeGoKey {
@@ -269,6 +270,9 @@ func (s *Service) PatchOpenCodeGoKey(index *int, apiKey *string, name *string, p
 	}
 	if patch.Headers != nil {
 		entry.Headers = config.NormalizeHeaders(*patch.Headers)
+	}
+	if patch.Models != nil {
+		entry.Models = append([]config.OpenCodeGoModel(nil), (*patch.Models)...)
 	}
 	if patch.ExcludedModels != nil {
 		entry.ExcludedModels = config.NormalizeExcludedModels(*patch.ExcludedModels)
@@ -379,6 +383,7 @@ func NormalizeOpenCodeGoKey(entry *config.OpenCodeGoKey) {
 	entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
 	entry.ProxyID = strings.TrimSpace(entry.ProxyID)
 	entry.Headers = config.NormalizeHeaders(entry.Headers)
+	entry.Models = config.NormalizeOpenCodeGoModels(entry.Models)
 	entry.ExcludedModels = config.NormalizeExcludedModels(entry.ExcludedModels)
 	entry.VisionFallbackModel = strings.TrimSpace(entry.VisionFallbackModel)
 	if workspaceID, err := normalizeOpenCodeGoWorkspaceID(entry.WorkspaceID); err == nil {
