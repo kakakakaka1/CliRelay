@@ -330,6 +330,83 @@ func TestScopedModelsIncludeOwnerMappedConfiguredModels(t *testing.T) {
 	}
 }
 
+func TestDefaultConfiguredAvailabilityUsesMappedOwnerModels(t *testing.T) {
+	initManagementModelsTestDB(t)
+
+	const (
+		authID      = "codex-default-mapped-owner-auth"
+		registryID  = "codex-default-mapped-owner-registry"
+		mappedModel = "mapped-codex-owner-model"
+		oldModel    = "old-codex-registry-model"
+	)
+
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(registryID, "codex", []*registry.ModelInfo{
+		{ID: oldModel, Object: "model", OwnedBy: "openai", Type: "openai"},
+	})
+	t.Cleanup(func() {
+		reg.UnregisterClient(registryID)
+	})
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       authID,
+		Provider: "codex",
+		Label:    "Codex",
+		Status:   coreauth.StatusActive,
+	}); err != nil {
+		t.Fatalf("Register codex auth: %v", err)
+	}
+	if err := usage.UpsertAuthGroupOwnerMapping(usage.AuthGroupOwnerMappingRow{
+		AuthGroup: "codex",
+		Owner:     "codex",
+	}); err != nil {
+		t.Fatalf("UpsertAuthGroupOwnerMapping: %v", err)
+	}
+	for _, row := range []usage.ModelConfigRow{
+		{ModelID: mappedModel, OwnedBy: "codex", Description: "Mapped Codex", Enabled: true, Source: "seed"},
+		{ModelID: oldModel, OwnedBy: "openai", Description: "Old Codex", Enabled: true, Source: "seed"},
+	} {
+		if err := usage.UpsertModelConfig(row); err != nil {
+			t.Fatalf("UpsertModelConfig(%s): %v", row.ModelID, err)
+		}
+	}
+
+	h := NewHandler(&config.Config{}, "", manager)
+	rec := performModelsRequest(
+		http.MethodGet,
+		"/models/configured-availability",
+		nil,
+		h.Models().GetConfiguredModelAvailability,
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		UsesMappedOwners bool `json:"uses_mapped_owners"`
+		Data             []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !payload.UsesMappedOwners {
+		t.Fatalf("uses_mapped_owners = false, want true; body=%s", rec.Body.String())
+	}
+	ids := make(map[string]struct{}, len(payload.Data))
+	for _, item := range payload.Data {
+		ids[item.ID] = struct{}{}
+	}
+	if _, ok := ids[mappedModel]; !ok {
+		t.Fatalf("missing mapped owner model %q; ids=%v", mappedModel, ids)
+	}
+	if _, ok := ids[oldModel]; ok {
+		t.Fatalf("unexpected registry model outside mapped owner %q; ids=%v", oldModel, ids)
+	}
+}
+
 func TestScopedModelsHonorChannelGroupAllowedModelsForConfiguredRows(t *testing.T) {
 	initManagementModelsTestDB(t)
 	cfg := &config.Config{

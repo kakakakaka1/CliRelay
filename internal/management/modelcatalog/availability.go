@@ -16,6 +16,16 @@ import (
 func (s *Service) ConfiguredAvailability(allowedChannelsRaw, allowedGroupsRaw string) map[string]any {
 	modelRegistry := registry.GetGlobalRegistry()
 	allModels := s.effectiveModels(modelRegistry.GetAvailableModels("openai"), allowedChannelsRaw, allowedGroupsRaw)
+	usesMappedOwners := false
+	if shouldUseDefaultMappedOwnerScope(allowedChannelsRaw, allowedGroupsRaw) {
+		if rows, ok := s.defaultMappedOwnerRows(); ok {
+			usesMappedOwners = true
+			allModels = make([]map[string]any, 0, len(rows))
+			for _, row := range rows {
+				allModels = append(allModels, modelConfigRowAsOpenAIModel(row))
+			}
+		}
+	}
 
 	allConfigRows := modelconfigsettings.ListAllConfigs()
 	configByID := make(map[string]usage.ModelConfigRow, len(allConfigRows))
@@ -73,10 +83,11 @@ func (s *Service) ConfiguredAvailability(allowedChannelsRaw, allowedGroupsRaw st
 	}
 
 	return map[string]any{
-		"object":          "list",
-		"scoped":          s.authManager != nil,
-		"data":            data,
-		"active_metadata": activeMetadata,
+		"object":             "list",
+		"scoped":             s.authManager != nil || usesMappedOwners,
+		"data":               data,
+		"active_metadata":    activeMetadata,
+		"uses_mapped_owners": usesMappedOwners,
 	}
 }
 
@@ -231,6 +242,53 @@ func (s *Service) scopedModelConfigRows(allowedChannelsRaw, allowedGroupsRaw str
 		}
 	}
 	return out
+}
+
+func shouldUseDefaultMappedOwnerScope(allowedChannelsRaw, allowedGroupsRaw string) bool {
+	return strings.TrimSpace(allowedChannelsRaw) == "" && strings.TrimSpace(allowedGroupsRaw) == ""
+}
+
+func (s *Service) defaultMappedOwnerRows() ([]usage.ModelConfigRow, bool) {
+	ownerKeys := s.defaultMappedOwnerKeys()
+	if len(ownerKeys) == 0 {
+		return nil, false
+	}
+	rows := modelconfigsettings.ListAllConfigs()
+	out := make([]usage.ModelConfigRow, 0, len(rows))
+	for _, row := range rows {
+		if !row.Enabled {
+			continue
+		}
+		if ownerKeys[normalizeModelOwnerKey(row.OwnedBy)] {
+			out = append(out, row)
+		}
+	}
+	return out, true
+}
+
+func (s *Service) defaultMappedOwnerKeys() map[string]bool {
+	ownerMappings := authGroupOwnerMappingMap()
+	if len(ownerMappings) == 0 || s == nil || s.authManager == nil {
+		return nil
+	}
+	owners := make(map[string]bool)
+	for _, auth := range s.authManager.List() {
+		if auth == nil || auth.Disabled || auth.Status == coreauth.StatusDisabled {
+			continue
+		}
+		addMappedOwnerForAuthValue(owners, ownerMappings, auth.Provider)
+		addMappedOwnerForAuthValue(owners, ownerMappings, auth.ChannelName())
+		for _, identifier := range auth.ChannelIdentifiers() {
+			addMappedOwnerForAuthValue(owners, ownerMappings, identifier)
+		}
+	}
+	return owners
+}
+
+func addMappedOwnerForAuthValue(owners map[string]bool, ownerMappings map[string]string, value string) {
+	if owner := ownerMappings[normalizeAuthGroupKey(value)]; owner != "" {
+		owners[owner] = true
+	}
 }
 
 func (s *Service) authByID() map[string]*coreauth.Auth {
