@@ -18,10 +18,14 @@ func (s *Service) ConfiguredAvailability(allowedChannelsRaw, allowedGroupsRaw st
 	allModels := s.effectiveModels(modelRegistry.GetAvailableModels("openai"), allowedChannelsRaw, allowedGroupsRaw)
 	authByID := s.authByID()
 	usesMappedOwners := false
+	var ownerMappings map[string]string
+	var ownerKeys map[string]bool
 	if shouldUseDefaultMappedOwnerScope(allowedChannelsRaw, allowedGroupsRaw) {
-		if rows, ownerKeys, ok := s.defaultMappedOwnerRows(); ok {
+		if rows, keys, ok := s.defaultMappedOwnerRows(); ok {
 			usesMappedOwners = true
-			allModels = withDefaultMappedOwnerRows(modelRegistry, allModels, rows, ownerKeys, authByID)
+			ownerKeys = keys
+			ownerMappings = authGroupOwnerMappingMap()
+			allModels = withDefaultMappedOwnerRows(modelRegistry, allModels, rows, ownerKeys, authByID, ownerMappings)
 		}
 	}
 
@@ -46,7 +50,7 @@ func (s *Service) ConfiguredAvailability(allowedChannelsRaw, allowedGroupsRaw st
 		if ownedBy, exists := model["owned_by"]; exists {
 			entry["owned_by"] = ownedBy
 		}
-		if sources := s.modelSourceEntries(modelRegistry, id, authByID); len(sources) > 0 {
+		if sources := s.modelSourceEntries(modelRegistry, id, authByID, ownerMappings, ownerKeys); len(sources) > 0 {
 			entry["sources"] = sources
 		}
 		if row, ok := configByID[strings.ToLower(id)]; ok {
@@ -268,10 +272,10 @@ func withDefaultMappedOwnerRows(
 	rows []usage.ModelConfigRow,
 	ownerKeys map[string]bool,
 	authByID map[string]*coreauth.Auth,
+	ownerMappings map[string]string,
 ) []map[string]any {
 	out := make([]map[string]any, 0, len(models)+len(rows))
 	seen := make(map[string]struct{}, len(models)+len(rows))
-	ownerMappings := authGroupOwnerMappingMap()
 	for _, model := range models {
 		id, _ := model["id"].(string)
 		key := strings.ToLower(strings.TrimSpace(id))
@@ -325,6 +329,19 @@ func registryModelCoveredByMappedOwners(
 		}
 	}
 	return true
+}
+
+func sourceCoveredByMappedOwners(
+	source registry.ModelClientSource,
+	authByID map[string]*coreauth.Auth,
+	ownerMappings map[string]string,
+	ownerKeys map[string]bool,
+) bool {
+	if len(ownerMappings) == 0 || len(ownerKeys) == 0 || sourceHasExplicitConfigModels(source, authByID) {
+		return false
+	}
+	owner := mappedOwnerForSource(source, authByID, ownerMappings)
+	return owner != "" && ownerKeys[owner]
 }
 
 func sourceHasExplicitConfigModels(source registry.ModelClientSource, authByID map[string]*coreauth.Auth) bool {
@@ -398,7 +415,13 @@ func (s *Service) authByID() map[string]*coreauth.Auth {
 	return out
 }
 
-func (s *Service) modelSourceEntries(modelRegistry *registry.ModelRegistry, modelID string, authByID map[string]*coreauth.Auth) []map[string]any {
+func (s *Service) modelSourceEntries(
+	modelRegistry *registry.ModelRegistry,
+	modelID string,
+	authByID map[string]*coreauth.Auth,
+	ownerMappings map[string]string,
+	ownerKeys map[string]bool,
+) []map[string]any {
 	if modelRegistry == nil {
 		return nil
 	}
@@ -409,6 +432,9 @@ func (s *Service) modelSourceEntries(modelRegistry *registry.ModelRegistry, mode
 	out := make([]map[string]any, 0, len(rawSources))
 	seen := make(map[string]struct{}, len(rawSources))
 	for _, raw := range rawSources {
+		if sourceCoveredByMappedOwners(raw, authByID, ownerMappings, ownerKeys) {
+			continue
+		}
 		clientID := strings.TrimSpace(raw.ClientID)
 		provider := strings.TrimSpace(raw.Provider)
 		channel := ""

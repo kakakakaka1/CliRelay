@@ -351,6 +351,9 @@ func TestDefaultConfiguredAvailabilityUsesMappedOwnerModels(t *testing.T) {
 	reg.RegisterClient(registryID, "codex", []*registry.ModelInfo{
 		{ID: oldModel, Object: "model", OwnedBy: "openai", Type: "openai"},
 	})
+	reg.RegisterClient(authID, "codex", []*registry.ModelInfo{
+		{ID: codexConfigModel, Object: "model", OwnedBy: "openai", Type: "openai"},
+	})
 	reg.RegisterClient(codexConfigAuthID, "codex", []*registry.ModelInfo{
 		{ID: codexConfigModel, Object: "model", OwnedBy: "openai", Type: "openai", UserDefined: true},
 	})
@@ -362,6 +365,7 @@ func TestDefaultConfiguredAvailabilityUsesMappedOwnerModels(t *testing.T) {
 	})
 	t.Cleanup(func() {
 		reg.UnregisterClient(registryID)
+		reg.UnregisterClient(authID)
 		reg.UnregisterClient(codexConfigAuthID)
 		reg.UnregisterClient(codexStaticAuthID)
 		reg.UnregisterClient(openCodeRegistryID)
@@ -379,7 +383,7 @@ func TestDefaultConfiguredAvailabilityUsesMappedOwnerModels(t *testing.T) {
 	if _, err := manager.Register(context.Background(), &coreauth.Auth{
 		ID:       codexConfigAuthID,
 		Provider: "codex",
-		Label:    "Codex Config",
+		Label:    "tabcode-pro",
 		Status:   coreauth.StatusActive,
 		Attributes: map[string]string{
 			"auth_kind":   "apikey",
@@ -438,7 +442,10 @@ func TestDefaultConfiguredAvailabilityUsesMappedOwnerModels(t *testing.T) {
 	var payload struct {
 		UsesMappedOwners bool `json:"uses_mapped_owners"`
 		Data             []struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Sources []struct {
+				Label string `json:"label"`
+			} `json:"sources"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
@@ -448,8 +455,14 @@ func TestDefaultConfiguredAvailabilityUsesMappedOwnerModels(t *testing.T) {
 		t.Fatalf("uses_mapped_owners = false, want true; body=%s", rec.Body.String())
 	}
 	ids := make(map[string]struct{}, len(payload.Data))
+	sourcesByID := make(map[string]map[string]bool, len(payload.Data))
 	for _, item := range payload.Data {
 		ids[item.ID] = struct{}{}
+		labels := make(map[string]bool, len(item.Sources))
+		for _, source := range item.Sources {
+			labels[source.Label] = true
+		}
+		sourcesByID[item.ID] = labels
 	}
 	if _, ok := ids[mappedModel]; !ok {
 		t.Fatalf("missing mapped owner model %q; ids=%v", mappedModel, ids)
@@ -459,6 +472,12 @@ func TestDefaultConfiguredAvailabilityUsesMappedOwnerModels(t *testing.T) {
 	}
 	if _, ok := ids[codexConfigModel]; !ok {
 		t.Fatalf("missing explicit codex provider model %q; ids=%v", codexConfigModel, ids)
+	}
+	if !sourcesByID[codexConfigModel]["codex · tabcode-pro"] {
+		t.Fatalf("missing explicit codex provider source for %q; sources=%v", codexConfigModel, sourcesByID[codexConfigModel])
+	}
+	if sourcesByID[codexConfigModel]["codex · Codex"] {
+		t.Fatalf("unexpected mapped owner oauth source for %q; sources=%v", codexConfigModel, sourcesByID[codexConfigModel])
 	}
 	if _, ok := ids[oldModel]; ok {
 		t.Fatalf("unexpected registry model outside mapped owner %q; ids=%v", oldModel, ids)
