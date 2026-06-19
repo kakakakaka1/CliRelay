@@ -330,6 +330,89 @@ func TestScopedModelsIncludeOwnerMappedConfiguredModels(t *testing.T) {
 	}
 }
 
+func TestScopedModelsExpandTagMatchedChannelGroupsForConfiguredRows(t *testing.T) {
+	initManagementModelsTestDB(t)
+	cfg := &config.Config{
+		Routing: config.RoutingConfig{
+			ChannelGroups: []config.RoutingChannelGroup{
+				{
+					Name: "plus-codex-opencode",
+					Match: config.ChannelGroupMatch{
+						Tags: []string{"plus", "opencode-go"},
+					},
+				},
+			},
+		},
+	}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.SetConfig(cfg)
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "codex-plus",
+		Provider: "codex",
+		Label:    "Codex Plus",
+		Metadata: map[string]any{"plan_type": "plus"},
+	}); err != nil {
+		t.Fatalf("Register codex auth: %v", err)
+	}
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "opencode-go",
+		Provider: "opencode-go",
+		Label:    "OpenCode Go",
+	}); err != nil {
+		t.Fatalf("Register opencode auth: %v", err)
+	}
+	if err := usage.UpsertAuthGroupOwnerMapping(usage.AuthGroupOwnerMappingRow{
+		AuthGroup: "codex",
+		Owner:     "codex",
+	}); err != nil {
+		t.Fatalf("UpsertAuthGroupOwnerMapping: %v", err)
+	}
+	for _, row := range []usage.ModelConfigRow{
+		{ModelID: "gpt-5.5", OwnedBy: "codex", Description: "GPT 5.5", Enabled: true, Source: "seed"},
+		{ModelID: "glm-5.2", OwnedBy: "opencode", Description: "GLM 5.2", Enabled: true, Source: "opencode-go"},
+		{ModelID: "unrelated-openai", OwnedBy: "openai", Description: "OpenAI", Enabled: true, Source: "seed"},
+	} {
+		if err := usage.UpsertModelConfig(row); err != nil {
+			t.Fatalf("UpsertModelConfig(%s): %v", row.ModelID, err)
+		}
+	}
+	h := NewHandler(cfg, "", manager)
+	decodeIDs := func(rec *httptest.ResponseRecorder) map[string]struct{} {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		ids := make(map[string]struct{}, len(payload.Data))
+		for _, item := range payload.Data {
+			ids[item.ID] = struct{}{}
+		}
+		return ids
+	}
+
+	ids := decodeIDs(performModelsRequest(
+		http.MethodGet,
+		"/models/configured-availability?allowed_channel_groups=plus-codex-opencode",
+		nil,
+		h.Models().GetConfiguredModelAvailability,
+	))
+	for _, id := range []string{"gpt-5.5", "glm-5.2"} {
+		if _, ok := ids[id]; !ok {
+			t.Fatalf("tag-matched group missing configured model %q; ids=%v", id, ids)
+		}
+	}
+	if _, ok := ids["unrelated-openai"]; ok {
+		t.Fatalf("tag-matched group unexpectedly included unrelated model; ids=%v", ids)
+	}
+}
+
 func TestDefaultConfiguredAvailabilityUsesMappedOwnerModels(t *testing.T) {
 	initManagementModelsTestDB(t)
 

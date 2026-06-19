@@ -3,6 +3,8 @@ package modelcatalog
 import (
 	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
 	modelconfigsettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/modelconfig"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	internalrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
@@ -524,6 +526,11 @@ func (s *Service) modelOwnerScope(channels []string, groups map[string]struct{})
 			ownerKeys[owner] = true
 		}
 	}
+	addOwnersForAuth := func(auth *coreauth.Auth) {
+		for _, channel := range auth.ChannelIdentifiers() {
+			addOwnersForChannel(channel)
+		}
+	}
 	if s.cfg != nil {
 		for _, group := range s.cfg.Routing.ChannelGroups {
 			groupName := internalrouting.NormalizeGroupName(group.Name)
@@ -539,6 +546,14 @@ func (s *Service) modelOwnerScope(channels []string, groups map[string]struct{})
 			for _, channel := range group.Match.Channels {
 				addOwnersForChannel(channel)
 			}
+			for _, auth := range auths {
+				if auth == nil || auth.Disabled || auth.Status == coreauth.StatusDisabled {
+					continue
+				}
+				if routingGroupMatchesAuthForModelScope(group, auth) {
+					addOwnersForAuth(auth)
+				}
+			}
 		}
 	}
 	if len(groups) == 0 {
@@ -547,6 +562,46 @@ func (s *Service) modelOwnerScope(channels []string, groups map[string]struct{})
 		}
 	}
 	return ownerKeys, explicitModels
+}
+
+func routingGroupMatchesAuthForModelScope(group config.RoutingChannelGroup, auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	prefix := internalrouting.NormalizeGroupName(auth.Prefix)
+	for _, candidate := range group.Match.Prefixes {
+		if prefix != "" && prefix == internalrouting.NormalizeGroupName(candidate) {
+			return true
+		}
+	}
+	for _, channel := range group.Match.Channels {
+		if authChannelMatches(auth, channel) {
+			return true
+		}
+	}
+	return authMatchesRoutingTags(auth, group.Match.Tags)
+}
+
+func authMatchesRoutingTags(auth *coreauth.Auth, tags []string) bool {
+	if auth == nil || len(tags) == 0 {
+		return false
+	}
+	displayTags := make(map[string]struct{})
+	for _, tag := range managementauthfiles.BuildTagPayload(auth).DisplayTags {
+		normalized := config.NormalizeRoutingTag(tag)
+		if normalized != "" {
+			displayTags[normalized] = struct{}{}
+		}
+	}
+	if len(displayTags) == 0 {
+		return false
+	}
+	for _, tag := range tags {
+		if _, ok := displayTags[config.NormalizeRoutingTag(tag)]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func authGroupOwnerMappingMap() map[string]string {
