@@ -103,7 +103,7 @@ func TestMergeObservationIgnoresDifferentProduct(t *testing.T) {
 	}
 }
 
-func TestResolveClaudeUsesFieldLevelCustomLearnedDefaultPriority(t *testing.T) {
+func TestResolveClaudeUsesFieldLevelLearnedPresetBuiltinPriority(t *testing.T) {
 	learned := &LearnedRecord{
 		Provider:      ProviderClaude,
 		AccountKey:    "acct",
@@ -119,27 +119,45 @@ func TestResolveClaudeUsesFieldLevelCustomLearnedDefaultPriority(t *testing.T) {
 
 	fp, effective := ResolveClaude(config.ClaudeIdentityFingerprintConfig{
 		Enabled:                 true,
-		StainlessRuntimeVersion: "custom-runtime",
+		StainlessRuntimeVersion: "preset-runtime",
 	}, learned)
 
 	if fp.UserAgent != "claude-cli/2.1.170 (external, cli)" {
 		t.Fatalf("UserAgent = %q, want learned", fp.UserAgent)
 	}
-	if fp.StainlessRuntimeVersion != "custom-runtime" {
-		t.Fatalf("RuntimeVersion = %q, want custom", fp.StainlessRuntimeVersion)
+	if fp.StainlessRuntimeVersion != "v24.4.0" {
+		t.Fatalf("RuntimeVersion = %q, want learned", fp.StainlessRuntimeVersion)
 	}
 	if got := effective.Fields[FieldUserAgent].Source; got != FieldSourceLearned {
 		t.Fatalf("UserAgent source = %q, want learned", got)
 	}
-	if got := effective.Fields[FieldClaudeStainlessRuntime].Source; got != FieldSourceCustom {
-		t.Fatalf("runtime source = %q, want custom", got)
+	if got := effective.Fields[FieldClaudeStainlessRuntime].Source; got != FieldSourceLearned {
+		t.Fatalf("runtime source = %q, want learned", got)
 	}
-	if got := effective.Fields[FieldClaudeStainlessPackage].Source; got != FieldSourceDefault {
-		t.Fatalf("package source = %q, want default", got)
+	if got := effective.Fields[FieldClaudeStainlessPackage].Source; got != FieldSourceBuiltinDefault {
+		t.Fatalf("package source = %q, want builtin_default", got)
 	}
 }
 
-func TestResolveGeminiUsesLearnedWhenCustomEmpty(t *testing.T) {
+func TestResolveCodexUsesPresetBeforeBuiltinDefault(t *testing.T) {
+	fp, effective := ResolveCodex(config.CodexIdentityFingerprintConfig{
+		Enabled:    true,
+		UserAgent:  "codex-tui/0.125.0 (Mac OS 26.5; arm64)",
+		Originator: "codex-tui",
+	}, nil)
+
+	if fp.UserAgent != "codex-tui/0.125.0 (Mac OS 26.5; arm64)" {
+		t.Fatalf("UserAgent = %q, want preset", fp.UserAgent)
+	}
+	if got := effective.Fields[FieldUserAgent].Source; got != FieldSourcePreset {
+		t.Fatalf("UserAgent source = %q, want preset", got)
+	}
+	if got := effective.Fields[FieldCodexWebsocketBeta].Source; got != FieldSourceBuiltinDefault {
+		t.Fatalf("websocket beta source = %q, want builtin_default", got)
+	}
+}
+
+func TestResolveGeminiUsesLearnedWhenPresetEmpty(t *testing.T) {
 	learned := &LearnedRecord{
 		Provider:   ProviderGemini,
 		AccountKey: "acct",

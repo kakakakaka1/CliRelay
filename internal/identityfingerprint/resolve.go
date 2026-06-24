@@ -10,8 +10,8 @@ func ResolveClaude(cfg config.ClaudeIdentityFingerprintConfig, learned *LearnedR
 	clean := config.CleanClaudeIdentityFingerprint(cfg)
 	defaults := config.DefaultClaudeIdentityFingerprint()
 	fields := make(map[string]FieldValue)
-	pick := func(field, custom, learnedValue, defaultValue string) string {
-		value, source := pickField(custom, learnedValue, defaultValue)
+	pick := func(field, preset, learnedValue, defaultValue string) string {
+		value, source := pickField(preset, learnedValue, defaultValue)
 		fields[field] = FieldValue{Value: value, Source: source}
 		return value
 	}
@@ -50,8 +50,8 @@ func ResolveCodex(cfg config.CodexIdentityFingerprintConfig, learned *LearnedRec
 	clean := config.CleanCodexIdentityFingerprint(cfg)
 	defaults := config.DefaultCodexIdentityFingerprint()
 	fields := make(map[string]FieldValue)
-	pick := func(field, custom, learnedValue, defaultValue string) string {
-		value, source := pickField(custom, learnedValue, defaultValue)
+	pick := func(field, preset, learnedValue, defaultValue string) string {
+		value, source := pickField(preset, learnedValue, defaultValue)
 		fields[field] = FieldValue{Value: value, Source: source}
 		return value
 	}
@@ -84,8 +84,8 @@ func ResolveGemini(cfg config.GeminiIdentityFingerprintConfig, learned *LearnedR
 	clean := config.CleanGeminiIdentityFingerprint(cfg)
 	defaults := config.DefaultGeminiIdentityFingerprint()
 	fields := make(map[string]FieldValue)
-	pick := func(field, custom, learnedValue, defaultValue string) string {
-		value, source := pickField(custom, learnedValue, defaultValue)
+	pick := func(field, preset, learnedValue, defaultValue string) string {
+		value, source := pickField(preset, learnedValue, defaultValue)
 		fields[field] = FieldValue{Value: value, Source: source}
 		return value
 	}
@@ -100,14 +100,14 @@ func ResolveGemini(cfg config.GeminiIdentityFingerprintConfig, learned *LearnedR
 	return resolved, effective(ProviderGemini, clean.Enabled, learned, fields)
 }
 
-func pickField(custom, learned, fallback string) (string, FieldSource) {
-	if value := strings.TrimSpace(custom); value != "" {
-		return value, FieldSourceCustom
-	}
+func pickField(preset, learned, fallback string) (string, FieldSource) {
 	if value := strings.TrimSpace(learned); value != "" {
 		return value, FieldSourceLearned
 	}
-	return strings.TrimSpace(fallback), FieldSourceDefault
+	if value := strings.TrimSpace(preset); value != "" {
+		return value, FieldSourcePreset
+	}
+	return strings.TrimSpace(fallback), FieldSourceBuiltinDefault
 }
 
 func learnedField(record *LearnedRecord, field string) string {

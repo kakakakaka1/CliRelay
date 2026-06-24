@@ -27,16 +27,7 @@ type identityFingerprintProviderStatus struct {
 }
 
 func (h *Handler) GetIdentityFingerprint(c *gin.Context) {
-	h.mu.Lock()
-	current := config.IdentityFingerprintConfig{}
-	if h.cfg != nil {
-		current = h.cfg.IdentityFingerprint
-	}
-	h.mu.Unlock()
-
-	current.Codex = config.CleanCodexIdentityFingerprint(current.Codex)
-	current.Claude = config.CleanClaudeIdentityFingerprint(current.Claude)
-	current.Gemini = config.CleanGeminiIdentityFingerprint(current.Gemini)
+	current := h.currentIdentityFingerprintConfig()
 	learned, effective := h.identityFingerprintState(current)
 	c.JSON(http.StatusOK, identityFingerprintResponse{
 		IdentityFingerprint: current,

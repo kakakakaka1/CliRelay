@@ -13,9 +13,13 @@ const (
 type FieldSource string
 
 const (
-	FieldSourceCustom  FieldSource = "custom"
-	FieldSourceLearned FieldSource = "learned"
-	FieldSourceDefault FieldSource = "default"
+	FieldSourceLearned        FieldSource = "learned"
+	FieldSourcePreset         FieldSource = "preset"
+	FieldSourceBuiltinDefault FieldSource = "builtin_default"
+
+	// Deprecated aliases kept for older callers; new responses emit preset or builtin_default.
+	FieldSourceCustom  = FieldSourcePreset
+	FieldSourceDefault = FieldSourceBuiltinDefault
 )
 
 type FieldValue struct {

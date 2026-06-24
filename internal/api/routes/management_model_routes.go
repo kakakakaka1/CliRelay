@@ -27,6 +27,7 @@ func registerManagementModelRoutes(group *gin.RouterGroup, h *managementhandlers
 	group.GET("/routing-config", h.GetRoutingConfig)
 	group.PUT("/routing-config", h.PutRoutingConfig)
 	group.GET("/identity-fingerprint", h.GetIdentityFingerprint)
+	group.GET("/identity-fingerprint/account", h.GetIdentityFingerprintAccount)
 	group.GET("/identity-fingerprint/codex/recommendations", h.GetCodexFingerprintRecommendations)
 	group.PUT("/identity-fingerprint", h.PutIdentityFingerprint)
 	group.DELETE("/identity-fingerprint/learned", h.DeleteIdentityFingerprintLearned)

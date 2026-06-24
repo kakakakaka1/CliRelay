@@ -1,16 +1,20 @@
 package management
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identityfingerprint"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
 func TestGetCodexFingerprintRecommendationsReturnsLogDerivedCandidates(t *testing.T) {
@@ -105,4 +109,206 @@ func TestGetCodexFingerprintRecommendationsReturnsLogDerivedCandidates(t *testin
 	if item.IgnoredHeaders["Session_id"] == "session-handler-secret" {
 		t.Fatalf("session id must be masked in ignored headers")
 	}
+}
+
+func TestListAuthFilesIncludesIdentityFingerprintSummary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	dbPath := filepath.Join(t.TempDir(), "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{
+		StoreContent:           true,
+		ContentRetentionDays:   30,
+		CleanupIntervalMinutes: 1440,
+	}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(usage.CloseDB)
+
+	authPath := filepath.Join(t.TempDir(), "claude-oauth.json")
+	if err := writeTestAuthFile(authPath); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	auth := &coreauth.Auth{
+		ID:       "claude-oauth-1",
+		FileName: "claude-oauth.json",
+		Provider: "claude",
+		Attributes: map[string]string{
+			"path": authPath,
+		},
+		Metadata: map[string]any{
+			"email": "claude@example.com",
+		},
+	}
+	identity := usage.ResolveAuthSubjectIdentity(auth)
+	if identity == nil || identity.ID == "" {
+		t.Fatal("expected auth subject identity")
+	}
+	if err := usage.UpsertIdentityFingerprint(&identityfingerprint.LearnedRecord{
+		Provider:        identityfingerprint.ProviderClaude,
+		AccountKey:      identity.ID,
+		AuthSubjectID:   identity.ID,
+		ClientProduct:   "claude-cli",
+		Version:         "2.1.170",
+		Fields:          map[string]string{identityfingerprint.FieldUserAgent: "claude-cli/2.1.170 (external, cli)"},
+		ObservedHeaders: map[string]string{"User-Agent": "claude-cli/2.1.170 (external, cli)"},
+		CreatedAt:       time.Date(2026, 6, 23, 1, 0, 0, 0, time.UTC),
+		UpdatedAt:       time.Date(2026, 6, 23, 1, 1, 0, 0, time.UTC),
+		LastSeenAt:      time.Date(2026, 6, 23, 1, 2, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("UpsertIdentityFingerprint: %v", err)
+	}
+
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+	h := &Handler{
+		cfg: &config.Config{IdentityFingerprint: config.IdentityFingerprintConfig{
+			Claude: config.ClaudeIdentityFingerprintConfig{Enabled: true},
+		}},
+		authManager: manager,
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/auth-files", nil)
+
+	h.ListAuthFiles(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var payload struct {
+		Files []struct {
+			ID                         string `json:"id"`
+			IdentityFingerprintSummary struct {
+				Provider      string         `json:"provider"`
+				AccountKey    string         `json:"account_key"`
+				PrimarySource string         `json:"primary_source"`
+				Learned       bool           `json:"learned"`
+				LearnedFields int            `json:"learned_fields"`
+				SourceCounts  map[string]int `json:"source_counts"`
+				Version       string         `json:"version"`
+			} `json:"identity_fingerprint_summary"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(payload.Files) != 1 {
+		t.Fatalf("files length = %d, want 1", len(payload.Files))
+	}
+	summary := payload.Files[0].IdentityFingerprintSummary
+	if summary.Provider != "claude" || summary.AccountKey != identity.ID {
+		t.Fatalf("summary identity = %+v, want provider/account %s", summary, identity.ID)
+	}
+	if !summary.Learned || summary.PrimarySource != "learned" || summary.Version != "2.1.170" {
+		t.Fatalf("summary learned/source/version = %+v", summary)
+	}
+	if summary.SourceCounts["learned"] != 1 || summary.SourceCounts["builtin_default"] == 0 {
+		t.Fatalf("source counts = %#v, want learned and builtin_default fallback fields", summary.SourceCounts)
+	}
+}
+
+func TestGetIdentityFingerprintAccountReturnsLearnedPresetAndBuiltinDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	dbPath := filepath.Join(t.TempDir(), "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{
+		StoreContent:           true,
+		ContentRetentionDays:   30,
+		CleanupIntervalMinutes: 1440,
+	}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(usage.CloseDB)
+
+	accountKey := "authsub_codex_test"
+	if err := usage.UpsertIdentityFingerprint(&identityfingerprint.LearnedRecord{
+		Provider:      identityfingerprint.ProviderCodex,
+		AccountKey:    accountKey,
+		AuthSubjectID: accountKey,
+		ClientProduct: "codex-tui",
+		Version:       "0.125.0",
+		Fields: map[string]string{
+			identityfingerprint.FieldUserAgent:       "codex-tui/0.125.0 (Mac OS 26.5; arm64)",
+			identityfingerprint.FieldCodexVersion:    "0.125.0",
+			identityfingerprint.FieldCodexOriginator: "codex-tui",
+		},
+		ObservedHeaders: map[string]string{
+			"User-Agent": "codex-tui/0.125.0 (Mac OS 26.5; arm64)",
+			"Version":    "0.125.0",
+			"Originator": "codex-tui",
+		},
+		CreatedAt:  time.Date(2026, 6, 23, 2, 0, 0, 0, time.UTC),
+		UpdatedAt:  time.Date(2026, 6, 23, 2, 1, 0, 0, time.UTC),
+		LastSeenAt: time.Date(2026, 6, 23, 2, 2, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("UpsertIdentityFingerprint: %v", err)
+	}
+
+	h := &Handler{cfg: &config.Config{IdentityFingerprint: config.IdentityFingerprintConfig{
+		Codex: config.CodexIdentityFingerprintConfig{
+			Enabled:       true,
+			UserAgent:     "codex-tui/0.118.0 (Mac OS 26.3.1; arm64)",
+			WebsocketBeta: "responses_websockets=2026-02-06",
+		},
+	}}}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/identity-fingerprint/account?provider=codex&account_key="+accountKey, nil)
+
+	h.GetIdentityFingerprintAccount(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var payload struct {
+		Summary struct {
+			PrimarySource string         `json:"primary_source"`
+			SourceCounts  map[string]int `json:"source_counts"`
+			LearnedFields int            `json:"learned_fields"`
+		} `json:"summary"`
+		Effective struct {
+			Fields map[string]struct {
+				Value  string `json:"value"`
+				Source string `json:"source"`
+			} `json:"fields"`
+		} `json:"effective"`
+		Learned struct {
+			ObservedHeaders map[string]string `json:"observed_headers"`
+		} `json:"learned"`
+		Preset struct {
+			UserAgent string `json:"user-agent"`
+		} `json:"preset"`
+		BuiltinDefault struct {
+			Originator string `json:"originator"`
+		} `json:"builtin_default"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got := payload.Effective.Fields[identityfingerprint.FieldUserAgent]; got.Value != "codex-tui/0.125.0 (Mac OS 26.5; arm64)" || got.Source != "learned" {
+		t.Fatalf("user-agent field = %+v, want learned Codex client", got)
+	}
+	if got := payload.Effective.Fields[identityfingerprint.FieldCodexWebsocketBeta]; got.Value != "responses_websockets=2026-02-06" || got.Source != "preset" {
+		t.Fatalf("websocket beta field = %+v, want preset fallback", got)
+	}
+	if payload.Summary.PrimarySource != "learned" || payload.Summary.LearnedFields != 3 {
+		t.Fatalf("summary = %+v, want learned primary with three learned fields", payload.Summary)
+	}
+	if payload.Preset.UserAgent != "codex-tui/0.118.0 (Mac OS 26.3.1; arm64)" {
+		t.Fatalf("preset user-agent = %q", payload.Preset.UserAgent)
+	}
+	if payload.BuiltinDefault.Originator != "codex-tui" {
+		t.Fatalf("builtin default originator = %q", payload.BuiltinDefault.Originator)
+	}
+	if payload.Learned.ObservedHeaders["Version"] != "0.125.0" {
+		t.Fatalf("observed headers = %#v", payload.Learned.ObservedHeaders)
+	}
+}
+
+func writeTestAuthFile(path string) error {
+	return os.WriteFile(path, []byte(`{"type":"claude"}`), 0o600)
 }
