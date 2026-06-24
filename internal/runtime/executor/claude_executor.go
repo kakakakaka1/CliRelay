@@ -102,7 +102,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		return resp, err
 	}
 
-	claudeFP, claudeFPEnabled := claudeIdentityFingerprint(e.cfg)
+	claudeFP, claudeFPEnabled := claudeIdentityFingerprint(e.cfg, auth, execCtx.Context)
 	claudeFPSessionID := ""
 	// Apply cloaking (system prompt injection, fake user ID, sensitive word obfuscation)
 	// based on client type and configuration.
@@ -237,7 +237,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		return nil, err
 	}
 
-	claudeFP, claudeFPEnabled := claudeIdentityFingerprint(e.cfg)
+	claudeFP, claudeFPEnabled := claudeIdentityFingerprint(e.cfg, auth, execCtx.Context)
 	claudeFPSessionID := ""
 	// Apply cloaking (system prompt injection, fake user ID, sensitive word obfuscation)
 	// based on client type and configuration.
@@ -406,6 +406,12 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	// Extract betas from body and convert to header (for count_tokens too)
 	var extraBetas []string
 	extraBetas, body = extractAndRemoveBetas(body)
+	claudeFP, claudeFPEnabled := claudeIdentityFingerprint(e.cfg, auth, execCtx.Context)
+	claudeFPSessionID := ""
+	if claudeFPEnabled {
+		claudeFPSessionID = claudeFingerprintSessionID(claudeFP)
+		body = applyClaudeIdentityFingerprintPayload(auth, body, claudeFP, claudeFPSessionID)
+	}
 	if isClaudeOAuthToken(apiKey) && !auth.ToolPrefixDisabled() {
 		body = applyClaudeToolPrefix(body, claudeToolPrefix)
 	}
@@ -414,11 +420,6 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	httpReq, err := http.NewRequestWithContext(execCtx.Context, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return cliproxyexecutor.Response{}, err
-	}
-	claudeFP, claudeFPEnabled := claudeIdentityFingerprint(e.cfg)
-	claudeFPSessionID := ""
-	if claudeFPEnabled {
-		claudeFPSessionID = claudeFingerprintSessionID(claudeFP)
 	}
 	applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg, claudeFP, claudeFPEnabled, claudeFPSessionID)
 	recorder := execCtx.Recorder()

@@ -132,5 +132,10 @@ func BuildEntry(auth *coreauth.Auth, opts EntryOptions) map[string]any {
 	if claims := CodexIDTokenClaims(auth); claims != nil {
 		entry["id_token"] = claims
 	}
+	if admission := CodexOAuthAdmissionPayload(auth); len(admission) > 0 {
+		entry["codex_oauth_admission"] = admission
+		entry["codex_cli_only"] = admission["enabled"]
+		entry["codex_cli_only_allowed_clients"] = admission["allowed_clients"]
+	}
 	return entry
 }

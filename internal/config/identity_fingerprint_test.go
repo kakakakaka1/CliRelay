@@ -37,6 +37,33 @@ func TestNormalizeCodexIdentityFingerprintAppliesCurrentDefaults(t *testing.T) {
 	}
 }
 
+func TestCleanCodexIdentityFingerprintPreservesEmptyAutomaticFields(t *testing.T) {
+	t.Parallel()
+
+	got := CleanCodexIdentityFingerprint(CodexIdentityFingerprintConfig{
+		Enabled:     true,
+		UserAgent:   " ",
+		SessionMode: "INVALID",
+		CustomHeaders: map[string]string{
+			" X-Test ": " value ",
+			"X-Blank":  " ",
+		},
+	})
+
+	if !got.Enabled {
+		t.Fatal("Enabled = false, want true")
+	}
+	if got.UserAgent != "" {
+		t.Fatalf("UserAgent = %q, want empty automatic field", got.UserAgent)
+	}
+	if got.SessionMode != "per-request" {
+		t.Fatalf("SessionMode = %q, want safe fallback for invalid non-empty value", got.SessionMode)
+	}
+	if got.CustomHeaders["X-Test"] != "value" || len(got.CustomHeaders) != 1 {
+		t.Fatalf("CustomHeaders = %#v, want trimmed non-empty header only", got.CustomHeaders)
+	}
+}
+
 func TestDefaultClaudeIdentityFingerprintMirrorsClaudeCode(t *testing.T) {
 	t.Parallel()
 
@@ -100,5 +127,47 @@ func TestNormalizeClaudeIdentityFingerprintBuildsUserAgentFromVersionAndEntrypoi
 	}
 	if got.CustomHeaders["X-Test"] != "value" || len(got.CustomHeaders) != 1 {
 		t.Fatalf("CustomHeaders = %#v, want trimmed non-empty header only", got.CustomHeaders)
+	}
+}
+
+func TestCleanClaudeIdentityFingerprintPreservesEmptyAutomaticFields(t *testing.T) {
+	t.Parallel()
+
+	got := CleanClaudeIdentityFingerprint(ClaudeIdentityFingerprintConfig{
+		Enabled:    true,
+		CLIVersion: " ",
+		Entrypoint: " cli ",
+	})
+
+	if !got.Enabled {
+		t.Fatal("Enabled = false, want true")
+	}
+	if got.CLIVersion != "" {
+		t.Fatalf("CLIVersion = %q, want empty automatic field", got.CLIVersion)
+	}
+	if got.Entrypoint != "cli" {
+		t.Fatalf("Entrypoint = %q, want trimmed custom field", got.Entrypoint)
+	}
+	if got.UserAgent != "" {
+		t.Fatalf("UserAgent = %q, want empty automatic field", got.UserAgent)
+	}
+}
+
+func TestDefaultGeminiIdentityFingerprint(t *testing.T) {
+	t.Parallel()
+
+	got := DefaultGeminiIdentityFingerprint()
+
+	if got.Enabled {
+		t.Fatal("Enabled = true, want false by default")
+	}
+	if got.UserAgent != "google-api-nodejs-client/9.15.1" {
+		t.Fatalf("UserAgent = %q, want Gemini CLI default", got.UserAgent)
+	}
+	if got.APIClient != "gl-node/22.17.0" {
+		t.Fatalf("APIClient = %q, want gl-node default", got.APIClient)
+	}
+	if got.ClientMetadata != "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI" {
+		t.Fatalf("ClientMetadata = %q, want Gemini CLI metadata", got.ClientMetadata)
 	}
 }

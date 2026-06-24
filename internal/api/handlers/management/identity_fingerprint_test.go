@@ -67,6 +67,7 @@ func TestGetCodexFingerprintRecommendationsReturnsLogDerivedCandidates(t *testin
 				UserAgent     string            `json:"user-agent"`
 				Version       string            `json:"version"`
 				Originator    string            `json:"originator"`
+				BetaFeatures  string            `json:"x-codex-beta-features"`
 				SessionID     string            `json:"session-id"`
 				CustomHeaders map[string]string `json:"custom-headers"`
 			} `json:"recommended"`
@@ -95,8 +96,11 @@ func TestGetCodexFingerprintRecommendationsReturnsLogDerivedCandidates(t *testin
 	if item.Recommended.SessionID != "" {
 		t.Fatalf("session-id = %q, want empty", item.Recommended.SessionID)
 	}
-	if got := item.Recommended.CustomHeaders["X-Codex-Beta-Features"]; got != "exec_command_v2" {
-		t.Fatalf("X-Codex-Beta-Features = %q", got)
+	if item.Recommended.BetaFeatures != "exec_command_v2" {
+		t.Fatalf("x-codex-beta-features = %q", item.Recommended.BetaFeatures)
+	}
+	if _, exists := item.Recommended.CustomHeaders["X-Codex-Beta-Features"]; exists {
+		t.Fatalf("X-Codex-Beta-Features must be returned as a managed field, not a custom header")
 	}
 	if item.IgnoredHeaders["Session_id"] == "session-handler-secret" {
 		t.Fatalf("session id must be masked in ignored headers")
