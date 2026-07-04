@@ -83,6 +83,10 @@ func TestBlueGreenDeployScriptSyntaxAndGuards(t *testing.T) {
 		`/healthz`,
 		`CLIRELAY_PORT=`,
 		`.active-port`,
+		`HEALTH_TIMEOUT_SECONDS`,
+		`MIN_AVAILABLE_MB`,
+		`NGINX_CONTAINER`,
+		`docker exec "$NGINX_CONTAINER" nginx -t`,
 		`nginx -t`,
 		`DRAIN_SECONDS`,
 	} {
