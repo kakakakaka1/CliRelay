@@ -444,6 +444,59 @@ func TestBuildComposeArgsIncludesProjectName(t *testing.T) {
 	}
 }
 
+func TestRunComposeUpdateStartsFullComposeStack(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "docker.log")
+	dockerPath := filepath.Join(dir, "docker")
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COMPOSE_LOG\"\n"), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	if err := os.WriteFile(composePath, []byte("services:\n  clirelay:\n    image: clirelay\n  postgres:\n    image: postgres:15-alpine\n  redis:\n    image: redis:7-alpine\n"), 0o644); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	if err := os.WriteFile(envPath, []byte("CLI_PROXY_IMAGE=clirelay\n"), 0o644); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("COMPOSE_LOG", logPath)
+
+	err := runComposeUpdate(context.Background(), composePath, envPath, "cliproxy", "clirelay", updaterRunReporter{})
+	if err != nil {
+		t.Fatalf("runComposeUpdate failed: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read compose log: %v", err)
+	}
+	got := strings.Split(strings.TrimSpace(string(data)), "\n")
+	want := []string{
+		"compose --project-name cliproxy --env-file " + envPath + " -f " + composePath + " pull clirelay",
+		"compose --project-name cliproxy --env-file " + envPath + " -f " + composePath + " up -d --remove-orphans",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("compose commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunComposeUpdateRejectsLegacySQLiteComposeWithoutRuntimeStack(t *testing.T) {
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(composePath, []byte("services:\n  clirelay:\n    image: clirelay\n"), 0o644); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	if err := os.WriteFile(envPath, []byte("CLI_PROXY_IMAGE=clirelay\n"), 0o644); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	err := runComposeUpdate(context.Background(), composePath, envPath, "cliproxy", "clirelay", updaterRunReporter{})
+	if err == nil || !strings.Contains(err.Error(), "runtime data stack is missing PostgreSQL/Redis") {
+		t.Fatalf("runComposeUpdate error = %v, want runtime data stack guard", err)
+	}
+}
+
 func eventually(t *testing.T, timeout time.Duration, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

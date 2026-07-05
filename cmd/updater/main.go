@@ -551,16 +551,58 @@ func (r updaterRunReporter) Log(stream string, message string) {
 }
 
 func runComposeUpdate(ctx context.Context, composeFile string, envFile string, projectName string, service string, reporter updateReporter) error {
+	if err := ensureRuntimeDataStackConfig(composeFile, envFile); err != nil {
+		return err
+	}
 	reporter.Stage("pulling", "pulling target image")
 	if err := runDockerCompose(ctx, composeFile, envFile, projectName, reporter, "pull", service); err != nil {
 		return err
 	}
 	reporter.Stage("restarting", "restarting service container")
-	if err := runDockerCompose(ctx, composeFile, envFile, projectName, reporter, "up", "-d", "--remove-orphans", service); err != nil {
+	if err := runDockerCompose(ctx, composeFile, envFile, projectName, reporter, "up", "-d", "--remove-orphans"); err != nil {
 		return err
 	}
 	reporter.Stage("verifying", "docker update commands completed")
 	return nil
+}
+
+func ensureRuntimeDataStackConfig(composeFile string, envFile string) error {
+	composeData, err := os.ReadFile(composeFile)
+	if strings.TrimSpace(composeFile) == "" || os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read docker compose file: %w", err)
+	}
+	composeText := string(composeData)
+	if hasComposeService(composeText, "postgres") && hasComposeService(composeText, "redis") {
+		return nil
+	}
+
+	envData, err := os.ReadFile(envFile)
+	if strings.TrimSpace(envFile) == "" || os.IsNotExist(err) {
+		return fmt.Errorf("docker compose runtime data stack is missing PostgreSQL/Redis services; run install.sh update or update docker-compose.yml before using online update")
+	}
+	if err != nil {
+		return fmt.Errorf("read docker env file: %w", err)
+	}
+	envText := string(envData)
+	if strings.Contains(envText, "CLIRELAY_POSTGRES_DSN=") &&
+		strings.Contains(envText, "CLIRELAY_REDIS_ENABLE=true") &&
+		strings.Contains(envText, "CLIRELAY_REDIS_ADDR=") {
+		return nil
+	}
+	return fmt.Errorf("docker compose runtime data stack is missing PostgreSQL/Redis services; run install.sh update or update docker-compose.yml before using online update")
+}
+
+func hasComposeService(content string, service string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == service+":" && len(line) > len(strings.TrimLeft(line, " \t")) {
+			return true
+		}
+	}
+	return false
 }
 
 func runDockerCompose(ctx context.Context, composeFile string, envFile string, projectName string, reporter updateReporter, args ...string) error {
