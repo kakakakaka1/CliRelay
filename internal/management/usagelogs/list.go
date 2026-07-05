@@ -13,48 +13,7 @@ import (
 
 func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any, error) {
 	keyNameMap, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap := s.buildNameMaps()
-
-	selectedChannelKeys := make(map[string]struct{})
-	for _, part := range input.Channels {
-		key := strings.ToLower(strings.TrimSpace(part))
-		if key == "" {
-			continue
-		}
-		selectedChannelKeys[key] = struct{}{}
-	}
-
-	var authIndexes []string
-	var channelNames []string
-	authIndexChannelNames := make(map[string][]string)
-	if len(selectedChannelKeys) > 0 {
-		for key := range selectedChannelKeys {
-			channelNames = append(channelNames, key)
-		}
-		for raw, name := range channelNameMap {
-			key := strings.ToLower(strings.TrimSpace(name))
-			if key == "" {
-				continue
-			}
-			if _, ok := selectedChannelKeys[key]; ok {
-				channelNames = append(channelNames, raw)
-			}
-		}
-		for idx, name := range authIndexChannelMap {
-			key := strings.ToLower(strings.TrimSpace(name))
-			if key == "" {
-				continue
-			}
-			if _, ok := selectedChannelKeys[key]; ok {
-				authIndexes = append(authIndexes, idx)
-				if legacyChannels := ambiguousAuthIndexChannelMap[idx]; len(legacyChannels) > 0 {
-					authIndexChannelNames[idx] = append(authIndexChannelNames[idx], legacyChannels...)
-				}
-			}
-		}
-		if len(authIndexes) == 0 && len(channelNames) == 0 {
-			authIndexes = []string{""}
-		}
-	}
+	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap)
 
 	params := usage.LogQueryParams{
 		Page:                  input.Page,
@@ -105,27 +64,7 @@ func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any,
 			filters.APIKeyNames[key] = name
 		}
 	}
-	if len(filters.Channels) > 0 {
-		seen := make(map[string]struct{})
-		channels := make([]string, 0, len(filters.Channels))
-		for _, value := range filters.Channels {
-			trimmed := strings.TrimSpace(value)
-			if name, ok := channelNameMap[trimmed]; ok && strings.TrimSpace(name) != "" {
-				trimmed = strings.TrimSpace(name)
-			}
-			key := strings.ToLower(trimmed)
-			if key == "" {
-				continue
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			channels = append(channels, trimmed)
-		}
-		sort.Slice(channels, func(i, j int) bool { return strings.ToLower(channels[i]) < strings.ToLower(channels[j]) })
-		filters.Channels = channels
-	}
+	filters.Channels = displayChannelFilters(filters.Channels, channelNameMap)
 
 	if result.Items == nil {
 		result.Items = make([]usage.LogRow, 0)
@@ -173,13 +112,20 @@ func (s *Service) ClearRequestLogs(options usage.ClearRequestLogsOptions) (int, 
 
 func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, error) {
 	_, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap := s.buildNameMaps()
+	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap)
 	params := usage.LogQueryParams{
-		Page:   input.Page,
-		Size:   input.Size,
-		Days:   input.Days,
-		APIKey: input.APIKey,
-		Model:  input.Model,
-		Status: input.Status,
+		Page:                  input.Page,
+		Size:                  input.Size,
+		Days:                  input.Days,
+		APIKey:                input.APIKey,
+		Models:                input.Models,
+		Statuses:              input.Statuses,
+		MatchNoModels:         input.MatchNoModels,
+		MatchNoChannels:       input.MatchNoChannels,
+		MatchNoStatuses:       input.MatchNoStatuses,
+		AuthIndexes:           authIndexes,
+		ChannelNames:          channelNames,
+		AuthIndexChannelNames: authIndexChannelNames,
 	}
 
 	result, err := usage.QueryLogs(params)
@@ -187,6 +133,10 @@ func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, er
 		return nil, err
 	}
 	stats, err := usage.QueryStats(params)
+	if err != nil {
+		return nil, err
+	}
+	filters, err := usage.QueryFiltersForLogs(params)
 	if err != nil {
 		return nil, err
 	}
@@ -204,9 +154,18 @@ func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, er
 		result.Items[i].APIKeyName = ""
 	}
 
-	models, _ := usage.QueryModelsForKey(input.APIKey, params.Days)
-	if models == nil {
-		models = make([]string, 0)
+	filters.Channels = displayChannelFilters(filters.Channels, channelNameMap)
+	if result.Items == nil {
+		result.Items = make([]usage.LogRow, 0)
+	}
+	if filters.Models == nil {
+		filters.Models = make([]string, 0)
+	}
+	if filters.Channels == nil {
+		filters.Channels = make([]string, 0)
+	}
+	if filters.Statuses == nil {
+		filters.Statuses = make([]string, 0)
 	}
 
 	return map[string]any{
@@ -217,9 +176,82 @@ func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, er
 		"stats":        stats,
 		"api_key_name": apiKeyName,
 		"filters": map[string]any{
-			"models": models,
+			"models":   filters.Models,
+			"channels": filters.Channels,
+			"statuses": filters.Statuses,
 		},
 	}, nil
+}
+
+func channelFilterSelectors(channels []string, channelNameMap, authIndexChannelMap map[string]string, ambiguousAuthIndexChannelMap map[string][]string) ([]string, []string, map[string][]string) {
+	selectedChannelKeys := make(map[string]struct{})
+	for _, part := range channels {
+		key := strings.ToLower(strings.TrimSpace(part))
+		if key == "" {
+			continue
+		}
+		selectedChannelKeys[key] = struct{}{}
+	}
+	if len(selectedChannelKeys) == 0 {
+		return nil, nil, nil
+	}
+
+	var authIndexes []string
+	var channelNames []string
+	authIndexChannelNames := make(map[string][]string)
+	for key := range selectedChannelKeys {
+		channelNames = append(channelNames, key)
+	}
+	for raw, name := range channelNameMap {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			continue
+		}
+		if _, ok := selectedChannelKeys[key]; ok {
+			channelNames = append(channelNames, raw)
+		}
+	}
+	for idx, name := range authIndexChannelMap {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			continue
+		}
+		if _, ok := selectedChannelKeys[key]; ok {
+			authIndexes = append(authIndexes, idx)
+			if legacyChannels := ambiguousAuthIndexChannelMap[idx]; len(legacyChannels) > 0 {
+				authIndexChannelNames[idx] = append(authIndexChannelNames[idx], legacyChannels...)
+			}
+		}
+	}
+	if len(authIndexes) == 0 && len(channelNames) == 0 {
+		authIndexes = []string{""}
+	}
+	return authIndexes, channelNames, authIndexChannelNames
+}
+
+func displayChannelFilters(values []string, channelNameMap map[string]string) []string {
+	if len(values) == 0 {
+		return values
+	}
+	seen := make(map[string]struct{})
+	channels := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if name, ok := channelNameMap[trimmed]; ok && strings.TrimSpace(name) != "" {
+			trimmed = strings.TrimSpace(name)
+		}
+		key := strings.ToLower(trimmed)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		channels = append(channels, trimmed)
+	}
+	sort.Slice(channels, func(i, j int) bool { return strings.ToLower(channels[i]) < strings.ToLower(channels[j]) })
+	return channels
 }
 
 func (s *Service) publicAPIKeyName(apiKey string) string {
