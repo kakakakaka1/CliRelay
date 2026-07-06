@@ -715,18 +715,6 @@ func composeAppImage(composeText string, service string) string {
 	return "ghcr.io/kittors/clirelay:latest"
 }
 
-func imageFallback(image string) string {
-	text := strings.TrimSpace(image)
-	const cliProxyImagePrefix = "${CLI_PROXY_IMAGE:-"
-	if strings.HasPrefix(text, cliProxyImagePrefix) && strings.HasSuffix(text, "}") {
-		fallback := strings.TrimSuffix(strings.TrimPrefix(text, cliProxyImagePrefix), "}")
-		if strings.TrimSpace(fallback) != "" {
-			return strings.TrimSpace(fallback)
-		}
-	}
-	return text
-}
-
 func firstApplicationService(services map[string]any) string {
 	for name := range services {
 		if name != "postgres" && name != "redis" && name != "clirelay-init" && !strings.Contains(name, "updater") {
