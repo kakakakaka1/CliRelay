@@ -50,16 +50,15 @@ func QueryDailyUsageByAuthSubject(matcher AuthSubjectMatcher, days int) ([]Daily
 
 	byDate := make(map[string]*DailyUsagePoint, days)
 	for rows.Next() {
-		var ts string
+		var ts storedTime
 		var cost float64
 		if err := rows.Scan(&ts, &cost); err != nil {
 			return nil, fmt.Errorf("usage: daily usage by auth subject scan: %w", err)
 		}
-		parsed, ok := parseStoredTime(ts)
-		if !ok {
+		if !ts.Valid {
 			continue
 		}
-		key := localDayKeyAt(parsed)
+		key := localDayKeyAt(ts.Time)
 		point := byDate[key]
 		if point == nil {
 			point = &DailyUsagePoint{Date: key}
@@ -137,16 +136,15 @@ func QueryHourlyUsageByAuthSubject(matcher AuthSubjectMatcher, hours int) ([]Hou
 	defer rows.Close()
 
 	for rows.Next() {
-		var ts string
+		var ts storedTime
 		var cost float64
 		if err := rows.Scan(&ts, &cost); err != nil {
 			return nil, fmt.Errorf("usage: hourly usage by auth subject scan: %w", err)
 		}
-		parsed, ok := parseStoredTime(ts)
-		if !ok {
+		if !ts.Valid {
 			continue
 		}
-		key := parsed.In(loc).Truncate(time.Hour).Format("2006-01-02 15:00")
+		key := ts.Time.In(loc).Truncate(time.Hour).Format("2006-01-02 15:00")
 		if bucket := byKey[key]; bucket != nil {
 			bucket.Requests++
 			bucket.Cost += cost

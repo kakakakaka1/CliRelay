@@ -139,8 +139,8 @@ func QueryQuotaSnapshotPoints(authIndex string, start, end time.Time) ([]QuotaSn
 	result := make([]QuotaSnapshotPoint, 0)
 	for rows.Next() {
 		var point QuotaSnapshotPoint
-		var recordedAt string
-		var resetAt sql.NullString
+		var recordedAt storedTime
+		var resetAt storedTime
 		var percent sql.NullFloat64
 		if err := rows.Scan(
 			&recordedAt,
@@ -154,17 +154,16 @@ func QueryQuotaSnapshotPoints(authIndex string, start, end time.Time) ([]QuotaSn
 		); err != nil {
 			return nil, fmt.Errorf("usage: quota snapshot points scan: %w", err)
 		}
-		if parsed, ok := parseStoredTime(recordedAt); ok {
-			point.RecordedAt = parsed
+		if recordedAt.Valid {
+			point.RecordedAt = recordedAt.Time
 		}
 		if percent.Valid {
 			v := percent.Float64
 			point.Percent = &v
 		}
 		if resetAt.Valid {
-			if parsed, ok := parseStoredTime(resetAt.String); ok {
-				point.ResetAt = &parsed
-			}
+			parsed := resetAt.Time
+			point.ResetAt = &parsed
 		}
 		result = append(result, point)
 	}
