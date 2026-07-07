@@ -6,6 +6,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
@@ -103,5 +104,100 @@ func TestConfiguredAvailabilityIncludesClineAliasUpstreamModelID(t *testing.T) {
 	source := sources[0]
 	if source["provider"] != "cline" || source["model_id"] != modelID || source["upstream_model_id"] != upstreamModelID {
 		t.Fatalf("source = %#v, want cline alias with upstream model id", source)
+	}
+}
+
+func TestDefaultMappedOwnerRowsKeepProviderModelWithoutConfigRow(t *testing.T) {
+	const modelID = "glm-5.2"
+	const clientID = "source-test-ollama-cloud"
+
+	modelRegistry := registry.GetGlobalRegistry()
+	modelRegistry.UnregisterClient(clientID)
+	t.Cleanup(func() {
+		modelRegistry.UnregisterClient(clientID)
+	})
+
+	modelRegistry.RegisterClient(clientID, "ollama-cloud", []*registry.ModelInfo{{
+		ID:      modelID,
+		Object:  "model",
+		OwnedBy: "ollama",
+	}})
+
+	authByID := map[string]*coreauth.Auth{
+		clientID: {ID: clientID, Provider: "ollama-cloud", Label: "Ollama Cloud", Status: coreauth.StatusActive},
+	}
+	ownerMappings := map[string]string{"ollama-cloud": "ollama"}
+	ownerKeys := map[string]bool{"ollama": true}
+	models := []map[string]any{{"id": modelID, "object": "model", "owned_by": "ollama"}}
+
+	got := withDefaultMappedOwnerRows(modelRegistry, models, nil, ownerKeys, nil, authByID, ownerMappings)
+	if len(got) != 1 || got[0]["id"] != modelID {
+		t.Fatalf("models = %#v, want provider model kept when no enabled mapped-owner config row exists", got)
+	}
+}
+
+func TestDefaultMappedOwnerRowsReplaceProviderModelWhenConfigRowExists(t *testing.T) {
+	const modelID = "qwen3.7-max"
+	const clientID = "source-test-cline-replace"
+
+	modelRegistry := registry.GetGlobalRegistry()
+	modelRegistry.UnregisterClient(clientID)
+	t.Cleanup(func() {
+		modelRegistry.UnregisterClient(clientID)
+	})
+
+	modelRegistry.RegisterClient(clientID, "cline", []*registry.ModelInfo{{
+		ID:      modelID,
+		Object:  "model",
+		OwnedBy: "cline",
+	}})
+
+	authByID := map[string]*coreauth.Auth{
+		clientID: {ID: clientID, Provider: "cline", Label: "ClinePass", Status: coreauth.StatusActive},
+	}
+	ownerMappings := map[string]string{"cline": "cline"}
+	ownerKeys := map[string]bool{"cline": true}
+	models := []map[string]any{{"id": modelID, "object": "model", "owned_by": "cline"}}
+	rows := []usage.ModelConfigRow{{
+		ModelID: modelID,
+		OwnedBy: "cline",
+		Enabled: true,
+		Source:  "seed",
+	}}
+
+	got := withDefaultMappedOwnerRows(modelRegistry, models, rows, ownerKeys, map[string]bool{modelID: true}, authByID, ownerMappings)
+	if len(got) != 1 || got[0]["id"] != modelID || got[0]["source"] != "seed" {
+		t.Fatalf("models = %#v, want mapped-owner config row to replace matching provider registry model", got)
+	}
+}
+
+func TestModelSourceEntriesKeepMappedProviderSourceForRetainedRegistryModel(t *testing.T) {
+	const modelID = "glm-5.2"
+	const clientID = "source-test-ollama-cloud-source"
+
+	modelRegistry := registry.GetGlobalRegistry()
+	modelRegistry.UnregisterClient(clientID)
+	t.Cleanup(func() {
+		modelRegistry.UnregisterClient(clientID)
+	})
+
+	modelRegistry.RegisterClient(clientID, "ollama-cloud", []*registry.ModelInfo{{
+		ID:      modelID,
+		Object:  "model",
+		OwnedBy: "ollama",
+	}})
+
+	authByID := map[string]*coreauth.Auth{
+		clientID: {ID: clientID, Provider: "ollama-cloud", Label: "Ollama Cloud", Status: coreauth.StatusActive},
+	}
+	sources := New(&config.Config{}, nil).modelSourceEntries(
+		modelRegistry,
+		modelID,
+		authByID,
+		map[string]string{"ollama-cloud": "ollama"},
+		map[string]bool{"ollama": true},
+	)
+	if len(sources) != 1 || sources[0]["provider"] != "ollama-cloud" || sources[0]["channel"] != "Ollama Cloud" || sources[0]["model_id"] != modelID {
+		t.Fatalf("sources = %#v, want retained registry model to show mapped provider source", sources)
 	}
 }
