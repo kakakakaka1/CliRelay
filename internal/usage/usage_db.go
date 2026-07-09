@@ -26,6 +26,8 @@ type LogRow struct {
 	VisionFallbackModel string    `json:"vision_fallback_model,omitempty"`
 	Source              string    `json:"source"`
 	ChannelName         string    `json:"channel_name"`
+	Provider            string    `json:"provider,omitempty"`
+	AuthType            string    `json:"auth_type,omitempty"` // "oauth" | "api"
 	AuthIndex           string    `json:"auth_index"`
 	Failed              bool      `json:"failed"`
 	Streaming           bool      `json:"streaming"`
@@ -39,6 +41,7 @@ type LogRow struct {
 	Cost                float64   `json:"cost"`
 	HasContent          bool      `json:"has_content"`
 }
+
 
 // LogQueryParams holds filter/pagination parameters for QueryLogs.
 type LogQueryParams struct {
@@ -72,12 +75,26 @@ type LogQueryResult struct {
 
 // FilterOptions holds the available filter values for the UI.
 type FilterOptions struct {
-	APIKeys     []string          `json:"api_keys"`
-	APIKeyNames map[string]string `json:"api_key_names"`
-	Models      []string          `json:"models"`
-	Channels    []string          `json:"channels"`
-	Statuses    []string          `json:"statuses"`
+	APIKeys     []string              `json:"api_keys"`
+	APIKeyNames map[string]string     `json:"api_key_names"`
+	Models      []string              `json:"models"`
+	// Channels is a legacy plain-name list kept for older clients.
+	// Prefer ChannelOptions when both are present.
+	Channels       []string              `json:"channels"`
+	ChannelOptions []ChannelFilterOption `json:"channel_options,omitempty"`
+	Statuses       []string              `json:"statuses"`
 }
+
+// ChannelFilterOption is one selectable channel in request-log filters.
+// Value is stable for filtering (auth_index when known, otherwise the display name).
+type ChannelFilterOption struct {
+	Value     string `json:"value"`
+	Label     string `json:"label"`
+	Provider  string `json:"provider,omitempty"`
+	AuthType  string `json:"auth_type,omitempty"` // "oauth" | "api"
+	AuthIndex string `json:"auth_index,omitempty"`
+}
+
 
 // LogStats holds aggregated stats over the filtered result set.
 type LogStats struct {

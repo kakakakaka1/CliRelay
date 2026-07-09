@@ -20,7 +20,7 @@ func TestBuildWhereClauseUsesParameterizedFilters(t *testing.T) {
 		ChannelNames:          []string{" Codex ", ""},
 	})
 
-	wantWhere := " WHERE timestamp >= ? AND (api_key = ? OR api_key = ?) AND model IN (?,?) AND failed = 1 AND ((auth_index IN (?) AND trim(coalesce(channel_name, '')) = '') OR (auth_index = ? AND lower(trim(channel_name)) IN (?)) OR lower(trim(channel_name)) IN (?))"
+	wantWhere := " WHERE timestamp >= ? AND (api_key = ? OR api_key = ?) AND model IN (?,?) AND failed = 1 AND (auth_index IN (?) OR (auth_index = ? AND lower(trim(channel_name)) IN (?)) OR lower(trim(channel_name)) IN (?))"
 	if where != wantWhere {
 		t.Fatalf("where = %q, want %q", where, wantWhere)
 	}

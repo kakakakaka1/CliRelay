@@ -178,11 +178,12 @@ func QueryFiltersForLogs(params LogQueryParams) (FilterOptions, error) {
 	if db == nil {
 		// Ensure stable JSON shape: slices => [] (not null), maps => {} (not null).
 		return FilterOptions{
-			APIKeys:     make([]string, 0),
-			APIKeyNames: make(map[string]string),
-			Models:      make([]string, 0),
-			Channels:    make([]string, 0),
-			Statuses:    make([]string, 0),
+			APIKeys:        make([]string, 0),
+			APIKeyNames:    make(map[string]string),
+			Models:         make([]string, 0),
+			Channels:       make([]string, 0),
+			ChannelOptions: make([]ChannelFilterOption, 0),
+			Statuses:       make([]string, 0),
 		}, nil
 	}
 
@@ -197,7 +198,7 @@ func QueryFiltersForLogs(params LogQueryParams) (FilterOptions, error) {
 		log.Warnf("usage: query distinct models failed: %v", err)
 		return FilterOptions{}, err
 	}
-	channels, err := queryDistinct(db, "channel_name", params.withoutFacet("channel"))
+	channelRows, err := queryDistinctChannelRows(db, params.withoutFacet("channel"))
 	if err != nil {
 		log.Warnf("usage: query distinct channels failed: %v", err)
 		return FilterOptions{}, err
@@ -208,14 +209,34 @@ func QueryFiltersForLogs(params LogQueryParams) (FilterOptions, error) {
 		return FilterOptions{}, err
 	}
 
+	channelNames := make([]string, 0, len(channelRows))
+	seenNames := make(map[string]struct{}, len(channelRows))
+	for _, row := range channelRows {
+		name := strings.TrimSpace(row.Label)
+		if name == "" {
+			name = strings.TrimSpace(row.Value)
+		}
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seenNames[key]; ok {
+			continue
+		}
+		seenNames[key] = struct{}{}
+		channelNames = append(channelNames, name)
+	}
+
 	return FilterOptions{
-		APIKeys:     keys,
-		APIKeyNames: keyNames,
-		Models:      models,
-		Channels:    channels,
-		Statuses:    statuses,
+		APIKeys:        keys,
+		APIKeyNames:    keyNames,
+		Models:         models,
+		Channels:       channelNames,
+		ChannelOptions: channelRows,
+		Statuses:       statuses,
 	}, nil
 }
+
 
 func (params LogQueryParams) withoutFacet(facet string) LogQueryParams {
 	params.Page = 0
@@ -596,7 +617,9 @@ func buildWhereClause(params LogQueryParams) (string, []interface{}) {
 			args = append(args, trimmed)
 		}
 		if len(authPlaceholders) > 0 {
-			filterConditions = append(filterConditions, "(auth_index IN ("+strings.Join(authPlaceholders, ",")+") AND trim(coalesce(channel_name, '')) = '')")
+			// Match by auth_index regardless of channel_name so multi-provider
+			// accounts that share a display email/label stay independently filterable.
+			filterConditions = append(filterConditions, "auth_index IN ("+strings.Join(authPlaceholders, ",")+")")
 		}
 
 		for idx, names := range params.AuthIndexChannelNames {
@@ -672,6 +695,77 @@ func queryDistinct(db *sql.DB, column string, params LogQueryParams) ([]string, 
 	}
 	return result, nil
 }
+
+// queryDistinctChannelRows returns distinct (channel_name, auth_index) pairs so
+// that two OAuth accounts sharing the same email/label (e.g. codex + xai)
+// remain separate filter options.
+func queryDistinctChannelRows(db *sql.DB, params LogQueryParams) ([]ChannelFilterOption, error) {
+	where, args := buildWhereClause(params)
+	q := `
+		SELECT
+			trim(coalesce(channel_name, '')) AS channel_name,
+			trim(coalesce(auth_index, '')) AS auth_index,
+			MAX(trim(coalesce(source, ''))) AS source
+		FROM request_logs` + where + `
+		GROUP BY trim(coalesce(channel_name, '')), trim(coalesce(auth_index, ''))
+		ORDER BY channel_name, auth_index`
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Warnf("usage: distinct channel rows query failed: %v", err)
+		return nil, fmt.Errorf("usage: distinct channel rows: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]ChannelFilterOption, 0)
+	for rows.Next() {
+		var channelName, authIndex, source string
+		if err := rows.Scan(&channelName, &authIndex, &source); err != nil {
+			log.Warnf("usage: distinct channel rows scan failed: %v", err)
+			return nil, err
+		}
+		channelName = strings.TrimSpace(channelName)
+		authIndex = strings.TrimSpace(authIndex)
+		source = strings.TrimSpace(source)
+		if channelName == "" && authIndex == "" {
+			continue
+		}
+		label := channelName
+		if label == "" {
+			label = authIndex
+		}
+		// Prefer auth_index as the stable filter value when available so
+		// same-label multi-provider accounts stay independent.
+		value := authIndex
+		if value == "" {
+			value = channelName
+		}
+		result = append(result, ChannelFilterOption{
+			Value:     value,
+			Label:     label,
+			AuthIndex: authIndex,
+			// Provider/auth_type are filled by the management layer from live auth state.
+			// Source is a weak fallback only.
+			Provider: guessProviderFromSource(source),
+		})
+	}
+	return result, rows.Err()
+}
+
+func guessProviderFromSource(source string) string {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source == "" {
+		return ""
+	}
+	// Source may be an email or a provider id; only return known-looking short keys.
+	if strings.Contains(source, "@") || strings.Contains(source, " ") {
+		return ""
+	}
+	if len(source) > 32 {
+		return ""
+	}
+	return source
+}
+
 
 func queryDistinctStatuses(db *sql.DB, params LogQueryParams) ([]string, error) {
 	where, args := buildWhereClause(params)

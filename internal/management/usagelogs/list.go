@@ -9,11 +9,12 @@ import (
 	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
 	apikeysettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/apikey"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
 func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any, error) {
-	keyNameMap, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap := s.buildNameMaps()
-	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap)
+	keyNameMap, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex := s.buildNameMaps()
+	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex)
 
 	params := usage.LogQueryParams{
 		Page:                  input.Page,
@@ -54,6 +55,7 @@ func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any,
 		if channelName := displayChannelNameForLog(*item, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap); channelName != "" {
 			item.ChannelName = channelName
 		}
+		enrichLogRowChannelMeta(item, authMetaByIndex)
 	}
 
 	if filters.APIKeyNames == nil {
@@ -64,7 +66,8 @@ func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any,
 			filters.APIKeyNames[key] = name
 		}
 	}
-	filters.Channels = displayChannelFilters(filters.Channels, channelNameMap)
+	filters.ChannelOptions = enrichChannelFilterOptions(filters.ChannelOptions, channelNameMap, authIndexChannelMap, authMetaByIndex)
+	filters.Channels = channelLabelsFromOptions(filters.ChannelOptions)
 
 	if result.Items == nil {
 		result.Items = make([]usage.LogRow, 0)
@@ -77,6 +80,9 @@ func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any,
 	}
 	if filters.Channels == nil {
 		filters.Channels = make([]string, 0)
+	}
+	if filters.ChannelOptions == nil {
+		filters.ChannelOptions = make([]usage.ChannelFilterOption, 0)
 	}
 	if filters.Statuses == nil {
 		filters.Statuses = make([]string, 0)
@@ -111,8 +117,8 @@ func (s *Service) ClearRequestLogs(options usage.ClearRequestLogsOptions) (int, 
 }
 
 func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, error) {
-	_, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap := s.buildNameMaps()
-	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap)
+	_, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex := s.buildNameMaps()
+	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex)
 	params := usage.LogQueryParams{
 		Page:                  input.Page,
 		Size:                  input.Size,
@@ -152,9 +158,18 @@ func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, er
 		result.Items[i].ChannelName = channelName
 		result.Items[i].APIKey = ""
 		result.Items[i].APIKeyName = ""
+		// Keep provider/auth_type for public UI badges, but strip identity keys above.
+		enrichLogRowChannelMeta(&result.Items[i], authMetaByIndex)
+		result.Items[i].AuthIndex = ""
 	}
 
-	filters.Channels = displayChannelFilters(filters.Channels, channelNameMap)
+	filters.ChannelOptions = enrichChannelFilterOptions(filters.ChannelOptions, channelNameMap, authIndexChannelMap, authMetaByIndex)
+	// Public responses keep opaque filter values (auth_index) so same-email
+	// multi-provider accounts stay selectable, but strip the auth_index field.
+	for i := range filters.ChannelOptions {
+		filters.ChannelOptions[i].AuthIndex = ""
+	}
+	filters.Channels = channelLabelsFromOptions(filters.ChannelOptions)
 	if result.Items == nil {
 		result.Items = make([]usage.LogRow, 0)
 	}
@@ -163,6 +178,9 @@ func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, er
 	}
 	if filters.Channels == nil {
 		filters.Channels = make([]string, 0)
+	}
+	if filters.ChannelOptions == nil {
+		filters.ChannelOptions = make([]usage.ChannelFilterOption, 0)
 	}
 	if filters.Statuses == nil {
 		filters.Statuses = make([]string, 0)
@@ -176,39 +194,118 @@ func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, er
 		"stats":        stats,
 		"api_key_name": apiKeyName,
 		"filters": map[string]any{
-			"models":   filters.Models,
-			"channels": filters.Channels,
-			"statuses": filters.Statuses,
+			"models":          filters.Models,
+			"channels":        filters.Channels,
+			"channel_options": filters.ChannelOptions,
+			"statuses":        filters.Statuses,
 		},
 	}, nil
 }
 
-func channelFilterSelectors(channels []string, channelNameMap, authIndexChannelMap map[string]string, ambiguousAuthIndexChannelMap map[string][]string) ([]string, []string, map[string][]string) {
-	selectedChannelKeys := make(map[string]struct{})
+type authChannelMeta struct {
+	label    string
+	provider string
+	authType string
+}
+
+func channelFilterSelectors(
+	channels []string,
+	channelNameMap, authIndexChannelMap map[string]string,
+	ambiguousAuthIndexChannelMap map[string][]string,
+	authMetaByIndex map[string]authChannelMeta,
+) ([]string, []string, map[string][]string) {
+	// Preserve original selected values. Only use lower-case keys for label matching.
+	selectedRaw := make([]string, 0, len(channels))
+	selectedLabelKeys := make(map[string]struct{})
 	for _, part := range channels {
-		key := strings.ToLower(strings.TrimSpace(part))
-		if key == "" {
+		raw := strings.TrimSpace(part)
+		if raw == "" {
 			continue
 		}
-		selectedChannelKeys[key] = struct{}{}
+		selectedRaw = append(selectedRaw, raw)
+		selectedLabelKeys[strings.ToLower(raw)] = struct{}{}
 	}
-	if len(selectedChannelKeys) == 0 {
+	if len(selectedRaw) == 0 {
 		return nil, nil, nil
 	}
 
 	var authIndexes []string
 	var channelNames []string
 	authIndexChannelNames := make(map[string][]string)
-	for key := range selectedChannelKeys {
-		channelNames = append(channelNames, key)
+	seenAuthIndex := make(map[string]struct{})
+	seenChannelName := make(map[string]struct{})
+
+	appendAuthIndex := func(idx string) {
+		idx = strings.TrimSpace(idx)
+		if idx == "" {
+			return
+		}
+		if _, ok := seenAuthIndex[idx]; ok {
+			return
+		}
+		seenAuthIndex[idx] = struct{}{}
+		authIndexes = append(authIndexes, idx)
 	}
+	appendChannelName := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		key := strings.ToLower(name)
+		if _, ok := seenChannelName[key]; ok {
+			return
+		}
+		seenChannelName[key] = struct{}{}
+		channelNames = append(channelNames, name)
+	}
+
+	for _, raw := range selectedRaw {
+		// Prefer exact auth_index matches so multi-provider same-email accounts
+		// filter independently when clients send auth_index as the value.
+		if _, ok := authIndexChannelMap[raw]; ok {
+			appendAuthIndex(raw)
+			if legacyChannels := ambiguousAuthIndexChannelMap[raw]; len(legacyChannels) > 0 {
+				authIndexChannelNames[raw] = append(authIndexChannelNames[raw], legacyChannels...)
+			}
+			continue
+		}
+		if _, ok := authMetaByIndex[raw]; ok {
+			appendAuthIndex(raw)
+			continue
+		}
+		matchedAuthIndex := false
+		for idx := range authIndexChannelMap {
+			if strings.EqualFold(strings.TrimSpace(idx), raw) {
+				appendAuthIndex(idx)
+				if legacyChannels := ambiguousAuthIndexChannelMap[idx]; len(legacyChannels) > 0 {
+					authIndexChannelNames[idx] = append(authIndexChannelNames[idx], legacyChannels...)
+				}
+				matchedAuthIndex = true
+			}
+		}
+		if matchedAuthIndex {
+			continue
+		}
+		for idx := range authMetaByIndex {
+			if strings.EqualFold(strings.TrimSpace(idx), raw) {
+				appendAuthIndex(idx)
+				matchedAuthIndex = true
+			}
+		}
+		if matchedAuthIndex {
+			continue
+		}
+		// Legacy clients still send display labels / emails.
+		appendChannelName(raw)
+	}
+
 	for raw, name := range channelNameMap {
 		key := strings.ToLower(strings.TrimSpace(name))
 		if key == "" {
 			continue
 		}
-		if _, ok := selectedChannelKeys[key]; ok {
-			channelNames = append(channelNames, raw)
+		if _, ok := selectedLabelKeys[key]; ok {
+			appendChannelName(raw)
 		}
 	}
 	for idx, name := range authIndexChannelMap {
@@ -216,8 +313,8 @@ func channelFilterSelectors(channels []string, channelNameMap, authIndexChannelM
 		if key == "" {
 			continue
 		}
-		if _, ok := selectedChannelKeys[key]; ok {
-			authIndexes = append(authIndexes, idx)
+		if _, ok := selectedLabelKeys[key]; ok {
+			appendAuthIndex(idx)
 			if legacyChannels := ambiguousAuthIndexChannelMap[idx]; len(legacyChannels) > 0 {
 				authIndexChannelNames[idx] = append(authIndexChannelNames[idx], legacyChannels...)
 			}
@@ -229,29 +326,196 @@ func channelFilterSelectors(channels []string, channelNameMap, authIndexChannelM
 	return authIndexes, channelNames, authIndexChannelNames
 }
 
-func displayChannelFilters(values []string, channelNameMap map[string]string) []string {
-	if len(values) == 0 {
-		return values
+func enrichChannelFilterOptions(
+	options []usage.ChannelFilterOption,
+	channelNameMap, authIndexChannelMap map[string]string,
+	authMetaByIndex map[string]authChannelMeta,
+) []usage.ChannelFilterOption {
+	if len(options) == 0 {
+		return make([]usage.ChannelFilterOption, 0)
 	}
-	seen := make(map[string]struct{})
-	channels := make([]string, 0, len(values))
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if name, ok := channelNameMap[trimmed]; ok && strings.TrimSpace(name) != "" {
-			trimmed = strings.TrimSpace(name)
+
+	// Prefer one option per live auth_index. Collapse pure name-only rows when
+	// the same label already has auth-backed options.
+	out := make([]usage.ChannelFilterOption, 0, len(options))
+	seenValue := make(map[string]struct{}, len(options))
+	authBackedLabels := make(map[string]struct{})
+
+	for _, option := range options {
+		authIndex := strings.TrimSpace(option.AuthIndex)
+		if authIndex == "" {
+			authIndex = strings.TrimSpace(option.Value)
 		}
-		key := strings.ToLower(trimmed)
-		if key == "" {
+		if authIndex == "" {
 			continue
 		}
+		if _, ok := authIndexChannelMap[authIndex]; ok {
+			if name := strings.TrimSpace(authIndexChannelMap[authIndex]); name != "" {
+				authBackedLabels[strings.ToLower(name)] = struct{}{}
+			}
+		}
+		if meta, ok := authMetaByIndex[authIndex]; ok && meta.label != "" {
+			authBackedLabels[strings.ToLower(meta.label)] = struct{}{}
+		}
+	}
+
+	for _, option := range options {
+		label := strings.TrimSpace(option.Label)
+		authIndex := strings.TrimSpace(option.AuthIndex)
+		if authIndex == "" {
+			authIndex = strings.TrimSpace(option.Value)
+		}
+		if label == "" && authIndex != "" {
+			if name, ok := authIndexChannelMap[authIndex]; ok && strings.TrimSpace(name) != "" {
+				label = strings.TrimSpace(name)
+			}
+		}
+		if label == "" {
+			if name, ok := channelNameMap[strings.TrimSpace(option.Value)]; ok && strings.TrimSpace(name) != "" {
+				label = strings.TrimSpace(name)
+			}
+		}
+		if label == "" {
+			label = strings.TrimSpace(option.Value)
+		}
+		if label == "" {
+			continue
+		}
+
+		provider := strings.TrimSpace(option.Provider)
+		authType := strings.TrimSpace(option.AuthType)
+		value := strings.TrimSpace(option.Value)
+		if value == "" {
+			value = authIndex
+		}
+		if value == "" {
+			value = label
+		}
+
+		hasLiveMeta := false
+		if meta, ok := authMetaByIndex[authIndex]; ok {
+			hasLiveMeta = true
+			if meta.label != "" {
+				label = meta.label
+			}
+			if meta.provider != "" {
+				provider = meta.provider
+			}
+			if meta.authType != "" {
+				authType = meta.authType
+			}
+			value = authIndex
+		} else if authIndex != "" {
+			// Keep auth_index as the filter value even without live meta so
+			// historical rows for deleted auths stay independently selectable.
+			value = authIndex
+			if mapped, ok := authIndexChannelMap[authIndex]; ok && strings.TrimSpace(mapped) != "" {
+				label = strings.TrimSpace(mapped)
+			}
+		} else if mapped, ok := channelNameMap[label]; ok && strings.TrimSpace(mapped) != "" {
+			label = strings.TrimSpace(mapped)
+		}
+
+		// Drop name-only rows that would re-merge same-email multi-provider
+		// accounts already represented by auth_index-backed options.
+		if !hasLiveMeta && authIndex == "" {
+			if _, ok := authBackedLabels[strings.ToLower(label)]; ok {
+				continue
+			}
+		}
+
+		dedupeKey := strings.ToLower(value)
+		if _, ok := seenValue[dedupeKey]; ok {
+			continue
+		}
+		seenValue[dedupeKey] = struct{}{}
+
+		out = append(out, usage.ChannelFilterOption{
+			Value:     value,
+			Label:     label,
+			Provider:  provider,
+			AuthType:  normalizeAuthType(authType),
+			AuthIndex: authIndex,
+		})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		li := strings.ToLower(out[i].Label)
+		lj := strings.ToLower(out[j].Label)
+		if li != lj {
+			return li < lj
+		}
+		pi := strings.ToLower(out[i].Provider)
+		pj := strings.ToLower(out[j].Provider)
+		if pi != pj {
+			return pi < pj
+		}
+		return strings.ToLower(out[i].Value) < strings.ToLower(out[j].Value)
+	})
+	return out
+}
+
+func channelLabelsFromOptions(options []usage.ChannelFilterOption) []string {
+	if len(options) == 0 {
+		return make([]string, 0)
+	}
+	// Keep legacy channels as unique display labels (may collapse same-email providers).
+	// New clients should use channel_options.
+	seen := make(map[string]struct{}, len(options))
+	labels := make([]string, 0, len(options))
+	for _, option := range options {
+		label := strings.TrimSpace(option.Label)
+		if label == "" {
+			label = strings.TrimSpace(option.Value)
+		}
+		if label == "" {
+			continue
+		}
+		key := strings.ToLower(label)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		channels = append(channels, trimmed)
+		labels = append(labels, label)
 	}
-	sort.Slice(channels, func(i, j int) bool { return strings.ToLower(channels[i]) < strings.ToLower(channels[j]) })
-	return channels
+	return labels
+}
+
+func enrichLogRowChannelMeta(item *usage.LogRow, authMetaByIndex map[string]authChannelMeta) {
+	if item == nil {
+		return
+	}
+	if meta, ok := authMetaByIndex[strings.TrimSpace(item.AuthIndex)]; ok {
+		if meta.provider != "" {
+			item.Provider = meta.provider
+		}
+		if meta.authType != "" {
+			item.AuthType = normalizeAuthType(meta.authType)
+		}
+		return
+	}
+	if item.Provider == "" {
+		item.Provider = usageGuessProviderFromSource(item.Source)
+	}
+}
+
+func usageGuessProviderFromSource(source string) string {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source == "" || strings.Contains(source, "@") || strings.Contains(source, " ") || len(source) > 32 {
+		return ""
+	}
+	return source
+}
+
+func normalizeAuthType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "oauth":
+		return "oauth"
+	case "api", "api_key", "apikey":
+		return "api"
+	default:
+		return ""
+	}
 }
 
 func (s *Service) publicAPIKeyName(apiKey string) string {
@@ -283,11 +547,16 @@ func displayChannelNameForLog(item usage.LogRow, channelNameMap, authIndexChanne
 	return ""
 }
 
-func (s *Service) buildNameMaps() (keyNameMap, channelNameMap, authIndexChannelMap map[string]string, ambiguousAuthIndexChannelMap map[string][]string) {
+func (s *Service) buildNameMaps() (
+	keyNameMap, channelNameMap, authIndexChannelMap map[string]string,
+	ambiguousAuthIndexChannelMap map[string][]string,
+	authMetaByIndex map[string]authChannelMeta,
+) {
 	keyNameMap = make(map[string]string)
 	channelNameMap = make(map[string]string)
 	authIndexChannelMap = make(map[string]string)
 	ambiguousAuthIndexChannelMap = make(map[string][]string)
+	authMetaByIndex = make(map[string]authChannelMeta)
 
 	for _, row := range apikeysettings.NewService(nil).ListRows() {
 		if row.Key != "" && row.Name != "" {
@@ -341,16 +610,22 @@ func (s *Service) buildNameMaps() (keyNameMap, channelNameMap, authIndexChannelM
 				continue
 			}
 			auth.EnsureIndex()
-			if idx := strings.TrimSpace(auth.Index); idx != "" {
+			idx := strings.TrimSpace(auth.Index)
+			if idx != "" {
 				authIndexChannelMap[idx] = channel
+				authMetaByIndex[idx] = authChannelMeta{
+					label:    channel,
+					provider: normalizeProviderKey(auth.Provider),
+					authType: resolveAuthType(auth),
+				}
 			}
 			if accountType, account := auth.AccountInfo(); strings.EqualFold(accountType, "oauth") {
 				if source := strings.TrimSpace(account); source != "" {
-					legacyCandidates = append(legacyCandidates, legacyChannelCandidate{key: source, channel: channel, authIndex: strings.TrimSpace(auth.Index)})
+					legacyCandidates = append(legacyCandidates, legacyChannelCandidate{key: source, channel: channel, authIndex: idx})
 				}
 			}
 			if email := strings.TrimSpace(managementauthfiles.Email(auth)); email != "" {
-				legacyCandidates = append(legacyCandidates, legacyChannelCandidate{key: email, channel: channel, authIndex: strings.TrimSpace(auth.Index)})
+				legacyCandidates = append(legacyCandidates, legacyChannelCandidate{key: email, channel: channel, authIndex: idx})
 			}
 		}
 	}
@@ -382,6 +657,18 @@ func (s *Service) buildNameMaps() (keyNameMap, channelNameMap, authIndexChannelM
 	}
 
 	return
+}
+
+func resolveAuthType(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	accountType, _ := auth.AccountInfo()
+	return normalizeAuthType(accountType)
+}
+
+func normalizeProviderKey(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func containsFold(values []string, needle string) bool {
