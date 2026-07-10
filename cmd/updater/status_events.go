@@ -113,6 +113,176 @@ func (s *updaterServer) publishStatusLocked(persist bool) {
 	}
 }
 
+func (s *updaterServer) startUpdate(service string, req updateRequest) (uint64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.EqualFold(s.status.Status, "running") {
+		return s.runID, false
+	}
+	s.runID++
+	eventID := s.status.EventID
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.status = updateStatusResponse{
+		RunID:              s.runID,
+		EventID:            eventID,
+		Status:             "running",
+		Stage:              "preparing",
+		MessageCode:        "preparing_deployment",
+		Message:            "preparing deployment configuration",
+		Service:            service,
+		CurrentVersion:     strings.TrimSpace(req.CurrentVersion),
+		CurrentCommit:      strings.TrimSpace(req.CurrentCommit),
+		CurrentUIVersion:   strings.TrimSpace(req.CurrentUIVersion),
+		CurrentUICommit:    strings.TrimSpace(req.CurrentUICommit),
+		TargetImage:        strings.TrimSpace(req.Image),
+		TargetTag:          strings.TrimSpace(req.Tag),
+		TargetVersion:      strings.TrimSpace(req.Version),
+		TargetCommit:       strings.TrimSpace(req.Commit),
+		TargetCommitURL:    strings.TrimSpace(req.CommitURL),
+		TargetUIVersion:    strings.TrimSpace(req.UIVersion),
+		TargetUICommit:     strings.TrimSpace(req.UICommit),
+		TargetUICommitURL:  strings.TrimSpace(req.UICommitURL),
+		TargetChannel:      strings.TrimSpace(req.Channel),
+		ReleaseName:        strings.TrimSpace(req.ReleaseName),
+		ReleaseTag:         strings.TrimSpace(req.ReleaseTag),
+		ReleaseNotes:       strings.TrimSpace(req.ReleaseNotes),
+		ReleaseURL:         strings.TrimSpace(req.ReleaseURL),
+		ReleasePublishedAt: strings.TrimSpace(req.ReleasePublishedAt),
+		StartedAt:          now,
+		UpdatedAt:          now,
+	}
+	s.pullSkipped = false
+	s.pullSkipLog = ""
+	s.statusChangedLocked()
+	return s.runID, true
+}
+
+func (s *updaterServer) appendLog(runID uint64, stream string, message string) {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if runID != s.runID {
+		return
+	}
+	if s.status.Stage == "pulling" && strings.Contains(trimmed, "Skipped") {
+		s.pullSkipped = true
+		if s.pullSkipLog == "" {
+			s.pullSkipLog = trimmed
+		}
+	}
+	s.status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	s.status.Logs = append(s.status.Logs, updateLogEntry{
+		Timestamp: s.status.UpdatedAt,
+		Stream:    strings.TrimSpace(stream),
+		Message:   trimmed,
+	})
+	if len(s.status.Logs) > maxUpdateLogEntries {
+		s.status.Logs = append([]updateLogEntry(nil), s.status.Logs[len(s.status.Logs)-maxUpdateLogEntries:]...)
+	}
+	s.statusObservedLocked()
+}
+
+func (s *updaterServer) updateStage(runID uint64, stage string, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if runID != s.runID {
+		return
+	}
+	s.status.Stage = strings.TrimSpace(stage)
+	s.status.MessageCode = strings.TrimSpace(stage)
+	s.status.Message = strings.TrimSpace(message)
+	s.status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	s.statusChangedLocked()
+}
+
+func (s *updaterServer) updateProgress(runID uint64, stage string, messageCode string, message string, current int, total int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if runID != s.runID {
+		return
+	}
+	if current < 0 {
+		current = 0
+	}
+	if total < 0 {
+		total = 0
+	}
+	if total > 0 && current > total {
+		current = total
+	}
+	s.status.Stage = strings.TrimSpace(stage)
+	s.status.MessageCode = strings.TrimSpace(messageCode)
+	s.status.Message = strings.TrimSpace(message)
+	s.status.ProgressCurrent = current
+	s.status.ProgressTotal = total
+	if total > 0 {
+		s.status.ProgressUnit = "steps"
+		s.status.ProgressPercent = float64(current) * 100 / float64(total)
+	} else {
+		s.status.ProgressUnit = ""
+		s.status.ProgressPercent = 0
+	}
+	s.status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	s.statusChangedLocked()
+}
+
+func (s *updaterServer) finishUpdate(runID uint64, status string, stage string, messageCode string, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if runID != s.runID {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.status.Status = strings.TrimSpace(status)
+	s.status.Stage = strings.TrimSpace(stage)
+	s.status.MessageCode = strings.TrimSpace(messageCode)
+	s.status.Message = strings.TrimSpace(message)
+	if status == "completed" {
+		if s.status.ProgressTotal > 0 {
+			s.status.ProgressCurrent = s.status.ProgressTotal
+		}
+		s.status.ProgressPercent = 100
+	}
+	s.status.UpdatedAt = now
+	s.status.FinishedAt = now
+	s.statusChangedLocked()
+}
+
+func (s *updaterServer) snapshot() updateStatusResponse {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneUpdateStatus(s.status)
+}
+
+type updaterRunReporter struct {
+	server *updaterServer
+	runID  uint64
+}
+
+func (r updaterRunReporter) Stage(stage string, message string) {
+	if r.server == nil {
+		return
+	}
+	r.server.updateStage(r.runID, stage, message)
+}
+
+func (r updaterRunReporter) Progress(stage string, messageCode string, message string, current int, total int) {
+	if r.server == nil {
+		return
+	}
+	r.server.updateProgress(r.runID, stage, messageCode, message, current, total)
+}
+
+func (r updaterRunReporter) Log(stream string, message string) {
+	if r.server == nil {
+		return
+	}
+	r.server.appendLog(r.runID, stream, message)
+}
+
 func (s *updaterServer) subscribeStatus() (<-chan updateStatusResponse, updateStatusResponse, func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
