@@ -72,17 +72,41 @@ func TestEnsureActorTenantScope(t *testing.T) {
 }
 
 func TestMenuCatalogReferencesExistingParents(t *testing.T) {
-	seen := make(map[string]bool, len(MenuCatalog))
+	seen := make(map[string]MenuSeed, len(MenuCatalog))
 	for _, menu := range MenuCatalog {
-		if menu.Code == "" || seen[menu.Code] {
-			t.Fatalf("invalid or duplicate menu code %q", menu.Code)
+		if menu.Code == "" {
+			t.Fatalf("invalid menu code %q", menu.Code)
 		}
-		if menu.ParentCode != "" && !seen[menu.ParentCode] {
-			t.Fatalf("menu %s references parent %s before it is declared", menu.Code, menu.ParentCode)
+		if _, ok := seen[menu.Code]; ok {
+			t.Fatalf("duplicate menu code %q", menu.Code)
 		}
-		seen[menu.Code] = true
+		if menu.ParentCode != "" {
+			parent, ok := seen[menu.ParentCode]
+			if !ok {
+				t.Fatalf("menu %s references parent %s before it is declared", menu.Code, menu.ParentCode)
+			}
+			// Nested menus under directories must form secondary routes under the parent path.
+			if parent.Type == "directory" && parent.Path != "" && menu.Type == "menu" {
+				prefix := strings.TrimRight(parent.Path, "/")
+				if menu.Path != prefix && !strings.HasPrefix(menu.Path, prefix+"/") {
+					t.Fatalf("menu %s path %q is not nested under parent path %q", menu.Code, menu.Path, prefix)
+				}
+			}
+		}
+		if menu.Type == "directory" {
+			if menu.Path == "" {
+				t.Fatalf("directory %s missing path prefix", menu.Code)
+			}
+			if menu.Component == "" {
+				t.Fatalf("directory %s missing component", menu.Code)
+			}
+		}
+		if menu.Type == "menu" && menu.Path == "" {
+			t.Fatalf("menu %s missing path", menu.Code)
+		}
+		seen[menu.Code] = menu
 	}
-	if !seen[MenuManagementCode] {
+	if _, ok := seen[MenuManagementCode]; !ok {
 		t.Fatal("menu management entry is missing")
 	}
 }
