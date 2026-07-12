@@ -11,3 +11,9 @@ func normalizeTenantID(tenantID string) string {
 	}
 	return tenantID
 }
+
+// isSystemTenant reports whether tenantID resolves to the shared system catalog tenant.
+// OpenRouter pricing/model metadata is written there and inherited by business tenants on read.
+func isSystemTenant(tenantID string) bool {
+	return normalizeTenantID(tenantID) == systemTenantID
+}

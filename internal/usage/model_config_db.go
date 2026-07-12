@@ -73,14 +73,68 @@ func upsertLegacyPricingIntoModelConfigForTenant(db *sql.DB, tenantID, modelID s
 }
 
 func ListModelConfigs() []ModelConfigRow { return ListModelConfigsForTenant(systemTenantID) }
+
+// ListModelConfigsForTenant returns tenant model configs with system-catalog inheritance.
+// Business tenants inherit the system tenant's OpenRouter/seed catalog; tenant-owned rows override by model_id.
 func ListModelConfigsForTenant(tenantID string) []ModelConfigRow {
-	return modelConfigStoreForTenant(tenantID).ListModelConfigs()
+	tenantID = normalizeTenantID(tenantID)
+	tenantRows := modelConfigStoreForTenant(tenantID).ListModelConfigs()
+	if isSystemTenant(tenantID) {
+		return tenantRows
+	}
+
+	systemRows := modelConfigStoreForTenant(systemTenantID).ListModelConfigs()
+	if len(systemRows) == 0 {
+		return tenantRows
+	}
+	if len(tenantRows) == 0 {
+		return systemRows
+	}
+
+	// Tenant overrides win for the same model_id (case-insensitive).
+	merged := make([]ModelConfigRow, 0, len(systemRows)+len(tenantRows))
+	indexByID := make(map[string]int, len(systemRows)+len(tenantRows))
+	for _, row := range systemRows {
+		key := strings.ToLower(strings.TrimSpace(row.ModelID))
+		if key == "" {
+			continue
+		}
+		indexByID[key] = len(merged)
+		merged = append(merged, row)
+	}
+	for _, row := range tenantRows {
+		key := strings.ToLower(strings.TrimSpace(row.ModelID))
+		if key == "" {
+			continue
+		}
+		if idx, ok := indexByID[key]; ok {
+			merged[idx] = row
+			continue
+		}
+		indexByID[key] = len(merged)
+		merged = append(merged, row)
+	}
+	return merged
 }
+
 func GetModelConfig(modelID string) (ModelConfigRow, bool) {
 	return GetModelConfigForTenant(systemTenantID, modelID)
 }
+
+// GetModelConfigForTenant returns the tenant's model config, falling back to the system catalog.
 func GetModelConfigForTenant(tenantID, modelID string) (ModelConfigRow, bool) {
-	return modelConfigStoreForTenant(tenantID).GetModelConfig(modelID)
+	tenantID = normalizeTenantID(tenantID)
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return ModelConfigRow{}, false
+	}
+	if row, ok := modelConfigStoreForTenant(tenantID).GetModelConfig(modelID); ok {
+		return row, true
+	}
+	if isSystemTenant(tenantID) {
+		return ModelConfigRow{}, false
+	}
+	return modelConfigStoreForTenant(systemTenantID).GetModelConfig(modelID)
 }
 
 func UpsertModelConfig(row ModelConfigRow) error {

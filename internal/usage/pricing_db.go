@@ -218,10 +218,24 @@ func UpsertModelPricingV2ForTenant(tenantID, modelID string, input, output, cach
 func GetModelPricing(modelID string) (ModelPricingRow, bool) {
 	return GetModelPricingForTenant(systemTenantID, modelID)
 }
+
+// GetModelPricingForTenant returns tenant pricing, falling back to the system catalog when absent.
+// OpenRouter sync writes prices to the system tenant; business tenants inherit them unless overridden.
 func GetModelPricingForTenant(tenantID, modelID string) (ModelPricingRow, bool) {
+	tenantID = normalizeTenantID(tenantID)
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return ModelPricingRow{}, false
+	}
 	pricingCacheMu.RLock()
 	defer pricingCacheMu.RUnlock()
-	row, ok := pricingCache[normalizeTenantID(tenantID)][modelID]
+	if row, ok := pricingCache[tenantID][modelID]; ok {
+		return row, true
+	}
+	if isSystemTenant(tenantID) {
+		return ModelPricingRow{}, false
+	}
+	row, ok := pricingCache[systemTenantID][modelID]
 	return row, ok
 }
 
@@ -229,12 +243,29 @@ func GetModelPricingForTenant(tenantID, modelID string) (ModelPricingRow, bool) 
 func GetAllModelPricing() map[string]ModelPricingRow {
 	return GetAllModelPricingForTenant(systemTenantID)
 }
+
+// GetAllModelPricingForTenant returns tenant pricing merged with system-catalog inheritance.
+// Tenant-owned rows override system rows for the same model_id.
 func GetAllModelPricingForTenant(tenantID string) map[string]ModelPricingRow {
+	tenantID = normalizeTenantID(tenantID)
 	pricingCacheMu.RLock()
 	defer pricingCacheMu.RUnlock()
-	cache := pricingCache[normalizeTenantID(tenantID)]
-	result := make(map[string]ModelPricingRow, len(cache))
-	for k, v := range cache {
+
+	tenantCache := pricingCache[tenantID]
+	if isSystemTenant(tenantID) {
+		result := make(map[string]ModelPricingRow, len(tenantCache))
+		for k, v := range tenantCache {
+			result[k] = v
+		}
+		return result
+	}
+
+	systemCache := pricingCache[systemTenantID]
+	result := make(map[string]ModelPricingRow, len(systemCache)+len(tenantCache))
+	for k, v := range systemCache {
+		result[k] = v
+	}
+	for k, v := range tenantCache {
 		result[k] = v
 	}
 	return result
@@ -324,15 +355,14 @@ func calculateTokenCostV2(inputTokens, outputTokens, cacheReadTokens, cacheWrite
 // resolveModelPricing returns the effective pricing for a model from either
 // ModelConfigRow cache or ModelPricingRow cache, along with a boolean indicating
 // whether the model is enabled (or found at all).
+// Both lookups inherit system-tenant catalog prices when the business tenant has no override.
 func resolveModelPricingForTenant(tenantID, modelID string) (inputPrice, outputPrice, cachedPrice, cacheReadPrice, cacheWritePrice float64, enabled bool) {
 	if row, ok := GetModelConfigForTenant(tenantID, modelID); ok {
 		enabled = row.Enabled
 		return row.InputPricePerMillion, row.OutputPricePerMillion, row.CachedPricePerMillion, row.CacheReadPricePerMillion, row.CacheWritePricePerMillion, enabled
 	}
 
-	pricingCacheMu.RLock()
-	row, ok := pricingCache[normalizeTenantID(tenantID)][modelID]
-	pricingCacheMu.RUnlock()
+	row, ok := GetModelPricingForTenant(tenantID, modelID)
 	if !ok {
 		return 0, 0, 0, 0, 0, false
 	}
@@ -356,9 +386,7 @@ func CalculateCostForTenant(tenantID, modelID string, inputTokens, outputTokens,
 		return calculateTokenCost(inputTokens, outputTokens, cachedTokens, row.InputPricePerMillion, row.OutputPricePerMillion, row.CachedPricePerMillion)
 	}
 
-	pricingCacheMu.RLock()
-	row, ok := pricingCache[normalizeTenantID(tenantID)][modelID]
-	pricingCacheMu.RUnlock()
+	row, ok := GetModelPricingForTenant(tenantID, modelID)
 	if !ok {
 		return 0
 	}
