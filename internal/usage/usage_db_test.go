@@ -660,6 +660,70 @@ func TestBodyStorageDisabledPreservesDetailsWithoutEmbeddedBodies(t *testing.T) 
 	}
 }
 
+func TestBodyStorageDisabledKeepsFailedOutputErrorPayload(t *testing.T) {
+	initTestUsageDB(t, config.RequestLogStorageConfig{
+		StoreContent:           false,
+		ContentRetentionDays:   30,
+		CleanupIntervalMinutes: 1440,
+	})
+
+	details := `{"client":{"ip":"203.0.113.8"},"diagnostic":{"upstream":{"status":429,"provider":"xai"}},"upstream":{"request_log":"=== API REQUEST 1 ===\nBody:\nsecret-request"},"response":{"upstream_log":"=== API RESPONSE 1 ===\nStatus: 429\nBody:\nsecret-response"}}`
+	errorBody := `{"error":{"message":"rate limited by upstream","type":"upstream_error","code":"rate_limit"}}`
+	InsertLogWithDetails("sk-test", "Primary", "grok-4.5", "xai", "xAI", "auth-1", true, time.Now().UTC(), 196, 0, TokenStats{},
+		`{"model":"grok-4.5","messages":[{"role":"user","content":"secret prompt"}]}`,
+		errorBody,
+		details,
+	)
+
+	result, err := QueryLogs(LogQueryParams{Page: 1, Size: 10, Days: 1})
+	if err != nil || len(result.Items) != 1 {
+		t.Fatalf("QueryLogs() result=%+v error=%v", result, err)
+	}
+	if !result.Items[0].Failed {
+		t.Fatal("expected failed log row")
+	}
+
+	content, err := QueryLogContent(result.Items[0].ID)
+	if err != nil {
+		t.Fatalf("QueryLogContent() error = %v", err)
+	}
+	if content.InputContent != "" {
+		t.Fatalf("InputContent = %q, want empty when body storage is off", content.InputContent)
+	}
+	if content.OutputContent != errorBody {
+		t.Fatalf("OutputContent = %q, want failed error body preserved", content.OutputContent)
+	}
+
+	detail, err := QueryLogContentPart(result.Items[0].ID, "details")
+	if err != nil {
+		t.Fatalf("QueryLogContentPart(details) error = %v", err)
+	}
+	if strings.Contains(detail.Content, "secret-request") || strings.Contains(detail.Content, "secret-response") {
+		t.Fatalf("detail content retained request/response bodies: %q", detail.Content)
+	}
+	if !strings.Contains(detail.Content, `"status":429`) && !strings.Contains(detail.Content, `"status": 429`) {
+		// diagnostic may be re-marshaled with spaces; accept either encoding of status.
+		if !strings.Contains(detail.Content, "429") {
+			t.Fatalf("detail content lost diagnostic status: %q", detail.Content)
+		}
+	}
+
+	// Maintenance purge must not wipe failed error payloads.
+	if _, err = PurgeStoredRequestBodies(); err != nil {
+		t.Fatalf("PurgeStoredRequestBodies() error = %v", err)
+	}
+	contentAfter, err := QueryLogContent(result.Items[0].ID)
+	if err != nil {
+		t.Fatalf("QueryLogContent() after purge error = %v", err)
+	}
+	if contentAfter.OutputContent != errorBody {
+		t.Fatalf("OutputContent after purge = %q, want failed error body preserved", contentAfter.OutputContent)
+	}
+	if contentAfter.InputContent != "" {
+		t.Fatalf("InputContent after purge = %q, want empty", contentAfter.InputContent)
+	}
+}
+
 func TestInitDBMigratesFirstTokenAndStreamingColumns(t *testing.T) {
 	CloseDB()
 	dbPath := filepath.Join(t.TempDir(), "usage.db")

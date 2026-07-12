@@ -961,7 +961,14 @@ func insertLogIdentity(apiKey, apiKeyID, authSubjectID, apiKeyName, model, upstr
 		tokens.CachedTokens, tokens.TotalTokens, cost,
 	}
 
-	if detailContent != "" || (RequestLogBodyStorageEnabled() && (inputContent != "" || outputContent != "")) {
+	// Failed requests always keep a compact error payload in output_content so the
+	// management UI error modal can show the upstream failure even when full body
+	// storage is disabled. Successful request/response bodies still follow the
+	// store-content toggle.
+	shouldStoreContent := detailContent != "" ||
+		(RequestLogBodyStorageEnabled() && (inputContent != "" || outputContent != "")) ||
+		(failed && strings.TrimSpace(outputContent) != "")
+	if shouldStoreContent {
 		var logID int64
 		if usageDriver == "postgres" {
 			if err := tx.QueryRow(insertSQL+" RETURNING id", insertArgs...).Scan(&logID); err != nil {
@@ -984,7 +991,7 @@ func insertLogIdentity(apiKey, apiKeyID, authSubjectID, apiKeyName, model, upstr
 				return
 			}
 		}
-		if errStore := insertLogContentTenantTx(tx, tenantID, logID, timestamp, inputContent, outputContent, detailContent); errStore != nil {
+		if errStore := insertLogContentTenantTx(tx, tenantID, logID, timestamp, inputContent, outputContent, detailContent, failed); errStore != nil {
 			_ = tx.Rollback()
 			log.Errorf("usage: insert log content: %v", errStore)
 			return

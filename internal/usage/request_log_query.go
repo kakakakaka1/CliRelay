@@ -411,8 +411,23 @@ func clearRequestLogs(db *sql.DB, options ClearRequestLogsOptions) (ClearRequest
 		}
 	} else {
 		if options.ClearBodyContent {
+			// Always drop request bodies. Preserve failed-request output_content so the
+			// error-detail modal can still show the compact upstream error when
+			// store-content is disabled (maintenance purge must not erase those).
 			contentResult, err := tx.Exec(
-				"UPDATE request_log_content SET input_content = X'', output_content = X'' WHERE tenant_id = ? AND (length(input_content) > 0 OR length(output_content) > 0)",
+				`UPDATE request_log_content
+				 SET input_content = X'',
+				     output_content = CASE
+				       WHEN EXISTS (
+				         SELECT 1 FROM request_logs logs
+				         WHERE logs.tenant_id = request_log_content.tenant_id
+				           AND logs.id = request_log_content.log_id
+				           AND logs.failed = 1
+				       ) THEN output_content
+				       ELSE X''
+				     END
+				 WHERE tenant_id = ?
+				   AND (length(input_content) > 0 OR length(output_content) > 0)`,
 				options.TenantID,
 			)
 			if err != nil {
@@ -424,7 +439,11 @@ func clearRequestLogs(db *sql.DB, options ClearRequestLogsOptions) (ClearRequest
 			}
 
 			legacyResult, err := tx.Exec(
-				"UPDATE request_logs SET input_content = '', output_content = '' WHERE tenant_id = ? AND (length(input_content) > 0 OR length(output_content) > 0)",
+				`UPDATE request_logs
+				 SET input_content = '',
+				     output_content = CASE WHEN failed = 1 THEN output_content ELSE '' END
+				 WHERE tenant_id = ?
+				   AND (length(input_content) > 0 OR length(output_content) > 0)`,
 				options.TenantID,
 			)
 			if err != nil {

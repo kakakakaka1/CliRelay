@@ -260,16 +260,23 @@ func refreshRequestLogContentBytes(q logContentQuerier) {
 }
 
 func insertLogContentTx(tx *sql.Tx, logID int64, timestamp time.Time, inputContent, outputContent, detailContent string) error {
-	return insertLogContentTenantTx(tx, "00000000-0000-0000-0000-000000000001", logID, timestamp, inputContent, outputContent, detailContent)
+	return insertLogContentTenantTx(tx, "00000000-0000-0000-0000-000000000001", logID, timestamp, inputContent, outputContent, detailContent, false)
 }
 
-func insertLogContentTenantTx(tx *sql.Tx, tenantID string, logID int64, timestamp time.Time, inputContent, outputContent, detailContent string) error {
+func insertLogContentTenantTx(tx *sql.Tx, tenantID string, logID int64, timestamp time.Time, inputContent, outputContent, detailContent string, failed bool) error {
 	if tx == nil || logID < 1 {
 		return nil
 	}
 	if !RequestLogBodyStorageEnabled() {
+		// Privacy: do not keep full request/response bodies when body storage is off.
+		// Failed requests are an exception for output_content: the management UI
+		// error modal needs the compact upstream error payload (status/message JSON).
 		inputContent = ""
-		outputContent = ""
+		if !failed {
+			outputContent = ""
+		} else {
+			outputContent = compactFailedOutputContent(outputContent)
+		}
 		detailContent = stripStoredRequestDetailBodies(detailContent)
 	}
 	if inputContent == "" && outputContent == "" && detailContent == "" {
