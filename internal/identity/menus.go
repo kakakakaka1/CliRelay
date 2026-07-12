@@ -65,6 +65,13 @@ type MenuInput struct {
 // MenuCatalog is the system menu seed.
 // Directories carry a route prefix (path) and Layout component so nested children form
 // secondary routes under that prefix (e.g. /runtime/monitor under /runtime).
+//
+// Information architecture (operator-facing):
+//   运行观测 — live health, request traces, runtime logs, host status
+//   接入与凭证 — upstream providers, AI OAuth accounts, client API keys, key profiles
+//   模型与调度 — model catalog, image models, routing groups, outbound proxies
+//   组织与权限 — tenants, users, roles, audit
+//   系统设置 — global config, menu management
 var MenuCatalog = []MenuSeed{
 	{Code: "dashboard", Type: "menu", Path: "/dashboard", Component: "dashboard", LabelKey: "shell.nav_dashboard", Icon: "layout-dashboard", PermissionCode: "dashboard.read", SortOrder: 10},
 	{Code: "group.runtime", Type: "directory", Path: "/runtime", Component: "Layout", LabelKey: "shell.nav_group_runtime", Icon: "activity", SortOrder: 20},
@@ -72,25 +79,32 @@ var MenuCatalog = []MenuSeed{
 	{Code: "group.models", Type: "directory", Path: "/models", Component: "Layout", LabelKey: "shell.nav_group_models", Icon: "layers", SortOrder: 40},
 	{Code: "group.governance", Type: "directory", Path: "/governance", Component: "Layout", LabelKey: "shell.nav_group_governance", Icon: "users-round", SortOrder: 50},
 	{Code: "group.system", Type: "directory", Path: "/system", Component: "Layout", LabelKey: "shell.nav_group_system", Icon: "settings", SortOrder: 60},
+	// Runtime / observability
 	{Code: "runtime.monitor", ParentCode: "group.runtime", Type: "menu", Path: "/runtime/monitor", Component: "monitor", LabelKey: "shell.nav_monitor", Icon: "activity", PermissionCode: "monitor.read", SortOrder: 10},
 	{Code: "runtime.request-logs", ParentCode: "group.runtime", Type: "menu", Path: "/runtime/request-logs", Component: "request-logs", LabelKey: "shell.nav_request_logs", Icon: "scroll-text", PermissionCode: "request_logs.read", SortOrder: 20},
 	{Code: "runtime.logs", ParentCode: "group.runtime", Type: "menu", Path: "/runtime/logs", Component: "logs", LabelKey: "shell.nav_logs", Icon: "file-text", PermissionCode: "system.logs.read", SortOrder: 30},
 	{Code: "runtime.system", ParentCode: "group.runtime", Type: "menu", Path: "/runtime/system", Component: "system", LabelKey: "shell.nav_system", Icon: "info", PermissionCode: "system.status.read", SortOrder: 40},
+	// Access & credentials (upstream AI + client keys)
 	{Code: "access.providers", ParentCode: "group.access", Type: "menu", Path: "/access/ai-providers", Component: "providers", LabelKey: "shell.nav_ai_providers", Icon: "bot", PermissionCode: "providers.read", SortOrder: 10},
-	{Code: "access.api-keys", ParentCode: "group.access", Type: "menu", Path: "/access/api-keys", Component: "api-keys", LabelKey: "shell.nav_api_keys", Icon: "sparkles", PermissionCode: "api_keys.read", SortOrder: 20},
-	{Code: "access.ccswitch", ParentCode: "group.access", Type: "menu", Path: "/access/ccswitch-import-settings", Component: "ccswitch-import-settings", LabelKey: "shell.nav_ccswitch_import_settings", Icon: "arrow-down-to-line", PermissionCode: "system.config.read", SortOrder: 30},
+	// Stable code kept for role/menu bindings; path lives under /access as AI OAuth accounts.
+	{Code: "system.account-security", ParentCode: "group.access", Type: "menu", Path: "/access/ai-accounts", Component: "account-security", LabelKey: "shell.nav_ai_accounts", Icon: "key-round", PermissionCode: "auth_files.read", SortOrder: 20},
+	{Code: "access.api-keys", ParentCode: "group.access", Type: "menu", Path: "/access/api-keys", Component: "api-keys", LabelKey: "shell.nav_api_keys", Icon: "sparkles", PermissionCode: "api_keys.read", SortOrder: 30},
+	// Stable code kept; API Key permission profiles belong with client credentials.
+	{Code: "system.api-key-permissions", ParentCode: "group.access", Type: "menu", Path: "/access/api-key-permissions", Component: "api-key-permissions", LabelKey: "shell.nav_api_key_permissions", Icon: "shield-check", PermissionCode: "api_key_profiles.read", SortOrder: 40},
+	{Code: "access.ccswitch", ParentCode: "group.access", Type: "menu", Path: "/access/ccswitch-import-settings", Component: "ccswitch-import-settings", LabelKey: "shell.nav_ccswitch_import_settings", Icon: "arrow-down-to-line", PermissionCode: "system.config.read", SortOrder: 50},
+	// Models & routing
 	{Code: "models.catalog", ParentCode: "group.models", Type: "menu", Path: "/models/catalog", Component: "models", LabelKey: "shell.nav_models", Icon: "cpu", PermissionCode: "models.read", SortOrder: 10},
 	{Code: "models.image-generation", ParentCode: "group.models", Type: "menu", Path: "/models/image-generation", Component: "image-generation", LabelKey: "shell.nav_image_generation", Icon: "image", PermissionCode: "system.config.read", SortOrder: 20},
 	{Code: "models.channel-groups", ParentCode: "group.models", Type: "menu", Path: "/models/channel-groups", Component: "channel-groups", LabelKey: "shell.nav_channel_groups", Icon: "layers", PermissionCode: "routing.read", SortOrder: 30},
 	{Code: "models.proxies", ParentCode: "group.models", Type: "menu", Path: "/models/proxies", Component: "proxies", LabelKey: "shell.nav_proxies", Icon: "network", PermissionCode: "proxies.read", SortOrder: 40},
+	// Organization
 	{Code: "governance.tenants", ParentCode: "group.governance", Type: "menu", Path: "/governance/tenants", Component: "tenants", LabelKey: "shell.nav_tenants", Icon: "building-2", PermissionCode: "platform.tenants.read", SortOrder: 10},
 	{Code: "governance.users", ParentCode: "group.governance", Type: "menu", Path: "/governance/users", Component: "users", LabelKey: "shell.nav_users", Icon: "user-round", PermissionCode: "tenant.users.read", SortOrder: 20},
 	{Code: "governance.roles", ParentCode: "group.governance", Type: "menu", Path: "/governance/roles", Component: "roles", LabelKey: "shell.nav_roles", Icon: "shield-check", PermissionCode: "tenant.roles.read", SortOrder: 30},
 	{Code: "governance.audit", ParentCode: "group.governance", Type: "menu", Path: "/governance/audit-logs", Component: "audit-logs", LabelKey: "shell.nav_audit_logs", Icon: "file-text", PermissionCode: "tenant.audit.read", SortOrder: 40},
-	{Code: "system.account-security", ParentCode: "group.system", Type: "menu", Path: "/system/account-security", Component: "account-security", LabelKey: "shell.nav_account_security", Icon: "shield-check", PermissionCode: "auth_files.read", SortOrder: 10},
-	{Code: "system.api-key-permissions", ParentCode: "group.system", Type: "menu", Path: "/system/api-key-permissions", Component: "api-key-permissions", LabelKey: "shell.nav_api_key_permissions", Icon: "shield-check", PermissionCode: "api_key_profiles.read", SortOrder: 20},
-	{Code: "system.config", ParentCode: "group.system", Type: "menu", Path: "/system/config", Component: "config", LabelKey: "shell.nav_config", Icon: "settings", PermissionCode: "system.config.read", SortOrder: 30},
-	{Code: MenuManagementCode, ParentCode: "group.system", Type: "menu", Path: "/system/menu-management", Component: "menu-management", LabelKey: "shell.nav_menu_management", Icon: "menu", PermissionCode: "platform.menus.read", SortOrder: 40},
+	// System settings only
+	{Code: "system.config", ParentCode: "group.system", Type: "menu", Path: "/system/config", Component: "config", LabelKey: "shell.nav_config", Icon: "settings", PermissionCode: "system.config.read", SortOrder: 10},
+	{Code: MenuManagementCode, ParentCode: "group.system", Type: "menu", Path: "/system/menu-management", Component: "menu-management", LabelKey: "shell.nav_menu_management", Icon: "menu", PermissionCode: "platform.menus.read", SortOrder: 20},
 }
 
 const menuSelectSQL = `SELECT code,parent_code,menu_type,path,component,link_url,label_key,title,icon,permission_code,sort_order,visible,enabled,badge_type,badge_content,hide_menu,system_protected,version FROM menus`
@@ -111,7 +125,8 @@ func seedMenus(ctx context.Context, tx *sql.Tx) error {
 			ON CONFLICT (code) DO UPDATE SET
 			  parent_code=EXCLUDED.parent_code, menu_type=EXCLUDED.menu_type, path=EXCLUDED.path,
 			  component=EXCLUDED.component, label_key=EXCLUDED.label_key, icon=EXCLUDED.icon,
-			  permission_code=EXCLUDED.permission_code, system_protected=true, updated_at=now()
+			  permission_code=EXCLUDED.permission_code, sort_order=EXCLUDED.sort_order,
+			  system_protected=true, updated_at=now()
 		`, menu.Code, parent, menu.Type, menu.Path, menu.Component, menu.LabelKey, menu.Icon, permission, menu.SortOrder); err != nil {
 			return fmt.Errorf("identity: seed menu %s: %w", menu.Code, err)
 		}
