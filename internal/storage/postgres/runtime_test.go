@@ -7,8 +7,8 @@ import (
 
 func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	migrations := RuntimeMigrations()
-	if len(migrations) != 8 {
-		t.Fatalf("RuntimeMigrations len = %d, want 8", len(migrations))
+	if len(migrations) != 9 {
+		t.Fatalf("RuntimeMigrations len = %d, want 9", len(migrations))
 	}
 	sqlText := migrations[0].SQL
 	for _, table := range []string{
@@ -68,6 +68,13 @@ func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	for _, fragment := range []string{"CREATE TABLE IF NOT EXISTS menus", "permission_code", "idx_menus_parent_sort"} {
 		if !strings.Contains(menuSQL, fragment) {
 			t.Fatalf("dynamic menu migration missing %q", fragment)
+		}
+	}
+
+	menuV2SQL := migrations[8].SQL
+	for _, fragment := range []string{"button", "component", "link_url", "hide_menu", "menus_menu_type_check"} {
+		if !strings.Contains(menuV2SQL, fragment) {
+			t.Fatalf("menu management v2 migration missing %q", fragment)
 		}
 	}
 

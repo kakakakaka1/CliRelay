@@ -34,7 +34,9 @@ func registerManagementIdentityRoutes(group *gin.RouterGroup, h *managementhandl
 	group.POST("/users/:id/reset-password", h.PostUserResetPassword)
 
 	group.GET("/menus", h.GetMenus)
+	group.POST("/menus", h.PostMenu)
 	group.PATCH("/menus/:code", h.PatchMenu)
+	group.DELETE("/menus/:code", h.DeleteMenu)
 	group.GET("/permissions", h.GetPermissions)
 	group.GET("/roles", h.GetRoles)
 	group.POST("/roles", h.PostRole)

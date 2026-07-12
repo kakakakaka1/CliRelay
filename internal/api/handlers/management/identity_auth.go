@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -379,24 +380,48 @@ func (h *Handler) GetMenus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
-func (h *Handler) PatchMenu(c *gin.Context) {
+func (h *Handler) PostMenu(c *gin.Context) {
 	principal, _ := principalFromContext(c)
-	var body struct {
-		Visible   bool  `json:"visible"`
-		Enabled   bool  `json:"enabled"`
-		SortOrder int   `json:"sort_order"`
-		Version   int64 `json:"version"`
-	}
+	var body identity.MenuInput
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	menu, err := h.identity().UpdateMenu(c.Request.Context(), principal, c.Param("code"), body.Visible, body.Enabled, body.SortOrder, body.Version)
+	menu, err := h.identity().CreateMenu(c.Request.Context(), principal, body)
 	if err != nil {
 		identityError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, menu)
+}
+
+func (h *Handler) PatchMenu(c *gin.Context) {
+	principal, _ := principalFromContext(c)
+	var body identity.MenuInput
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	menu, err := h.identity().UpdateMenu(c.Request.Context(), principal, c.Param("code"), body)
+	if err != nil {
+		identityError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, menu)
+}
+
+func (h *Handler) DeleteMenu(c *gin.Context) {
+	principal, _ := principalFromContext(c)
+	version, err := strconv.ParseInt(strings.TrimSpace(c.Query("version")), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "version required"})
+		return
+	}
+	if err := h.identity().DeleteMenu(c.Request.Context(), principal, c.Param("code"), version); err != nil {
+		identityError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *Handler) GetPermissions(c *gin.Context) {
@@ -558,6 +583,8 @@ func permissionForManagementRequest(method, path string) string {
 		return "tenant.audit.read"
 	case relative == "/menus" && method == http.MethodGet:
 		return "platform.menus.read"
+	case relative == "/menus" && write:
+		return "platform.menus.update"
 	case strings.HasPrefix(relative, "/menus/"):
 		return "platform.menus.update"
 	case relative == "/roles" && method == http.MethodGet, relative == "/permissions":

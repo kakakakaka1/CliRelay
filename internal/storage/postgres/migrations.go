@@ -10,6 +10,7 @@ func RuntimeMigrations() []Migration {
 		{Version: "202607110004_identity_delete_constraints", SQL: identityDeleteConstraintsSQL},
 		{Version: "202607110005_ccswitch_tenant_primary_key", SQL: ccSwitchTenantPrimaryKeySQL},
 		{Version: "202607120001_dynamic_menus", SQL: dynamicMenusSQL},
+		{Version: "202607120002_menu_management_v2", SQL: menuManagementV2SQL},
 	}
 }
 
@@ -603,4 +604,15 @@ CREATE TABLE IF NOT EXISTS menus (
 );
 CREATE INDEX IF NOT EXISTS idx_menus_parent_sort ON menus(parent_code, sort_order, code);
 CREATE INDEX IF NOT EXISTS idx_menus_permission ON menus(permission_code);
+`
+
+const menuManagementV2SQL = `
+ALTER TABLE menus DROP CONSTRAINT IF EXISTS menus_menu_type_check;
+ALTER TABLE menus ADD CONSTRAINT menus_menu_type_check CHECK (menu_type IN ('directory', 'menu', 'button', 'embed', 'link'));
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS component TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS link_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS badge_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS badge_content TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS hide_menu BOOLEAN NOT NULL DEFAULT false;
 `
