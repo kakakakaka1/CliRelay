@@ -6,6 +6,7 @@ type PermissionSeed struct {
 	Scope     string `json:"scope"`
 	Resource  string `json:"resource"`
 	Action    string `json:"action"`
+	MenuCode  string `json:"menu_code"`
 	Sensitive bool   `json:"sensitive"`
 }
 
@@ -65,4 +66,49 @@ var PermissionCatalog = []PermissionSeed{
 	{Code: "proxies.test", Name: "Test proxies", Scope: "tenant", Resource: "proxies", Action: "test", Sensitive: true},
 	{Code: "tenant_settings.read", Name: "Read tenant settings", Scope: "tenant", Resource: "tenant_settings", Action: "read"},
 	{Code: "tenant_settings.write", Name: "Write tenant settings", Scope: "tenant", Resource: "tenant_settings", Action: "write", Sensitive: true},
+}
+
+func menuCodeForPermission(permission PermissionSeed) string {
+	switch permission.Resource {
+	case "tenants", "tenant_profile":
+		return "governance.tenants"
+	case "users":
+		return "governance.users"
+	case "roles":
+		return "governance.roles"
+	case "audit":
+		return "governance.audit"
+	case "menus":
+		return MenuManagementCode
+	case "system":
+		return "runtime.system"
+	case "system_logs":
+		return "runtime.logs"
+	case "system_config", "system_update", "tenant_settings":
+		return "system.config"
+	case "dashboard":
+		return "dashboard"
+	case "monitor":
+		return "runtime.monitor"
+	case "request_logs":
+		return "runtime.request-logs"
+	case "providers":
+		return "access.providers"
+	case "auth_files":
+		return "system.account-security"
+	case "api_keys":
+		return "access.api-keys"
+	case "api_key_profiles":
+		return "system.api-key-permissions"
+	case "models":
+		return "models.catalog"
+	case "image_generation":
+		return "models.image-generation"
+	case "routing":
+		return "models.channel-groups"
+	case "proxies":
+		return "models.proxies"
+	default:
+		return ""
+	}
 }

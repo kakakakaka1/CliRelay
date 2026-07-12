@@ -70,6 +70,10 @@ func HashPassword(password string) (string, error) {
 	return string(hash), err
 }
 
+func generatedIdentifier(prefix string) string {
+	return prefix + strings.ReplaceAll(uuid.NewString(), "-", "")
+}
+
 func validIdentifier(value string, maxLength int, allowAt bool) bool {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > maxLength {
@@ -597,8 +601,8 @@ func (s *Service) ListTenants(ctx context.Context) ([]Tenant, error) {
 }
 
 type CreateTenantInput struct {
-	Slug, Name, Description, AdminUsername, AdminDisplayName, AdminPassword string
-	ExpiresAt                                                               time.Time
+	Name, Description, AdminUsername, AdminDisplayName, AdminPassword string
+	ExpiresAt                                                         time.Time
 }
 
 func (s *Service) CreateTenant(ctx context.Context, actor Principal, input CreateTenantInput) (Tenant, User, error) {
@@ -607,11 +611,11 @@ func (s *Service) CreateTenant(ctx context.Context, actor Principal, input Creat
 	if !actor.Has("platform.tenants.create") {
 		return tenant, admin, ErrPermissionDenied
 	}
-	slug := strings.ToLower(strings.TrimSpace(input.Slug))
+	slug := generatedIdentifier("tenant-")
 	name := strings.TrimSpace(input.Name)
 	adminUsername := NormalizeUsername(input.AdminUsername)
 	adminDisplayName := strings.TrimSpace(input.AdminDisplayName)
-	if !validIdentifier(slug, 64, false) || strings.Contains(slug, ".") || strings.Contains(slug, "_") || name == "" || len(name) > 128 || len(strings.TrimSpace(input.Description)) > 1000 || !validIdentifier(adminUsername, 128, true) || adminDisplayName == "" || len(adminDisplayName) > 128 || input.ExpiresAt.IsZero() || !input.ExpiresAt.After(time.Now()) {
+	if name == "" || len(name) > 128 || len(strings.TrimSpace(input.Description)) > 1000 || !validIdentifier(adminUsername, 128, true) || adminDisplayName == "" || len(adminDisplayName) > 128 || input.ExpiresAt.IsZero() || !input.ExpiresAt.After(time.Now()) {
 		return tenant, admin, fmt.Errorf("%w: invalid tenant input", ErrValidation)
 	}
 	passwordHash, err := HashPassword(input.AdminPassword)
@@ -884,19 +888,20 @@ func (s *Service) ListPermissions(ctx context.Context) ([]PermissionSeed, error)
 		if err = rows.Scan(&item.Code, &item.Name, &item.Scope, &item.Resource, &item.Action, &item.Sensitive); err != nil {
 			return nil, err
 		}
+		item.MenuCode = menuCodeForPermission(item)
 		items = append(items, item)
 	}
 	return items, rows.Err()
 }
 
-func (s *Service) CreateRole(ctx context.Context, actor Principal, tenantID, code, name, description string, permissions []string) (Role, error) {
+func (s *Service) CreateRole(ctx context.Context, actor Principal, tenantID, name, description string, permissions []string) (Role, error) {
 	if !actor.Has("tenant.roles.create") && !actor.Has("platform.roles.manage") {
 		return Role{}, ErrPermissionDenied
 	}
 	if err := ensureActorTenantScope(actor, tenantID); err != nil {
 		return Role{}, err
 	}
-	code = strings.ToLower(strings.TrimSpace(code))
+	code := generatedIdentifier("role_")
 	name = strings.TrimSpace(name)
 	description = strings.TrimSpace(description)
 	if !validIdentifier(code, 64, false) || name == "" || len(name) > 128 || len(description) > 1000 {

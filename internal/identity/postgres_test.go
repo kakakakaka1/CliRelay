@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,12 +58,15 @@ func TestPostgresIdentityLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenant, admin, err := service.CreateTenant(ctx, principal, CreateTenantInput{Slug: "tenant-a", Name: "Tenant A", ExpiresAt: time.Now().Add(time.Hour), AdminUsername: "tenant-admin", AdminDisplayName: "Tenant Admin", AdminPassword: "tenant-password-123"})
+	tenant, admin, err := service.CreateTenant(ctx, principal, CreateTenantInput{Name: "Tenant A", ExpiresAt: time.Now().Add(time.Hour), AdminUsername: "tenant-admin", AdminDisplayName: "Tenant Admin", AdminPassword: "tenant-password-123"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if tenant.ID == "" || admin.TenantID != tenant.ID {
 		t.Fatalf("tenant=%+v admin=%+v", tenant, admin)
+	}
+	if !strings.HasPrefix(tenant.Slug, "tenant-") || len(tenant.Slug) != len("tenant-")+32 {
+		t.Fatalf("generated tenant slug = %q", tenant.Slug)
 	}
 	tenantAdminLogin, err := service.Login(ctx, "tenant-admin", "tenant-password-123", false, "test")
 	if err != nil {
@@ -93,13 +97,16 @@ func TestPostgresIdentityLifecycle(t *testing.T) {
 	if tenantAdminRoleID == "" {
 		t.Fatal("tenant admin role not found")
 	}
-	limitedRole, err := service.CreateRole(ctx, tenantAdmin, tenant.ID, "limited_user_manager", "Limited user manager", "", []string{
+	limitedRole, err := service.CreateRole(ctx, tenantAdmin, tenant.ID, "Limited user manager", "", []string{
 		"tenant.users.read",
 		"tenant.users.create",
 		"tenant.users.assign_roles",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.HasPrefix(limitedRole.Code, "role_") || len(limitedRole.Code) != len("role_")+32 {
+		t.Fatalf("generated role code = %q", limitedRole.Code)
 	}
 	limitedUser, err := service.CreateUser(ctx, tenantAdmin, tenant.ID, "limited-manager", "Limited Manager", "limited-password-123", []string{limitedRole.ID})
 	if err != nil {

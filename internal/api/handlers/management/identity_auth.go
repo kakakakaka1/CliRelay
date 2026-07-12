@@ -269,7 +269,6 @@ func (h *Handler) GetTenants(c *gin.Context) {
 func (h *Handler) PostTenant(c *gin.Context) {
 	principal, _ := principalFromContext(c)
 	var body struct {
-		Slug             string    `json:"slug"`
 		Name             string    `json:"name"`
 		Description      string    `json:"description"`
 		ExpiresAt        time.Time `json:"expires_at"`
@@ -282,7 +281,7 @@ func (h *Handler) PostTenant(c *gin.Context) {
 		return
 	}
 	tenant, admin, err := h.identity().CreateTenant(c.Request.Context(), principal, identity.CreateTenantInput{
-		Slug: body.Slug, Name: body.Name, Description: body.Description, ExpiresAt: body.ExpiresAt,
+		Name: body.Name, Description: body.Description, ExpiresAt: body.ExpiresAt,
 		AdminUsername: body.AdminUsername, AdminDisplayName: body.AdminDisplayName, AdminPassword: body.AdminPassword,
 	})
 	if err != nil {
@@ -412,7 +411,6 @@ func (h *Handler) GetPermissions(c *gin.Context) {
 func (h *Handler) PostRole(c *gin.Context) {
 	principal, _ := principalFromContext(c)
 	var body struct {
-		Code        string   `json:"code"`
 		Name        string   `json:"name"`
 		Description string   `json:"description"`
 		Permissions []string `json:"permissions"`
@@ -421,7 +419,7 @@ func (h *Handler) PostRole(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	role, err := h.identity().CreateRole(c.Request.Context(), principal, principal.EffectiveTenant.ID, body.Code, body.Name, body.Description, body.Permissions)
+	role, err := h.identity().CreateRole(c.Request.Context(), principal, principal.EffectiveTenant.ID, body.Name, body.Description, body.Permissions)
 	if err != nil {
 		identityError(c, err)
 		return

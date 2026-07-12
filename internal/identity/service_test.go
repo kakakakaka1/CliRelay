@@ -2,6 +2,7 @@ package identity
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -83,6 +84,46 @@ func TestMenuCatalogReferencesExistingParents(t *testing.T) {
 	}
 	if !seen[MenuManagementCode] {
 		t.Fatal("menu management entry is missing")
+	}
+}
+
+func TestGeneratedIdentifier(t *testing.T) {
+	first := generatedIdentifier("tenant-")
+	second := generatedIdentifier("tenant-")
+	if !strings.HasPrefix(first, "tenant-") || len(first) != len("tenant-")+32 || first == second {
+		t.Fatalf("generated identifiers first=%q second=%q", first, second)
+	}
+}
+
+func TestMenuCodeForPermission(t *testing.T) {
+	menuCodes := make(map[string]bool, len(MenuCatalog))
+	for _, menu := range MenuCatalog {
+		menuCodes[menu.Code] = true
+	}
+	tests := map[string]string{
+		"tenant.users.update":   "governance.users",
+		"request_logs.delete":   "runtime.request-logs",
+		"platform.menus.update": MenuManagementCode,
+		"proxies.test":          "models.proxies",
+	}
+	for _, permission := range PermissionCatalog {
+		got := menuCodeForPermission(permission)
+		if got == "" {
+			t.Errorf("permission %s has no menu mapping", permission.Code)
+		} else if !menuCodes[got] {
+			t.Errorf("permission %s references unknown menu %s", permission.Code, got)
+		}
+		want, ok := tests[permission.Code]
+		if !ok {
+			continue
+		}
+		if got != want {
+			t.Errorf("menuCodeForPermission(%s)=%q want %q", permission.Code, got, want)
+		}
+		delete(tests, permission.Code)
+	}
+	if len(tests) != 0 {
+		t.Fatalf("permissions missing from catalog: %v", tests)
 	}
 }
 
