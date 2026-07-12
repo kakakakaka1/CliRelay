@@ -227,3 +227,108 @@ func TestModelSourceEntriesKeepMappedProviderSourceForRetainedRegistryModel(t *t
 		t.Fatalf("sources = %#v, want retained registry model to show mapped provider source", sources)
 	}
 }
+
+func TestConfiguredAvailabilityDoesNotLeakSystemRegistryModelsToOtherTenant(t *testing.T) {
+	const (
+		systemModelID = "tenant-isolation-system-model"
+		tenantModelID = "tenant-isolation-tenant-model"
+		systemAuthID  = "tenant-isolation-system-auth"
+		tenantAuthID  = "tenant-isolation-tenant-auth"
+		tenantID      = "14b1ee9a-6177-4f5f-b5d4-4fba60ad24fa"
+	)
+
+	modelRegistry := registry.GetGlobalRegistry()
+	modelRegistry.UnregisterClient(systemAuthID)
+	modelRegistry.UnregisterClient(tenantAuthID)
+	t.Cleanup(func() {
+		modelRegistry.UnregisterClient(systemAuthID)
+		modelRegistry.UnregisterClient(tenantAuthID)
+	})
+
+	// System tenant clients remain visible in the process-global registry.
+	modelRegistry.RegisterClient(systemAuthID, "codex", []*registry.ModelInfo{
+		{ID: systemModelID, Object: "model", OwnedBy: "openai"},
+	})
+	modelRegistry.RegisterClient(tenantAuthID, "codex", []*registry.ModelInfo{
+		{ID: tenantModelID, Object: "model", OwnedBy: "openai"},
+	})
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       systemAuthID,
+		TenantID: "",
+		Provider: "codex",
+		Status:   coreauth.StatusActive,
+	}); err != nil {
+		t.Fatalf("register system auth: %v", err)
+	}
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       tenantAuthID,
+		TenantID: tenantID,
+		Provider: "codex",
+		Status:   coreauth.StatusActive,
+	}); err != nil {
+		t.Fatalf("register tenant auth: %v", err)
+	}
+
+	// Default models page path: no channel/group filters.
+	result := NewForTenant(tenantID, &config.Config{}, manager).ConfiguredAvailability("", "")
+	data, ok := result["data"].([]map[string]any)
+	if !ok {
+		t.Fatalf("data = %#v, want []map[string]any", result["data"])
+	}
+	ids := make(map[string]struct{}, len(data))
+	for _, item := range data {
+		if id, _ := item["id"].(string); id != "" {
+			ids[id] = struct{}{}
+		}
+	}
+	if _, ok := ids[tenantModelID]; !ok {
+		t.Fatalf("missing tenant-owned model %q; ids=%v", tenantModelID, ids)
+	}
+	if _, ok := ids[systemModelID]; ok {
+		t.Fatalf("system registry model %q leaked into tenant availability; ids=%v", systemModelID, ids)
+	}
+}
+
+func TestFilterModelsByScopesAlwaysScopesToTenantWithoutChannelFilters(t *testing.T) {
+	const (
+		systemModelID = "filter-scope-system-model"
+		tenantModelID = "filter-scope-tenant-model"
+		systemAuthID  = "filter-scope-system-auth"
+		tenantAuthID  = "filter-scope-tenant-auth"
+		tenantID      = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	)
+
+	modelRegistry := registry.GetGlobalRegistry()
+	modelRegistry.UnregisterClient(systemAuthID)
+	modelRegistry.UnregisterClient(tenantAuthID)
+	t.Cleanup(func() {
+		modelRegistry.UnregisterClient(systemAuthID)
+		modelRegistry.UnregisterClient(tenantAuthID)
+	})
+	modelRegistry.RegisterClient(systemAuthID, "codex", []*registry.ModelInfo{{ID: systemModelID}})
+	modelRegistry.RegisterClient(tenantAuthID, "codex", []*registry.ModelInfo{{ID: tenantModelID}})
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID: systemAuthID, Provider: "codex", Status: coreauth.StatusActive,
+	}); err != nil {
+		t.Fatalf("register system auth: %v", err)
+	}
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID: tenantAuthID, TenantID: tenantID, Provider: "codex", Status: coreauth.StatusActive,
+	}); err != nil {
+		t.Fatalf("register tenant auth: %v", err)
+	}
+
+	svc := NewForTenant(tenantID, &config.Config{}, manager)
+	models := []map[string]any{
+		{"id": systemModelID},
+		{"id": tenantModelID},
+	}
+	filtered := svc.filterModelsByScopes(models, "", "")
+	if len(filtered) != 1 || filtered[0]["id"] != tenantModelID {
+		t.Fatalf("filtered = %#v, want only tenant model", filtered)
+	}
+}

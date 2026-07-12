@@ -207,40 +207,32 @@ func (s *Service) filterModelsByScopes(models []map[string]any, allowedChannelsR
 	if s == nil || s.authManager == nil {
 		return models
 	}
+
+	// Always scope the global registry to models this tenant can actually serve.
+	// Without this, non-system tenants inherit every system-tenant client model
+	// whenever no channel/group restriction is present (the models page default).
+	var allowedChannels map[string]struct{}
 	if allowedChannelsRaw != "" && allowedChannelsRaw != "*" && !strings.EqualFold(allowedChannelsRaw, "all") {
-		allowed := make(map[string]struct{})
+		allowedChannels = make(map[string]struct{})
 		for _, part := range strings.Split(allowedChannelsRaw, ",") {
 			key := strings.ToLower(strings.TrimSpace(part))
 			if key == "" {
 				continue
 			}
-			allowed[key] = struct{}{}
+			allowedChannels[key] = struct{}{}
 		}
-		if len(allowed) == 0 {
-			return models
+		if len(allowedChannels) == 0 {
+			allowedChannels = nil
 		}
-		filtered := make([]map[string]any, 0, len(models))
-		for _, model := range models {
-			id, _ := model["id"].(string)
-			if id == "" {
-				continue
-			}
-			if s.authManager.CanServeModelWithScopesForTenant(s.tenantID, id, allowed, allowedGroups, "") {
-				filtered = append(filtered, model)
-			}
-		}
-		return filtered
 	}
-	if len(allowedGroups) == 0 {
-		return models
-	}
+
 	filtered := make([]map[string]any, 0, len(models))
 	for _, model := range models {
 		id, _ := model["id"].(string)
 		if id == "" {
 			continue
 		}
-		if s.authManager.CanServeModelWithScopesForTenant(s.tenantID, id, nil, allowedGroups, "") {
+		if s.authManager.CanServeModelWithScopesForTenant(s.tenantID, id, allowedChannels, allowedGroups, "") {
 			filtered = append(filtered, model)
 		}
 	}

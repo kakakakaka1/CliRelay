@@ -73,10 +73,13 @@ func (s *Service) modelPathRouteScopedModels(models []map[string]any, routeGroup
 	return filtered
 }
 
-func (s *Service) modelRootRouteScopedModels(models []map[string]any, routingConfig *config.RoutingConfig) []map[string]any {
-	if s == nil || s.authManager == nil || routingConfig == nil || !routingConfig.IncludeDefaultGroup {
+func (s *Service) modelRootRouteScopedModels(models []map[string]any, _ *config.RoutingConfig) []map[string]any {
+	if s == nil || s.authManager == nil {
 		return models
 	}
+	// Always scope root path models to auths owned by the effective tenant.
+	// IncludeDefaultGroup used to skip this filter entirely, which leaked the
+	// process-global registry into non-system tenants (models page + path list).
 	filtered := make([]map[string]any, 0, len(models))
 	for _, model := range models {
 		id := strings.TrimSpace(modelPathStringValue(model["id"]))
