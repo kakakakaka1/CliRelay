@@ -19,7 +19,6 @@ import (
 const (
 	identityFingerprintReadCacheTTL  = 30 * time.Second
 	identityFingerprintWriteCacheTTL = 5 * time.Minute
-	identityFingerprintSystemTenant  = "00000000-0000-0000-0000-000000000001"
 )
 
 var (
@@ -78,14 +77,6 @@ func identityFingerprintHeadersFromContext(ctx context.Context) http.Header {
 	return ginCtx.Request.Header
 }
 
-func usesSystemIdentityFingerprint(auth *cliproxyauth.Auth) bool {
-	if auth == nil {
-		return true
-	}
-	tenantID := strings.TrimSpace(auth.TenantID)
-	return tenantID == "" || tenantID == identityFingerprintSystemTenant
-}
-
 func identityFingerprintAccount(auth *cliproxyauth.Auth) (accountKey string, authSubjectID string) {
 	identity := usage.ResolveAuthSubjectIdentity(auth)
 	if identity != nil {
@@ -103,9 +94,10 @@ func identityFingerprintAccount(auth *cliproxyauth.Auth) (accountKey string, aut
 }
 
 func observeRuntimeIdentityFingerprint(provider identityfingerprint.Provider, auth *cliproxyauth.Auth, ctx context.Context) *identityfingerprint.LearnedRecord {
-	if !usesSystemIdentityFingerprint(auth) {
-		return nil
-	}
+	// Same AI account (account_key / auth subject) shares one fingerprint catalog
+	// across tenants. Storage is keyed under the platform system tenant so a
+	// credential that moved from system → business tenant keeps the learned
+	// UA/version bundles; business tenants still observe and apply them.
 	accountKey, authSubjectID := identityFingerprintAccount(auth)
 	if accountKey == "" {
 		return nil

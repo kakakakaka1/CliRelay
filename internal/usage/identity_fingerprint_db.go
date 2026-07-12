@@ -162,6 +162,11 @@ func migrateIdentityFingerprintPolicyTable(db *sql.DB) error {
 	return nil
 }
 
+// ObserveIdentityFingerprint learns/merges fingerprints in the shared AI-account
+// catalog. Rows are stored under systemTenantID as an implementation detail; the
+// logical key is (provider, account_key, profile_key). The same OAuth account
+// keeps one fingerprint set whether its credential currently lives on the
+// platform tenant or a business tenant.
 func ObserveIdentityFingerprint(input identityfingerprint.LearnInput) (*identityfingerprint.LearnedRecord, identityfingerprint.MergeResult, error) {
 	if !ConfigStoreAvailable() {
 		return nil, identityfingerprint.MergeResult{Reason: "store_unavailable"}, nil
@@ -223,6 +228,9 @@ func ObserveIdentityFingerprint(input identityfingerprint.LearnInput) (*identity
 	return result.Record, result, nil
 }
 
+// GetIdentityFingerprint returns the most recently seen shared fingerprint for
+// the AI account (provider + account_key), independent of which business tenant
+// currently owns the credential file.
 func GetIdentityFingerprint(provider identityfingerprint.Provider, accountKey string) (*identityfingerprint.LearnedRecord, error) {
 	db := getDB()
 	if db == nil {
