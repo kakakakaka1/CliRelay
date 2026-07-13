@@ -54,14 +54,22 @@ func (h *Handler) GetPublicUsageSummary(c *gin.Context) {
 		return
 	}
 
-	stats, err := usage.QueryStats(usage.LogQueryParams{APIKey: apiKey, Days: 1})
+	// Public summary is unauthenticated and only receives the raw API key.
+	// Resolve the key's tenant first so multi-tenant deployments do not query
+	// the system catalog (which would always return found=false / zero stats).
+	tenantID := usage.ResolveAPIKeyTenant(apiKey)
+	stats, err := usage.QueryStats(usage.LogQueryParams{
+		TenantID: tenantID,
+		APIKey:   apiKey,
+		Days:     1,
+	})
 	if err != nil {
 		log.Warnf("management usage logs: public usage summary query failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query usage summary"})
 		return
 	}
 
-	row := apikeysettings.NewService(nil).GetRow(apiKey)
+	row := apikeysettings.NewService(nil, apikeysettings.WithTenantID(tenantID)).GetRow(apiKey)
 	found := row != nil && !row.Disabled
 
 	resp := usageSummaryResponse{
