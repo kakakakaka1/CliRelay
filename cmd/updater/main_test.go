@@ -1189,7 +1189,7 @@ func TestEnsureRuntimeEnvFileReplacesWorkspaceProjectDir(t *testing.T) {
 		t.Fatalf("write env: %v", err)
 	}
 
-	if err := ensureRuntimeEnvFile(context.Background(), envPath, "/root/cliproxy", "cli-proxy-api", "ghcr.io/kittors/clirelay:dev", updaterRunReporter{}); err != nil {
+	if err := ensureRuntimeEnvFile(context.Background(), envPath, "/root/cliproxy", "cli-proxy-api", "ghcr.io/kittors/clirelay:dev", "", false, updaterRunReporter{}); err != nil {
 		t.Fatalf("ensureRuntimeEnvFile failed: %v", err)
 	}
 
@@ -1202,10 +1202,126 @@ func TestEnsureRuntimeEnvFileReplacesWorkspaceProjectDir(t *testing.T) {
 		"CLIRELAY_PROJECT_DIR=/root/cliproxy\n",
 		"CLIRELAY_POSTGRES_DATA_PATH=/root/cliproxy/postgres-data\n",
 		"CLIRELAY_REDIS_DATA_PATH=/root/cliproxy/redis-data\n",
+		"AUTH_PATH=/CLIProxyAPI/auths\n",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("env missing %q:\n%s", want, content)
 		}
+	}
+}
+
+func TestEnsureRuntimeEnvFileAlignsStaleAuthPath(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte("AUTH_PATH=/CLIProxyAPI/auths\n"), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	// Preferred path comes from a concrete volume destination (legacy default).
+	if err := ensureRuntimeEnvFile(context.Background(), envPath, "/root/cliproxy", "cli-proxy-api", "ghcr.io/kittors/clirelay:dev", "/root/.cli-proxy-api", true, updaterRunReporter{}); err != nil {
+		t.Fatalf("ensureRuntimeEnvFile failed: %v", err)
+	}
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if !strings.Contains(string(data), "AUTH_PATH=/root/.cli-proxy-api\n") {
+		t.Fatalf("stale AUTH_PATH was not realigned:\n%s", data)
+	}
+}
+
+func TestEnsureRuntimeEnvFileKeepsExistingAuthPathWhenNotForced(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte("AUTH_PATH=/root/.cli-proxy-api\n"), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	if err := ensureRuntimeEnvFile(context.Background(), envPath, "/root/cliproxy", "cli-proxy-api", "ghcr.io/kittors/clirelay:dev", "/CLIProxyAPI/auths", false, updaterRunReporter{}); err != nil {
+		t.Fatalf("ensureRuntimeEnvFile failed: %v", err)
+	}
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if !strings.Contains(string(data), "AUTH_PATH=/root/.cli-proxy-api\n") {
+		t.Fatalf("existing AUTH_PATH should be preserved when not forced:\n%s", data)
+	}
+}
+
+func TestUpgradeComposeRuntimeStackAlignsAuthPathWithLegacyVolume(t *testing.T) {
+	upgraded, _, err := upgradeComposeRuntimeStack(`
+services:
+  cli-proxy-api:
+    image: ghcr.io/kittors/clirelay:dev
+    environment:
+      AUTH_PATH: ${AUTH_PATH:-/CLIProxyAPI/auths}
+    volumes:
+      - ${CLI_PROXY_AUTH_PATH:-./auths}:/root/.cli-proxy-api
+`, "/opt/clirelay", "cli-proxy-api")
+	if err != nil {
+		t.Fatalf("upgradeComposeRuntimeStack failed: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(upgraded), &doc); err != nil {
+		t.Fatalf("parse upgraded compose: %v", err)
+	}
+	services, ok := stringMap(doc["services"])
+	if !ok {
+		t.Fatalf("services missing:\n%s", upgraded)
+	}
+	target, ok := stringMap(services["cli-proxy-api"])
+	if !ok {
+		t.Fatalf("target missing:\n%s", upgraded)
+	}
+	env, ok := stringMap(target["environment"])
+	if !ok {
+		t.Fatalf("environment missing:\n%s", upgraded)
+	}
+	if env["AUTH_PATH"] != "/root/.cli-proxy-api" {
+		t.Fatalf("AUTH_PATH = %v, want /root/.cli-proxy-api\n%s", env["AUTH_PATH"], upgraded)
+	}
+}
+
+func TestAlignAuthPathWithVolumesUsesInterpolationAwareSplit(t *testing.T) {
+	// Volume dest is driven by AUTH_PATH itself; keep existing concrete AUTH_PATH.
+	env, _ := alignAuthPathWithVolumes(map[string]any{
+		"AUTH_PATH": "/root/.cli-proxy-api",
+	}, []any{
+		"${CLI_PROXY_AUTH_PATH:-${CLIRELAY_PROJECT_DIR:-${PWD:-.}}/auths}:${AUTH_PATH:-/CLIProxyAPI/auths}",
+	})
+	if env["AUTH_PATH"] != "/root/.cli-proxy-api" {
+		t.Fatalf("AUTH_PATH = %v, want preserved /root/.cli-proxy-api", env["AUTH_PATH"])
+	}
+
+	// Unset AUTH_PATH with AUTH_PATH-driven volume uses the volume default.
+	env, _ = alignAuthPathWithVolumes(map[string]any{}, []any{
+		"${CLI_PROXY_AUTH_PATH:-./auths}:${AUTH_PATH:-/root/.cli-proxy-api}",
+	})
+	if env["AUTH_PATH"] != "/root/.cli-proxy-api" {
+		t.Fatalf("AUTH_PATH = %v, want default from volume dest", env["AUTH_PATH"])
+	}
+
+	// Concrete volume destination overrides a mismatched AUTH_PATH.
+	env, _ = alignAuthPathWithVolumes(map[string]any{
+		"AUTH_PATH": "/CLIProxyAPI/auths",
+	}, []any{
+		"./auths:/root/.cli-proxy-api",
+	})
+	if env["AUTH_PATH"] != "/root/.cli-proxy-api" {
+		t.Fatalf("AUTH_PATH = %v, want concrete volume dest", env["AUTH_PATH"])
+	}
+}
+
+func TestSplitComposeVolumePartsIgnoresColonsInInterpolation(t *testing.T) {
+	parts := splitComposeVolumeParts("${CLI_PROXY_AUTH_PATH:-${PWD:-.}/auths}:${AUTH_PATH:-/CLIProxyAPI/auths}:ro")
+	if len(parts) != 3 {
+		t.Fatalf("parts = %#v, want 3 segments", parts)
+	}
+	if parts[0] != "${CLI_PROXY_AUTH_PATH:-${PWD:-.}/auths}" {
+		t.Fatalf("source = %q", parts[0])
+	}
+	if parts[1] != "${AUTH_PATH:-/CLIProxyAPI/auths}" {
+		t.Fatalf("dest = %q", parts[1])
+	}
+	if parts[2] != "ro" {
+		t.Fatalf("mode = %q", parts[2])
 	}
 }
 

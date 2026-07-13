@@ -550,7 +550,8 @@ func ensureRuntimeDataStackConfig(ctx context.Context, composeFile string, envFi
 	composeText := string(composeData)
 	hasRuntimeStack := hasComposeService(composeText, "postgres") && hasComposeService(composeText, "redis") && hasComposeService(composeText, "clirelay-init")
 	if hasRuntimeStack && !hasComposeService(composeText, "clirelay-migrate") {
-		if err := ensureRuntimeEnvFile(ctx, envFile, projectDir, service, composeAppImage(composeText, service), reporter); err != nil {
+		preferredAuth, forceAuth := preferredAuthPathFromCompose(composeText, service)
+		if err := ensureRuntimeEnvFile(ctx, envFile, projectDir, service, composeAppImage(composeText, service), preferredAuth, forceAuth, reporter); err != nil {
 			return envFile, err
 		}
 		return envFile, nil
@@ -561,7 +562,8 @@ func ensureRuntimeDataStackConfig(ctx context.Context, composeFile string, envFi
 	if err != nil {
 		return envFile, err
 	}
-	if err := ensureRuntimeEnvFile(ctx, envFile, projectDir, service, appImage, reporter); err != nil {
+	preferredAuth, forceAuth := preferredAuthPathFromCompose(nextCompose, service)
+	if err := ensureRuntimeEnvFile(ctx, envFile, projectDir, service, appImage, preferredAuth, forceAuth, reporter); err != nil {
 		return envFile, err
 	}
 	if err := writeDeploymentFile(ctx, composeFile, []byte(nextCompose), 0o644, reporter); err != nil {
@@ -602,6 +604,9 @@ func upgradeComposeRuntimeStack(composeText string, projectDir string, service s
 		target["command"] = []any{"./CLIProxyAPI"}
 	}
 	targetEnv := withoutEnvKeys(target["environment"], runtimeStackEnvKeys()...)
+	// Keep AUTH_PATH aligned with the existing auth volume destination so OTA
+	// upgrades do not leave host auth files mounted at a path the process no longer reads.
+	targetEnv, target["volumes"] = alignAuthPathWithVolumes(targetEnv, target["volumes"])
 	target["environment"] = targetEnv
 	target["volumes"] = appendVolume(target["volumes"], "${CLIRELAY_PROJECT_DIR:-"+projectDir+"}:/clirelay-deploy")
 	targetNetworks := target["networks"]
@@ -872,7 +877,7 @@ func stringValue(value any) string {
 	return ""
 }
 
-func ensureRuntimeEnvFile(ctx context.Context, envFile string, projectDir string, service string, image string, reporter updateReporter) error {
+func ensureRuntimeEnvFile(ctx context.Context, envFile string, projectDir string, service string, image string, preferredAuthPath string, forceAuthPath bool, reporter updateReporter) error {
 	data, err := os.ReadFile(envFile)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read docker env file: %w", err)
@@ -896,6 +901,9 @@ func ensureRuntimeEnvFile(ctx context.Context, envFile string, projectDir string
 	setEnvDefault(&lines, values, "CLIRELAY_REDIS_ADDR", "redis:6379")
 	setEnvDefault(&lines, values, "CLIRELAY_REDIS_DB", "0")
 	setEnvDefaultOrReplaceWorkspace(&lines, values, "CLIRELAY_REDIS_DATA_PATH", filepath.Join(projectDir, "redis-data"))
+	// Align AUTH_PATH with a concrete compose auth volume destination when forced;
+	// otherwise only fill a missing AUTH_PATH so existing .env values stay valid.
+	ensureRuntimeEnvAuthPath(&lines, values, preferredAuthPath, forceAuthPath)
 	content := strings.Join(lines, "\n") + "\n"
 	if err := writeDeploymentFile(ctx, envFile, []byte(content), 0o600, reporter); err != nil {
 		return fmt.Errorf("write docker env file: %w", err)

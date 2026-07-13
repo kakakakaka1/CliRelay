@@ -93,6 +93,99 @@ func ResolveAuthDir(authDir string) (string, error) {
 	return filepath.Clean(authDir), nil
 }
 
+// LegacyDockerAuthDirs are container paths used by older Compose defaults.
+// They remain candidates when diagnosing empty AuthDir after upgrades.
+func LegacyDockerAuthDirs() []string {
+	return []string{
+		"/root/.cli-proxy-api",
+		"/CLIProxyAPI/auths",
+	}
+}
+
+// CountJSONAuthFiles counts non-empty .json files under dir (recursive).
+// Missing directories return 0 without error so callers can treat "empty" uniformly.
+func CountJSONAuthFiles(dir string) (int, error) {
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" {
+		return 0, nil
+	}
+	info, err := os.Stat(trimmed)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("auth dir is not a directory: %s", trimmed)
+	}
+	count := 0
+	err = filepath.WalkDir(trimmed, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".json") {
+			return nil
+		}
+		fi, errInfo := d.Info()
+		if errInfo != nil {
+			return nil
+		}
+		if fi.Size() > 0 {
+			count++
+		}
+		return nil
+	})
+	if err != nil {
+		return count, err
+	}
+	return count, nil
+}
+
+// LogResolvedAuthDir logs the effective auth directory and file count.
+// When the resolved directory is empty but a known legacy Docker auth path still
+// has JSON files, it warns about AUTH_PATH / volume misalignment (issue #542).
+func LogResolvedAuthDir(authDir string) {
+	trimmed := strings.TrimSpace(authDir)
+	if trimmed == "" {
+		log.Warn("auth directory is empty; file-based credentials will not load")
+		return
+	}
+	authEnv := strings.TrimSpace(os.Getenv("AUTH_PATH"))
+	if authEnv != "" {
+		log.Infof("auth directory resolved to %s (AUTH_PATH=%s)", trimmed, authEnv)
+	} else {
+		log.Infof("auth directory resolved to %s", trimmed)
+	}
+	count, err := CountJSONAuthFiles(trimmed)
+	if err != nil {
+		log.Warnf("auth directory %s is not fully readable: %v", trimmed, err)
+		return
+	}
+	log.Infof("auth directory %s contains %d non-empty .json file(s)", trimmed, count)
+	if count > 0 {
+		return
+	}
+	resolvedClean := filepath.Clean(trimmed)
+	for _, candidate := range LegacyDockerAuthDirs() {
+		if filepath.Clean(candidate) == resolvedClean {
+			continue
+		}
+		legacyCount, legacyErr := CountJSONAuthFiles(candidate)
+		if legacyErr != nil || legacyCount == 0 {
+			continue
+		}
+		log.Warnf(
+			"auth directory %s is empty, but %s still has %d .json file(s); "+
+				"check AUTH_PATH and the docker auth volume destination so the process reads the mounted directory",
+			trimmed, candidate, legacyCount,
+		)
+	}
+}
+
 // CountAuthFiles returns the number of auth records available through the provided Store.
 // For filesystem-backed stores, this reflects the number of JSON auth files under the configured directory.
 func CountAuthFiles[T any](ctx context.Context, store interface {

@@ -239,9 +239,9 @@ func (w *Watcher) loadFileClients(cfg *config.Config) int {
 	})
 
 	if errWalk != nil {
-		log.Errorf("error walking auth directory: %v", errWalk)
+		log.Errorf("error walking auth directory %s: %v", authDir, errWalk)
 	}
-	log.Debugf("auth directory scan complete - found %d .json files, %d readable", authFileCount, successfulAuthCount)
+	log.Infof("auth directory scan complete - path=%s found %d .json files, %d readable", authDir, authFileCount, successfulAuthCount)
 	return authFileCount
 }
 

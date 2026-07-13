@@ -481,6 +481,8 @@ func main() {
 	} else {
 		cfg.AuthDir = resolvedAuthDir
 	}
+	// Surface AuthDir vs legacy Docker mount mismatches early (empty panel after OTA).
+	util.LogResolvedAuthDir(cfg.AuthDir)
 	managementasset.SetCurrentConfig(cfg)
 
 	// Create login options to be used in authentication flows.
