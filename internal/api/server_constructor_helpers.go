@@ -14,6 +14,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules"
 	ampmodule "github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules/amp"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/managementasset"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
@@ -238,8 +239,9 @@ func (s *Server) configureInitialManagementRoutes(cfg *config.Config) {
 		return
 	}
 	hasManagementSecret := cfg.RemoteManagement.SecretKey != "" || s.envManagementSecret || s.localPassword != ""
-	s.managementRoutesEnabled.Store(hasManagementSecret)
-	if hasManagementSecret {
+	hasIdentityAuth := identity.Default() != nil
+	s.managementRoutesEnabled.Store(hasManagementSecret || hasIdentityAuth)
+	if hasManagementSecret || hasIdentityAuth {
 		s.registerManagementRoutes()
 	}
 }

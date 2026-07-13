@@ -39,7 +39,7 @@ func (s *Service) LogContent(id int64, part, format string) LogContentResponse {
 		return LogContentResponse{Status: http.StatusBadRequest, Payload: map[string]any{"error": "format=text requires part=input, part=output, or part=details"}}
 	}
 	if part == "both" {
-		result, err := usage.QueryLogContent(id)
+		result, err := usage.QueryLogContentForTenant(s.tenantID, id)
 		if err != nil {
 			if strings.Contains(err.Error(), "no rows") {
 				return LogContentResponse{Status: http.StatusNotFound, Payload: map[string]any{"error": "log entry not found"}}
@@ -49,7 +49,7 @@ func (s *Service) LogContent(id int64, part, format string) LogContentResponse {
 		return LogContentResponse{Status: http.StatusOK, Payload: result}
 	}
 
-	result, err := usage.QueryLogContentPart(id, part)
+	result, err := usage.QueryLogContentPartForTenant(s.tenantID, id, part)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return LogContentResponse{Status: http.StatusNotFound, Payload: map[string]any{"error": "log entry not found"}}

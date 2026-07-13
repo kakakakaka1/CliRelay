@@ -262,12 +262,12 @@ func (_q *RuntimeSettingQuery) Clone() *RuntimeSettingQuery {
 // Example:
 //
 //	var v []struct {
-//		SettingKey string `json:"setting_key,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.RuntimeSetting.Query().
-//		GroupBy(runtimesetting.FieldSettingKey).
+//		GroupBy(runtimesetting.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *RuntimeSettingQuery) GroupBy(field string, fields ...string) *RuntimeSettingGroupBy {
@@ -285,11 +285,11 @@ func (_q *RuntimeSettingQuery) GroupBy(field string, fields ...string) *RuntimeS
 // Example:
 //
 //	var v []struct {
-//		SettingKey string `json:"setting_key,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.RuntimeSetting.Query().
-//		Select(runtimesetting.FieldSettingKey).
+//		Select(runtimesetting.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *RuntimeSettingQuery) Select(fields ...string) *RuntimeSettingSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

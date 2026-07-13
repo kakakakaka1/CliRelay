@@ -16,6 +16,8 @@ type CcSwitchImportConfig struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID string `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// ClientType holds the value of the "client_type" field.
 	ClientType string `json:"client_type,omitempty"`
 	// ProviderName holds the value of the "provider_name" field.
@@ -50,7 +52,7 @@ func (*CcSwitchImportConfig) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case ccswitchimportconfig.FieldUsageAutoInterval:
 			values[i] = new(sql.NullInt64)
-		case ccswitchimportconfig.FieldID, ccswitchimportconfig.FieldClientType, ccswitchimportconfig.FieldProviderName, ccswitchimportconfig.FieldNote, ccswitchimportconfig.FieldDefaultModel, ccswitchimportconfig.FieldModelMappings, ccswitchimportconfig.FieldAllowedChannelGroups, ccswitchimportconfig.FieldRoutePath, ccswitchimportconfig.FieldEndpointPath, ccswitchimportconfig.FieldAPIKeyField, ccswitchimportconfig.FieldCreatedAt, ccswitchimportconfig.FieldUpdatedAt:
+		case ccswitchimportconfig.FieldID, ccswitchimportconfig.FieldTenantID, ccswitchimportconfig.FieldClientType, ccswitchimportconfig.FieldProviderName, ccswitchimportconfig.FieldNote, ccswitchimportconfig.FieldDefaultModel, ccswitchimportconfig.FieldModelMappings, ccswitchimportconfig.FieldAllowedChannelGroups, ccswitchimportconfig.FieldRoutePath, ccswitchimportconfig.FieldEndpointPath, ccswitchimportconfig.FieldAPIKeyField, ccswitchimportconfig.FieldCreatedAt, ccswitchimportconfig.FieldUpdatedAt:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -72,6 +74,12 @@ func (_m *CcSwitchImportConfig) assignValues(columns []string, values []any) err
 				return fmt.Errorf("unexpected type %T for field id", values[i])
 			} else if value.Valid {
 				_m.ID = value.String
+			}
+		case ccswitchimportconfig.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
 			}
 		case ccswitchimportconfig.FieldClientType:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -181,6 +189,9 @@ func (_m *CcSwitchImportConfig) String() string {
 	var builder strings.Builder
 	builder.WriteString("CcSwitchImportConfig(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("client_type=")
 	builder.WriteString(_m.ClientType)
 	builder.WriteString(", ")

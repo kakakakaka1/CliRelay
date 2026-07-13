@@ -43,7 +43,7 @@ func (h *Handler) PostQuotaReconcile(c *gin.Context) {
 	}
 
 	authIndex := firstNonEmptyString(body.AuthIndexSnake, body.AuthIndexCamel, body.AuthIndexPascal)
-	auth := h.authByIndex(authIndex)
+	auth := h.authByIndexForTenant(effectiveTenantID(c), authIndex)
 	if auth == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "auth not found"})
 		return
@@ -73,7 +73,7 @@ func (h *Handler) PostQuotaClearStatus(c *gin.Context) {
 	}
 
 	authIndex := firstNonEmptyString(body.AuthIndexSnake, body.AuthIndexCamel, body.AuthIndexPascal)
-	auth := h.authByIndex(authIndex)
+	auth := h.authByIndexForTenant(effectiveTenantID(c), authIndex)
 	if auth == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "auth not found"})
 		return
@@ -143,7 +143,7 @@ func (h *Handler) PostAuthFileQuotaSnapshot(c *gin.Context) {
 	provider := strings.TrimSpace(body.Provider)
 	authSubjectID := ""
 	if h.authManager != nil {
-		auth := h.authByIndex(authIndex)
+		auth := h.authByIndexForTenant(effectiveTenantID(c), authIndex)
 		if auth == nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "auth not found"})
 			return
@@ -157,7 +157,7 @@ func (h *Handler) PostAuthFileQuotaSnapshot(c *gin.Context) {
 	}
 
 	if len(body.Quotas) > 0 {
-		if err := usage.RecordDailyQuotaSnapshotIdentity(authIndex, authSubjectID, provider, body.Quotas); err != nil {
+		if err := usage.RecordDailyQuotaSnapshotIdentityForTenant(effectiveTenantID(c), authIndex, authSubjectID, provider, body.Quotas); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -196,7 +196,7 @@ func (h *Handler) PostAuthFileQuotaSnapshot(c *gin.Context) {
 				WindowSeconds: windowSeconds,
 			})
 		}
-		if err := usage.RecordQuotaSnapshotPointsIdentity(authIndex, authSubjectID, provider, points); err != nil {
+		if err := usage.RecordQuotaSnapshotPointsIdentityForTenant(effectiveTenantID(c), authIndex, authSubjectID, provider, points); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

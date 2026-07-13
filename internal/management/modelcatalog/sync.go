@@ -12,13 +12,13 @@ import (
 // - Responsibility: surface OpenRouter sync state, settings updates, and manual sync execution.
 
 func (s *Service) OpenRouterModelSyncState() usage.OpenRouterModelSyncState {
-	return modelconfigsettings.GetOpenRouterSyncState()
+	return modelconfigsettings.GetOpenRouterSyncStateForTenant(s.tenantID)
 }
 
 func (s *Service) UpdateOpenRouterModelSyncSettings(enabled bool, intervalMinutes int) (usage.OpenRouterModelSyncState, error) {
-	return modelconfigsettings.UpdateOpenRouterSyncSettings(enabled, intervalMinutes)
+	return modelconfigsettings.UpdateOpenRouterSyncSettingsForTenant(s.tenantID, enabled, intervalMinutes)
 }
 
 func (s *Service) RunOpenRouterModelSync(ctx context.Context) (usage.OpenRouterModelSyncResult, usage.OpenRouterModelSyncState, error) {
-	return modelconfigsettings.RunOpenRouterSync(ctx)
+	return modelconfigsettings.RunOpenRouterSyncForTenant(ctx, s.tenantID)
 }

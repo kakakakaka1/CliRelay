@@ -19,6 +19,20 @@ type APIKeyPermissionProfileCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *APIKeyPermissionProfileCreate) SetTenantID(v string) *APIKeyPermissionProfileCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *APIKeyPermissionProfileCreate) SetNillableTenantID(v *string) *APIKeyPermissionProfileCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetName sets the "name" field.
 func (_c *APIKeyPermissionProfileCreate) SetName(v string) *APIKeyPermissionProfileCreate {
 	_c.mutation.SetName(v)
@@ -228,6 +242,10 @@ func (_c *APIKeyPermissionProfileCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *APIKeyPermissionProfileCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := apikeypermissionprofile.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.Name(); !ok {
 		v := apikeypermissionprofile.DefaultName
 		_c.mutation.SetName(v)
@@ -280,6 +298,9 @@ func (_c *APIKeyPermissionProfileCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *APIKeyPermissionProfileCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "APIKeyPermissionProfile.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.Name(); !ok {
 		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "APIKeyPermissionProfile.name"`)}
 	}
@@ -350,6 +371,10 @@ func (_c *APIKeyPermissionProfileCreate) createSpec() (*APIKeyPermissionProfile,
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = id
+	}
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(apikeypermissionprofile.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
 	}
 	if value, ok := _c.mutation.Name(); ok {
 		_spec.SetField(apikeypermissionprofile.FieldName, field.TypeString, value)

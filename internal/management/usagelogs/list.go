@@ -1,7 +1,10 @@
 package usagelogs
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,10 +16,11 @@ import (
 )
 
 func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any, error) {
-	keyNameMap, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex := s.buildNameMaps()
-	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex)
+	keyNameMap, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex, authIndexGroup := s.buildNameMaps()
+	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex, authIndexGroup)
 
 	params := usage.LogQueryParams{
+		TenantID:              s.tenantID,
 		Page:                  input.Page,
 		Size:                  input.Size,
 		Days:                  input.Days,
@@ -66,7 +70,7 @@ func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any,
 			filters.APIKeyNames[key] = name
 		}
 	}
-	filters.ChannelOptions = enrichChannelFilterOptions(filters.ChannelOptions, channelNameMap, authIndexChannelMap, authMetaByIndex)
+	filters.ChannelOptions = enrichChannelFilterOptions(filters.ChannelOptions, channelNameMap, authIndexChannelMap, authMetaByIndex, authIndexGroup)
 	filters.Channels = channelLabelsFromOptions(filters.ChannelOptions)
 
 	if result.Items == nil {
@@ -102,10 +106,11 @@ func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any,
 }
 
 func (s *Service) ClearAllRequestLogs() (any, error) {
-	return usage.ClearAllRequestLogs()
+	return usage.ClearAllRequestLogsForTenant(s.tenantID)
 }
 
 func (s *Service) ClearRequestLogs(options usage.ClearRequestLogsOptions) (int, any, error) {
+	options.TenantID = s.tenantID
 	result, err := usage.ClearRequestLogs(options)
 	if err != nil {
 		if strings.Contains(err.Error(), "at least one cleanup option") {
@@ -117,9 +122,10 @@ func (s *Service) ClearRequestLogs(options usage.ClearRequestLogsOptions) (int, 
 }
 
 func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, error) {
-	_, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex := s.buildNameMaps()
-	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex)
+	_, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex, authIndexGroup := s.buildNameMaps()
+	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex, authIndexGroup)
 	params := usage.LogQueryParams{
+		TenantID:              usage.ResolveAPIKeyTenant(input.APIKey),
 		Page:                  input.Page,
 		Size:                  input.Size,
 		Days:                  input.Days,
@@ -163,7 +169,7 @@ func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, er
 		result.Items[i].AuthIndex = ""
 	}
 
-	filters.ChannelOptions = enrichChannelFilterOptions(filters.ChannelOptions, channelNameMap, authIndexChannelMap, authMetaByIndex)
+	filters.ChannelOptions = enrichChannelFilterOptions(filters.ChannelOptions, channelNameMap, authIndexChannelMap, authMetaByIndex, authIndexGroup)
 	// Public responses keep opaque filter values (auth_index) so same-email
 	// multi-provider accounts stay selectable, but strip the auth_index field.
 	for i := range filters.ChannelOptions {
@@ -213,6 +219,7 @@ func channelFilterSelectors(
 	channelNameMap, authIndexChannelMap map[string]string,
 	ambiguousAuthIndexChannelMap map[string][]string,
 	authMetaByIndex map[string]authChannelMeta,
+	authIndexGroup map[string][]string,
 ) ([]string, []string, map[string][]string) {
 	// Preserve original selected values. Only use lower-case keys for label matching.
 	selectedRaw := make([]string, 0, len(channels))
@@ -246,6 +253,21 @@ func channelFilterSelectors(
 		seenAuthIndex[idx] = struct{}{}
 		authIndexes = append(authIndexes, idx)
 	}
+	// Expand xAI OAuth historical aliases (id: vs file: seed) so one UI option
+	// returns logs written under either index.
+	appendAuthIndexGroup := func(idx string) {
+		idx = strings.TrimSpace(idx)
+		if idx == "" {
+			return
+		}
+		if group := authIndexGroup[idx]; len(group) > 0 {
+			for _, member := range group {
+				appendAuthIndex(member)
+			}
+			return
+		}
+		appendAuthIndex(idx)
+	}
 	appendChannelName := func(name string) {
 		name = strings.TrimSpace(name)
 		if name == "" {
@@ -263,20 +285,26 @@ func channelFilterSelectors(
 		// Prefer exact auth_index matches so multi-provider same-email accounts
 		// filter independently when clients send auth_index as the value.
 		if _, ok := authIndexChannelMap[raw]; ok {
-			appendAuthIndex(raw)
+			appendAuthIndexGroup(raw)
 			if legacyChannels := ambiguousAuthIndexChannelMap[raw]; len(legacyChannels) > 0 {
 				authIndexChannelNames[raw] = append(authIndexChannelNames[raw], legacyChannels...)
+			}
+			// Also attach legacy channel names for every expanded group member.
+			for _, member := range authIndexGroup[raw] {
+				if legacyChannels := ambiguousAuthIndexChannelMap[member]; len(legacyChannels) > 0 {
+					authIndexChannelNames[member] = append(authIndexChannelNames[member], legacyChannels...)
+				}
 			}
 			continue
 		}
 		if _, ok := authMetaByIndex[raw]; ok {
-			appendAuthIndex(raw)
+			appendAuthIndexGroup(raw)
 			continue
 		}
 		matchedAuthIndex := false
 		for idx := range authIndexChannelMap {
 			if strings.EqualFold(strings.TrimSpace(idx), raw) {
-				appendAuthIndex(idx)
+				appendAuthIndexGroup(idx)
 				if legacyChannels := ambiguousAuthIndexChannelMap[idx]; len(legacyChannels) > 0 {
 					authIndexChannelNames[idx] = append(authIndexChannelNames[idx], legacyChannels...)
 				}
@@ -288,11 +316,19 @@ func channelFilterSelectors(
 		}
 		for idx := range authMetaByIndex {
 			if strings.EqualFold(strings.TrimSpace(idx), raw) {
-				appendAuthIndex(idx)
+				appendAuthIndexGroup(idx)
 				matchedAuthIndex = true
 			}
 		}
 		if matchedAuthIndex {
+			continue
+		}
+		// Historical channel_options values are auth_index hashes even when the
+		// auth file was later reindexed (file: vs id: seed) or deleted. Treat
+		// stable auth_index tokens as AuthIndexes; never fall back to
+		// channel_name matching for them (that path yields 0 rows).
+		if looksLikeAuthIndex(raw) {
+			appendAuthIndexGroup(raw)
 			continue
 		}
 		// Legacy clients still send display labels / emails.
@@ -314,7 +350,7 @@ func channelFilterSelectors(
 			continue
 		}
 		if _, ok := selectedLabelKeys[key]; ok {
-			appendAuthIndex(idx)
+			appendAuthIndexGroup(idx)
 			if legacyChannels := ambiguousAuthIndexChannelMap[idx]; len(legacyChannels) > 0 {
 				authIndexChannelNames[idx] = append(authIndexChannelNames[idx], legacyChannels...)
 			}
@@ -326,26 +362,63 @@ func channelFilterSelectors(
 	return authIndexes, channelNames, authIndexChannelNames
 }
 
+// looksLikeAuthIndex reports whether value matches the stable auth index format
+// produced by coreauth.stableAuthIndex (first 8 bytes of SHA-256 as 16 hex chars).
+// Channel facet values use this token so historical rows remain filterable after
+// live auth reindex or deletion.
+func looksLikeAuthIndex(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 16 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func enrichChannelFilterOptions(
 	options []usage.ChannelFilterOption,
 	channelNameMap, authIndexChannelMap map[string]string,
 	authMetaByIndex map[string]authChannelMeta,
+	authIndexGroup map[string][]string,
 ) []usage.ChannelFilterOption {
 	if len(options) == 0 {
 		return make([]usage.ChannelFilterOption, 0)
 	}
 
 	// Prefer one option per live auth_index. Collapse pure name-only rows when
-	// the same label already has auth-backed options.
+	// the same label already has auth-backed options. For xAI OAuth, also
+	// collapse historical id:/file: seed aliases onto the canonical live index.
 	out := make([]usage.ChannelFilterOption, 0, len(options))
 	seenValue := make(map[string]struct{}, len(options))
 	authBackedLabels := make(map[string]struct{})
+
+	canonicalAuthIndex := func(authIndex string) string {
+		authIndex = strings.TrimSpace(authIndex)
+		if authIndex == "" {
+			return ""
+		}
+		if group := authIndexGroup[authIndex]; len(group) > 0 {
+			// buildNameMaps stores the live EnsureIndex() first.
+			return strings.TrimSpace(group[0])
+		}
+		return authIndex
+	}
 
 	for _, option := range options {
 		authIndex := strings.TrimSpace(option.AuthIndex)
 		if authIndex == "" {
 			authIndex = strings.TrimSpace(option.Value)
 		}
+		authIndex = canonicalAuthIndex(authIndex)
 		if authIndex == "" {
 			continue
 		}
@@ -365,6 +438,9 @@ func enrichChannelFilterOptions(
 		if authIndex == "" {
 			authIndex = strings.TrimSpace(option.Value)
 		}
+		// Fold xAI OAuth historical aliases onto the live index so the UI shows
+		// one Grok OAuth option with provider/auth_type badges.
+		authIndex = canonicalAuthIndex(authIndex)
 		if label == "" && authIndex != "" {
 			if name, ok := authIndexChannelMap[authIndex]; ok && strings.TrimSpace(name) != "" {
 				label = strings.TrimSpace(name)
@@ -390,6 +466,13 @@ func enrichChannelFilterOptions(
 		}
 		if value == "" {
 			value = label
+		}
+		// When we rewrote authIndex to the group canonical, filter value must
+		// match so clients select the live index (which expands server-side).
+		if authIndex != "" {
+			if group := authIndexGroup[authIndex]; len(group) > 0 {
+				value = authIndex
+			}
 		}
 
 		hasLiveMeta := false
@@ -519,7 +602,7 @@ func normalizeAuthType(value string) string {
 }
 
 func (s *Service) publicAPIKeyName(apiKey string) string {
-	row := apikeysettings.NewService(nil).GetRow(apiKey)
+	row := apikeysettings.NewService(nil, apikeysettings.WithTenantID(s.tenantID)).GetRow(apiKey)
 	if row == nil {
 		return ""
 	}
@@ -551,14 +634,16 @@ func (s *Service) buildNameMaps() (
 	keyNameMap, channelNameMap, authIndexChannelMap map[string]string,
 	ambiguousAuthIndexChannelMap map[string][]string,
 	authMetaByIndex map[string]authChannelMeta,
+	authIndexGroup map[string][]string,
 ) {
 	keyNameMap = make(map[string]string)
 	channelNameMap = make(map[string]string)
 	authIndexChannelMap = make(map[string]string)
 	ambiguousAuthIndexChannelMap = make(map[string][]string)
 	authMetaByIndex = make(map[string]authChannelMeta)
+	authIndexGroup = make(map[string][]string)
 
-	for _, row := range apikeysettings.NewService(nil).ListRows() {
+	for _, row := range apikeysettings.NewService(nil, apikeysettings.WithTenantID(s.tenantID)).ListRows() {
 		if row.Key != "" && row.Name != "" {
 			keyNameMap[row.Key] = row.Name
 		}
@@ -601,7 +686,7 @@ func (s *Service) buildNameMaps() (
 	var legacyCandidates []legacyChannelCandidate
 
 	if s.authManager != nil {
-		for _, auth := range s.authManager.List() {
+		for _, auth := range s.authManager.ListForTenant(s.tenantID) {
 			if auth == nil {
 				continue
 			}
@@ -611,13 +696,27 @@ func (s *Service) buildNameMaps() (
 			}
 			auth.EnsureIndex()
 			idx := strings.TrimSpace(auth.Index)
-			if idx != "" {
-				authIndexChannelMap[idx] = channel
-				authMetaByIndex[idx] = authChannelMeta{
-					label:    channel,
-					provider: normalizeProviderKey(auth.Provider),
-					authType: resolveAuthType(auth),
+			meta := authChannelMeta{
+				label:    channel,
+				provider: normalizeProviderKey(auth.Provider),
+				authType: resolveAuthType(auth),
+			}
+			// xAI/Grok OAuth historically flipped between id: and file: seeds for
+			// the same credential. Register the full index group so filters and
+			// channel_options collapse onto one live option while still matching
+			// historical rows.
+			group := xaiOAuthAuthIndexGroup(auth)
+			if len(group) == 0 && idx != "" {
+				group = []string{idx}
+			}
+			for _, member := range group {
+				member = strings.TrimSpace(member)
+				if member == "" {
+					continue
 				}
+				authIndexChannelMap[member] = channel
+				authMetaByIndex[member] = meta
+				authIndexGroup[member] = group
 			}
 			if accountType, account := auth.AccountInfo(); strings.EqualFold(accountType, "oauth") {
 				if source := strings.TrimSpace(account); source != "" {
@@ -657,6 +756,93 @@ func (s *Service) buildNameMaps() (
 	}
 
 	return
+}
+
+// xaiOAuthAuthIndexGroup returns the live EnsureIndex first, followed by known
+// historical seeds for the same xAI/Grok OAuth credential. Non-xAI auths return
+// only the live index (or nil when empty).
+//
+// Grok OAuth is special: the same account can log under both id:<file> and
+// file:<file> depending on whether FileName was populated at write time.
+func xaiOAuthAuthIndexGroup(auth *coreauth.Auth) []string {
+	if auth == nil {
+		return nil
+	}
+	primary := strings.TrimSpace(auth.EnsureIndex())
+	if primary == "" {
+		return nil
+	}
+	if !isXAIProvider(auth.Provider) {
+		return []string{primary}
+	}
+	accountType, _ := auth.AccountInfo()
+	// Only merge OAuth-style xAI credentials; API-key channels stay independent.
+	if !strings.EqualFold(strings.TrimSpace(accountType), "oauth") {
+		// AccountInfo may miss email when metadata shape differs; still merge when
+		// the channel looks like an email (typical OAuth label).
+		channel := strings.TrimSpace(auth.ChannelName())
+		if !strings.Contains(channel, "@") {
+			return []string{primary}
+		}
+	}
+
+	seen := map[string]struct{}{primary: {}}
+	out := []string{primary}
+	addSeed := func(seed string) {
+		seed = strings.TrimSpace(seed)
+		if seed == "" {
+			return
+		}
+		idx := authIndexFromSeed(seed)
+		if idx == "" {
+			return
+		}
+		if _, ok := seen[idx]; ok {
+			return
+		}
+		seen[idx] = struct{}{}
+		out = append(out, idx)
+	}
+
+	fileName := strings.TrimSpace(auth.FileName)
+	if fileName != "" {
+		base := filepath.Base(fileName)
+		// Current seed path.
+		addSeed("file:" + fileName)
+		addSeed("file:" + base)
+		// Historical path: ID was set to the auth file name (including .json)
+		// before FileName was populated, so EnsureIndex used id:<filename>.
+		addSeed("id:" + fileName)
+		addSeed("id:" + base)
+	}
+	if id := strings.TrimSpace(auth.ID); id != "" {
+		addSeed("id:" + id)
+		// If ID is a bare filename, also cover file: variants.
+		if strings.HasSuffix(strings.ToLower(id), ".json") {
+			addSeed("file:" + id)
+			addSeed("file:" + filepath.Base(id))
+		}
+	}
+	return out
+}
+
+func isXAIProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "xai", "grok":
+		return true
+	default:
+		return false
+	}
+}
+
+// authIndexFromSeed mirrors coreauth.stableAuthIndex (sha256 first 8 bytes hex).
+func authIndexFromSeed(seed string) string {
+	seed = strings.TrimSpace(seed)
+	if seed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(seed))
+	return hex.EncodeToString(sum[:8])
 }
 
 func resolveAuthType(auth *coreauth.Auth) string {

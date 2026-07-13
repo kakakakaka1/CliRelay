@@ -7,6 +7,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/apikey"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/apikeypermissionprofile"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/auditlog"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/authfilequotasnapshot"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/authfilequotasnapshotpoint"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/authgroupmodelownermapping"
@@ -18,12 +19,19 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/modelopenroutersyncstate"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/modelownerpreset"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/modelpricing"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/permission"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/proxypool"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/requestlog"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/requestlogcontent"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/role"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/rolepermission"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/routingconfig"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/runtimesetting"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/schema"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/tenant"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/user"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/userrole"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/usersession"
 )
 
 // The init function reads all schema descriptors with runtime code
@@ -32,558 +40,766 @@ import (
 func init() {
 	apikeyFields := schema.APIKey{}.Fields()
 	_ = apikeyFields
+	// apikeyDescTenantID is the schema descriptor for tenant_id field.
+	apikeyDescTenantID := apikeyFields[0].Descriptor()
+	// apikey.DefaultTenantID holds the default value on creation for the tenant_id field.
+	apikey.DefaultTenantID = apikeyDescTenantID.Default.(string)
 	// apikeyDescName is the schema descriptor for name field.
-	apikeyDescName := apikeyFields[2].Descriptor()
+	apikeyDescName := apikeyFields[3].Descriptor()
 	// apikey.DefaultName holds the default value on creation for the name field.
 	apikey.DefaultName = apikeyDescName.Default.(string)
 	// apikeyDescDisabled is the schema descriptor for disabled field.
-	apikeyDescDisabled := apikeyFields[3].Descriptor()
+	apikeyDescDisabled := apikeyFields[4].Descriptor()
 	// apikey.DefaultDisabled holds the default value on creation for the disabled field.
 	apikey.DefaultDisabled = apikeyDescDisabled.Default.(int)
 	// apikeyDescPermissionProfileID is the schema descriptor for permission_profile_id field.
-	apikeyDescPermissionProfileID := apikeyFields[4].Descriptor()
+	apikeyDescPermissionProfileID := apikeyFields[5].Descriptor()
 	// apikey.DefaultPermissionProfileID holds the default value on creation for the permission_profile_id field.
 	apikey.DefaultPermissionProfileID = apikeyDescPermissionProfileID.Default.(string)
 	// apikeyDescDailyLimit is the schema descriptor for daily_limit field.
-	apikeyDescDailyLimit := apikeyFields[5].Descriptor()
+	apikeyDescDailyLimit := apikeyFields[6].Descriptor()
 	// apikey.DefaultDailyLimit holds the default value on creation for the daily_limit field.
 	apikey.DefaultDailyLimit = apikeyDescDailyLimit.Default.(int)
 	// apikeyDescTotalQuota is the schema descriptor for total_quota field.
-	apikeyDescTotalQuota := apikeyFields[6].Descriptor()
+	apikeyDescTotalQuota := apikeyFields[7].Descriptor()
 	// apikey.DefaultTotalQuota holds the default value on creation for the total_quota field.
 	apikey.DefaultTotalQuota = apikeyDescTotalQuota.Default.(int)
 	// apikeyDescSpendingLimit is the schema descriptor for spending_limit field.
-	apikeyDescSpendingLimit := apikeyFields[7].Descriptor()
+	apikeyDescSpendingLimit := apikeyFields[8].Descriptor()
 	// apikey.DefaultSpendingLimit holds the default value on creation for the spending_limit field.
 	apikey.DefaultSpendingLimit = apikeyDescSpendingLimit.Default.(float64)
 	// apikeyDescDailySpendingLimit is the schema descriptor for daily_spending_limit field.
-	apikeyDescDailySpendingLimit := apikeyFields[8].Descriptor()
+	apikeyDescDailySpendingLimit := apikeyFields[9].Descriptor()
 	// apikey.DefaultDailySpendingLimit holds the default value on creation for the daily_spending_limit field.
 	apikey.DefaultDailySpendingLimit = apikeyDescDailySpendingLimit.Default.(float64)
 	// apikeyDescConcurrencyLimit is the schema descriptor for concurrency_limit field.
-	apikeyDescConcurrencyLimit := apikeyFields[9].Descriptor()
+	apikeyDescConcurrencyLimit := apikeyFields[10].Descriptor()
 	// apikey.DefaultConcurrencyLimit holds the default value on creation for the concurrency_limit field.
 	apikey.DefaultConcurrencyLimit = apikeyDescConcurrencyLimit.Default.(int)
 	// apikeyDescRpmLimit is the schema descriptor for rpm_limit field.
-	apikeyDescRpmLimit := apikeyFields[10].Descriptor()
+	apikeyDescRpmLimit := apikeyFields[11].Descriptor()
 	// apikey.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	apikey.DefaultRpmLimit = apikeyDescRpmLimit.Default.(int)
 	// apikeyDescTpmLimit is the schema descriptor for tpm_limit field.
-	apikeyDescTpmLimit := apikeyFields[11].Descriptor()
+	apikeyDescTpmLimit := apikeyFields[12].Descriptor()
 	// apikey.DefaultTpmLimit holds the default value on creation for the tpm_limit field.
 	apikey.DefaultTpmLimit = apikeyDescTpmLimit.Default.(int)
 	// apikeyDescAllowedModels is the schema descriptor for allowed_models field.
-	apikeyDescAllowedModels := apikeyFields[12].Descriptor()
+	apikeyDescAllowedModels := apikeyFields[13].Descriptor()
 	// apikey.DefaultAllowedModels holds the default value on creation for the allowed_models field.
 	apikey.DefaultAllowedModels = apikeyDescAllowedModels.Default.(string)
 	// apikeyDescAllowedChannels is the schema descriptor for allowed_channels field.
-	apikeyDescAllowedChannels := apikeyFields[13].Descriptor()
+	apikeyDescAllowedChannels := apikeyFields[14].Descriptor()
 	// apikey.DefaultAllowedChannels holds the default value on creation for the allowed_channels field.
 	apikey.DefaultAllowedChannels = apikeyDescAllowedChannels.Default.(string)
 	// apikeyDescAllowedChannelGroups is the schema descriptor for allowed_channel_groups field.
-	apikeyDescAllowedChannelGroups := apikeyFields[14].Descriptor()
+	apikeyDescAllowedChannelGroups := apikeyFields[15].Descriptor()
 	// apikey.DefaultAllowedChannelGroups holds the default value on creation for the allowed_channel_groups field.
 	apikey.DefaultAllowedChannelGroups = apikeyDescAllowedChannelGroups.Default.(string)
 	// apikeyDescSystemPrompt is the schema descriptor for system_prompt field.
-	apikeyDescSystemPrompt := apikeyFields[15].Descriptor()
+	apikeyDescSystemPrompt := apikeyFields[16].Descriptor()
 	// apikey.DefaultSystemPrompt holds the default value on creation for the system_prompt field.
 	apikey.DefaultSystemPrompt = apikeyDescSystemPrompt.Default.(string)
 	// apikeyDescCreatedAt is the schema descriptor for created_at field.
-	apikeyDescCreatedAt := apikeyFields[16].Descriptor()
+	apikeyDescCreatedAt := apikeyFields[17].Descriptor()
 	// apikey.DefaultCreatedAt holds the default value on creation for the created_at field.
 	apikey.DefaultCreatedAt = apikeyDescCreatedAt.Default.(string)
 	// apikeyDescUpdatedAt is the schema descriptor for updated_at field.
-	apikeyDescUpdatedAt := apikeyFields[17].Descriptor()
+	apikeyDescUpdatedAt := apikeyFields[18].Descriptor()
 	// apikey.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	apikey.DefaultUpdatedAt = apikeyDescUpdatedAt.Default.(string)
 	apikeypermissionprofileFields := schema.APIKeyPermissionProfile{}.Fields()
 	_ = apikeypermissionprofileFields
+	// apikeypermissionprofileDescTenantID is the schema descriptor for tenant_id field.
+	apikeypermissionprofileDescTenantID := apikeypermissionprofileFields[0].Descriptor()
+	// apikeypermissionprofile.DefaultTenantID holds the default value on creation for the tenant_id field.
+	apikeypermissionprofile.DefaultTenantID = apikeypermissionprofileDescTenantID.Default.(string)
 	// apikeypermissionprofileDescName is the schema descriptor for name field.
-	apikeypermissionprofileDescName := apikeypermissionprofileFields[1].Descriptor()
+	apikeypermissionprofileDescName := apikeypermissionprofileFields[2].Descriptor()
 	// apikeypermissionprofile.DefaultName holds the default value on creation for the name field.
 	apikeypermissionprofile.DefaultName = apikeypermissionprofileDescName.Default.(string)
 	// apikeypermissionprofileDescDailyLimit is the schema descriptor for daily_limit field.
-	apikeypermissionprofileDescDailyLimit := apikeypermissionprofileFields[2].Descriptor()
+	apikeypermissionprofileDescDailyLimit := apikeypermissionprofileFields[3].Descriptor()
 	// apikeypermissionprofile.DefaultDailyLimit holds the default value on creation for the daily_limit field.
 	apikeypermissionprofile.DefaultDailyLimit = apikeypermissionprofileDescDailyLimit.Default.(int)
 	// apikeypermissionprofileDescTotalQuota is the schema descriptor for total_quota field.
-	apikeypermissionprofileDescTotalQuota := apikeypermissionprofileFields[3].Descriptor()
+	apikeypermissionprofileDescTotalQuota := apikeypermissionprofileFields[4].Descriptor()
 	// apikeypermissionprofile.DefaultTotalQuota holds the default value on creation for the total_quota field.
 	apikeypermissionprofile.DefaultTotalQuota = apikeypermissionprofileDescTotalQuota.Default.(int)
 	// apikeypermissionprofileDescConcurrencyLimit is the schema descriptor for concurrency_limit field.
-	apikeypermissionprofileDescConcurrencyLimit := apikeypermissionprofileFields[4].Descriptor()
+	apikeypermissionprofileDescConcurrencyLimit := apikeypermissionprofileFields[5].Descriptor()
 	// apikeypermissionprofile.DefaultConcurrencyLimit holds the default value on creation for the concurrency_limit field.
 	apikeypermissionprofile.DefaultConcurrencyLimit = apikeypermissionprofileDescConcurrencyLimit.Default.(int)
 	// apikeypermissionprofileDescRpmLimit is the schema descriptor for rpm_limit field.
-	apikeypermissionprofileDescRpmLimit := apikeypermissionprofileFields[5].Descriptor()
+	apikeypermissionprofileDescRpmLimit := apikeypermissionprofileFields[6].Descriptor()
 	// apikeypermissionprofile.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	apikeypermissionprofile.DefaultRpmLimit = apikeypermissionprofileDescRpmLimit.Default.(int)
 	// apikeypermissionprofileDescTpmLimit is the schema descriptor for tpm_limit field.
-	apikeypermissionprofileDescTpmLimit := apikeypermissionprofileFields[6].Descriptor()
+	apikeypermissionprofileDescTpmLimit := apikeypermissionprofileFields[7].Descriptor()
 	// apikeypermissionprofile.DefaultTpmLimit holds the default value on creation for the tpm_limit field.
 	apikeypermissionprofile.DefaultTpmLimit = apikeypermissionprofileDescTpmLimit.Default.(int)
 	// apikeypermissionprofileDescAllowedModels is the schema descriptor for allowed_models field.
-	apikeypermissionprofileDescAllowedModels := apikeypermissionprofileFields[7].Descriptor()
+	apikeypermissionprofileDescAllowedModels := apikeypermissionprofileFields[8].Descriptor()
 	// apikeypermissionprofile.DefaultAllowedModels holds the default value on creation for the allowed_models field.
 	apikeypermissionprofile.DefaultAllowedModels = apikeypermissionprofileDescAllowedModels.Default.(string)
 	// apikeypermissionprofileDescAllowedChannels is the schema descriptor for allowed_channels field.
-	apikeypermissionprofileDescAllowedChannels := apikeypermissionprofileFields[8].Descriptor()
+	apikeypermissionprofileDescAllowedChannels := apikeypermissionprofileFields[9].Descriptor()
 	// apikeypermissionprofile.DefaultAllowedChannels holds the default value on creation for the allowed_channels field.
 	apikeypermissionprofile.DefaultAllowedChannels = apikeypermissionprofileDescAllowedChannels.Default.(string)
 	// apikeypermissionprofileDescAllowedChannelGroups is the schema descriptor for allowed_channel_groups field.
-	apikeypermissionprofileDescAllowedChannelGroups := apikeypermissionprofileFields[9].Descriptor()
+	apikeypermissionprofileDescAllowedChannelGroups := apikeypermissionprofileFields[10].Descriptor()
 	// apikeypermissionprofile.DefaultAllowedChannelGroups holds the default value on creation for the allowed_channel_groups field.
 	apikeypermissionprofile.DefaultAllowedChannelGroups = apikeypermissionprofileDescAllowedChannelGroups.Default.(string)
 	// apikeypermissionprofileDescSystemPrompt is the schema descriptor for system_prompt field.
-	apikeypermissionprofileDescSystemPrompt := apikeypermissionprofileFields[10].Descriptor()
+	apikeypermissionprofileDescSystemPrompt := apikeypermissionprofileFields[11].Descriptor()
 	// apikeypermissionprofile.DefaultSystemPrompt holds the default value on creation for the system_prompt field.
 	apikeypermissionprofile.DefaultSystemPrompt = apikeypermissionprofileDescSystemPrompt.Default.(string)
 	// apikeypermissionprofileDescCreatedAt is the schema descriptor for created_at field.
-	apikeypermissionprofileDescCreatedAt := apikeypermissionprofileFields[11].Descriptor()
+	apikeypermissionprofileDescCreatedAt := apikeypermissionprofileFields[12].Descriptor()
 	// apikeypermissionprofile.DefaultCreatedAt holds the default value on creation for the created_at field.
 	apikeypermissionprofile.DefaultCreatedAt = apikeypermissionprofileDescCreatedAt.Default.(string)
 	// apikeypermissionprofileDescUpdatedAt is the schema descriptor for updated_at field.
-	apikeypermissionprofileDescUpdatedAt := apikeypermissionprofileFields[12].Descriptor()
+	apikeypermissionprofileDescUpdatedAt := apikeypermissionprofileFields[13].Descriptor()
 	// apikeypermissionprofile.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	apikeypermissionprofile.DefaultUpdatedAt = apikeypermissionprofileDescUpdatedAt.Default.(string)
+	auditlogFields := schema.AuditLog{}.Fields()
+	_ = auditlogFields
+	// auditlogDescResourceID is the schema descriptor for resource_id field.
+	auditlogDescResourceID := auditlogFields[7].Descriptor()
+	// auditlog.DefaultResourceID holds the default value on creation for the resource_id field.
+	auditlog.DefaultResourceID = auditlogDescResourceID.Default.(string)
+	// auditlogDescRequestID is the schema descriptor for request_id field.
+	auditlogDescRequestID := auditlogFields[9].Descriptor()
+	// auditlog.DefaultRequestID holds the default value on creation for the request_id field.
+	auditlog.DefaultRequestID = auditlogDescRequestID.Default.(string)
+	// auditlogDescCreatedAt is the schema descriptor for created_at field.
+	auditlogDescCreatedAt := auditlogFields[11].Descriptor()
+	// auditlog.DefaultCreatedAt holds the default value on creation for the created_at field.
+	auditlog.DefaultCreatedAt = auditlogDescCreatedAt.Default.(func() time.Time)
 	authfilequotasnapshotFields := schema.AuthFileQuotaSnapshot{}.Fields()
 	_ = authfilequotasnapshotFields
+	// authfilequotasnapshotDescTenantID is the schema descriptor for tenant_id field.
+	authfilequotasnapshotDescTenantID := authfilequotasnapshotFields[0].Descriptor()
+	// authfilequotasnapshot.DefaultTenantID holds the default value on creation for the tenant_id field.
+	authfilequotasnapshot.DefaultTenantID = authfilequotasnapshotDescTenantID.Default.(string)
 	// authfilequotasnapshotDescAuthSubjectID is the schema descriptor for auth_subject_id field.
-	authfilequotasnapshotDescAuthSubjectID := authfilequotasnapshotFields[2].Descriptor()
+	authfilequotasnapshotDescAuthSubjectID := authfilequotasnapshotFields[3].Descriptor()
 	// authfilequotasnapshot.DefaultAuthSubjectID holds the default value on creation for the auth_subject_id field.
 	authfilequotasnapshot.DefaultAuthSubjectID = authfilequotasnapshotDescAuthSubjectID.Default.(string)
 	// authfilequotasnapshotDescProvider is the schema descriptor for provider field.
-	authfilequotasnapshotDescProvider := authfilequotasnapshotFields[3].Descriptor()
+	authfilequotasnapshotDescProvider := authfilequotasnapshotFields[4].Descriptor()
 	// authfilequotasnapshot.DefaultProvider holds the default value on creation for the provider field.
 	authfilequotasnapshot.DefaultProvider = authfilequotasnapshotDescProvider.Default.(string)
 	authfilequotasnapshotpointFields := schema.AuthFileQuotaSnapshotPoint{}.Fields()
 	_ = authfilequotasnapshotpointFields
+	// authfilequotasnapshotpointDescTenantID is the schema descriptor for tenant_id field.
+	authfilequotasnapshotpointDescTenantID := authfilequotasnapshotpointFields[0].Descriptor()
+	// authfilequotasnapshotpoint.DefaultTenantID holds the default value on creation for the tenant_id field.
+	authfilequotasnapshotpoint.DefaultTenantID = authfilequotasnapshotpointDescTenantID.Default.(string)
 	// authfilequotasnapshotpointDescAuthSubjectID is the schema descriptor for auth_subject_id field.
-	authfilequotasnapshotpointDescAuthSubjectID := authfilequotasnapshotpointFields[3].Descriptor()
+	authfilequotasnapshotpointDescAuthSubjectID := authfilequotasnapshotpointFields[4].Descriptor()
 	// authfilequotasnapshotpoint.DefaultAuthSubjectID holds the default value on creation for the auth_subject_id field.
 	authfilequotasnapshotpoint.DefaultAuthSubjectID = authfilequotasnapshotpointDescAuthSubjectID.Default.(string)
 	// authfilequotasnapshotpointDescProvider is the schema descriptor for provider field.
-	authfilequotasnapshotpointDescProvider := authfilequotasnapshotpointFields[4].Descriptor()
+	authfilequotasnapshotpointDescProvider := authfilequotasnapshotpointFields[5].Descriptor()
 	// authfilequotasnapshotpoint.DefaultProvider holds the default value on creation for the provider field.
 	authfilequotasnapshotpoint.DefaultProvider = authfilequotasnapshotpointDescProvider.Default.(string)
 	// authfilequotasnapshotpointDescQuotaLabel is the schema descriptor for quota_label field.
-	authfilequotasnapshotpointDescQuotaLabel := authfilequotasnapshotpointFields[6].Descriptor()
+	authfilequotasnapshotpointDescQuotaLabel := authfilequotasnapshotpointFields[7].Descriptor()
 	// authfilequotasnapshotpoint.DefaultQuotaLabel holds the default value on creation for the quota_label field.
 	authfilequotasnapshotpoint.DefaultQuotaLabel = authfilequotasnapshotpointDescQuotaLabel.Default.(string)
 	// authfilequotasnapshotpointDescWindowSeconds is the schema descriptor for window_seconds field.
-	authfilequotasnapshotpointDescWindowSeconds := authfilequotasnapshotpointFields[9].Descriptor()
+	authfilequotasnapshotpointDescWindowSeconds := authfilequotasnapshotpointFields[10].Descriptor()
 	// authfilequotasnapshotpoint.DefaultWindowSeconds holds the default value on creation for the window_seconds field.
 	authfilequotasnapshotpoint.DefaultWindowSeconds = authfilequotasnapshotpointDescWindowSeconds.Default.(int64)
 	authgroupmodelownermappingFields := schema.AuthGroupModelOwnerMapping{}.Fields()
 	_ = authgroupmodelownermappingFields
+	// authgroupmodelownermappingDescTenantID is the schema descriptor for tenant_id field.
+	authgroupmodelownermappingDescTenantID := authgroupmodelownermappingFields[0].Descriptor()
+	// authgroupmodelownermapping.DefaultTenantID holds the default value on creation for the tenant_id field.
+	authgroupmodelownermapping.DefaultTenantID = authgroupmodelownermappingDescTenantID.Default.(string)
 	// authgroupmodelownermappingDescOwner is the schema descriptor for owner field.
-	authgroupmodelownermappingDescOwner := authgroupmodelownermappingFields[1].Descriptor()
+	authgroupmodelownermappingDescOwner := authgroupmodelownermappingFields[2].Descriptor()
 	// authgroupmodelownermapping.DefaultOwner holds the default value on creation for the owner field.
 	authgroupmodelownermapping.DefaultOwner = authgroupmodelownermappingDescOwner.Default.(string)
 	authsubjectquotacycleFields := schema.AuthSubjectQuotaCycle{}.Fields()
 	_ = authsubjectquotacycleFields
+	// authsubjectquotacycleDescTenantID is the schema descriptor for tenant_id field.
+	authsubjectquotacycleDescTenantID := authsubjectquotacycleFields[0].Descriptor()
+	// authsubjectquotacycle.DefaultTenantID holds the default value on creation for the tenant_id field.
+	authsubjectquotacycle.DefaultTenantID = authsubjectquotacycleDescTenantID.Default.(string)
 	// authsubjectquotacycleDescAuthIndex is the schema descriptor for auth_index field.
-	authsubjectquotacycleDescAuthIndex := authsubjectquotacycleFields[1].Descriptor()
+	authsubjectquotacycleDescAuthIndex := authsubjectquotacycleFields[2].Descriptor()
 	// authsubjectquotacycle.DefaultAuthIndex holds the default value on creation for the auth_index field.
 	authsubjectquotacycle.DefaultAuthIndex = authsubjectquotacycleDescAuthIndex.Default.(string)
 	// authsubjectquotacycleDescProvider is the schema descriptor for provider field.
-	authsubjectquotacycleDescProvider := authsubjectquotacycleFields[2].Descriptor()
+	authsubjectquotacycleDescProvider := authsubjectquotacycleFields[3].Descriptor()
 	// authsubjectquotacycle.DefaultProvider holds the default value on creation for the provider field.
 	authsubjectquotacycle.DefaultProvider = authsubjectquotacycleDescProvider.Default.(string)
 	// authsubjectquotacycleDescWindowSeconds is the schema descriptor for window_seconds field.
-	authsubjectquotacycleDescWindowSeconds := authsubjectquotacycleFields[6].Descriptor()
+	authsubjectquotacycleDescWindowSeconds := authsubjectquotacycleFields[7].Descriptor()
 	// authsubjectquotacycle.DefaultWindowSeconds holds the default value on creation for the window_seconds field.
 	authsubjectquotacycle.DefaultWindowSeconds = authsubjectquotacycleDescWindowSeconds.Default.(int64)
 	ccswitchimportconfigFields := schema.CcSwitchImportConfig{}.Fields()
 	_ = ccswitchimportconfigFields
+	// ccswitchimportconfigDescTenantID is the schema descriptor for tenant_id field.
+	ccswitchimportconfigDescTenantID := ccswitchimportconfigFields[0].Descriptor()
+	// ccswitchimportconfig.DefaultTenantID holds the default value on creation for the tenant_id field.
+	ccswitchimportconfig.DefaultTenantID = ccswitchimportconfigDescTenantID.Default.(string)
 	// ccswitchimportconfigDescProviderName is the schema descriptor for provider_name field.
-	ccswitchimportconfigDescProviderName := ccswitchimportconfigFields[2].Descriptor()
+	ccswitchimportconfigDescProviderName := ccswitchimportconfigFields[3].Descriptor()
 	// ccswitchimportconfig.DefaultProviderName holds the default value on creation for the provider_name field.
 	ccswitchimportconfig.DefaultProviderName = ccswitchimportconfigDescProviderName.Default.(string)
 	// ccswitchimportconfigDescNote is the schema descriptor for note field.
-	ccswitchimportconfigDescNote := ccswitchimportconfigFields[3].Descriptor()
+	ccswitchimportconfigDescNote := ccswitchimportconfigFields[4].Descriptor()
 	// ccswitchimportconfig.DefaultNote holds the default value on creation for the note field.
 	ccswitchimportconfig.DefaultNote = ccswitchimportconfigDescNote.Default.(string)
 	// ccswitchimportconfigDescDefaultModel is the schema descriptor for default_model field.
-	ccswitchimportconfigDescDefaultModel := ccswitchimportconfigFields[4].Descriptor()
+	ccswitchimportconfigDescDefaultModel := ccswitchimportconfigFields[5].Descriptor()
 	// ccswitchimportconfig.DefaultDefaultModel holds the default value on creation for the default_model field.
 	ccswitchimportconfig.DefaultDefaultModel = ccswitchimportconfigDescDefaultModel.Default.(string)
 	// ccswitchimportconfigDescModelMappings is the schema descriptor for model_mappings field.
-	ccswitchimportconfigDescModelMappings := ccswitchimportconfigFields[5].Descriptor()
+	ccswitchimportconfigDescModelMappings := ccswitchimportconfigFields[6].Descriptor()
 	// ccswitchimportconfig.DefaultModelMappings holds the default value on creation for the model_mappings field.
 	ccswitchimportconfig.DefaultModelMappings = ccswitchimportconfigDescModelMappings.Default.(string)
 	// ccswitchimportconfigDescAllowedChannelGroups is the schema descriptor for allowed_channel_groups field.
-	ccswitchimportconfigDescAllowedChannelGroups := ccswitchimportconfigFields[6].Descriptor()
+	ccswitchimportconfigDescAllowedChannelGroups := ccswitchimportconfigFields[7].Descriptor()
 	// ccswitchimportconfig.DefaultAllowedChannelGroups holds the default value on creation for the allowed_channel_groups field.
 	ccswitchimportconfig.DefaultAllowedChannelGroups = ccswitchimportconfigDescAllowedChannelGroups.Default.(string)
 	// ccswitchimportconfigDescRoutePath is the schema descriptor for route_path field.
-	ccswitchimportconfigDescRoutePath := ccswitchimportconfigFields[7].Descriptor()
+	ccswitchimportconfigDescRoutePath := ccswitchimportconfigFields[8].Descriptor()
 	// ccswitchimportconfig.DefaultRoutePath holds the default value on creation for the route_path field.
 	ccswitchimportconfig.DefaultRoutePath = ccswitchimportconfigDescRoutePath.Default.(string)
 	// ccswitchimportconfigDescEndpointPath is the schema descriptor for endpoint_path field.
-	ccswitchimportconfigDescEndpointPath := ccswitchimportconfigFields[8].Descriptor()
+	ccswitchimportconfigDescEndpointPath := ccswitchimportconfigFields[9].Descriptor()
 	// ccswitchimportconfig.DefaultEndpointPath holds the default value on creation for the endpoint_path field.
 	ccswitchimportconfig.DefaultEndpointPath = ccswitchimportconfigDescEndpointPath.Default.(string)
 	// ccswitchimportconfigDescUsageAutoInterval is the schema descriptor for usage_auto_interval field.
-	ccswitchimportconfigDescUsageAutoInterval := ccswitchimportconfigFields[9].Descriptor()
+	ccswitchimportconfigDescUsageAutoInterval := ccswitchimportconfigFields[10].Descriptor()
 	// ccswitchimportconfig.DefaultUsageAutoInterval holds the default value on creation for the usage_auto_interval field.
 	ccswitchimportconfig.DefaultUsageAutoInterval = ccswitchimportconfigDescUsageAutoInterval.Default.(int)
 	// ccswitchimportconfigDescAPIKeyField is the schema descriptor for api_key_field field.
-	ccswitchimportconfigDescAPIKeyField := ccswitchimportconfigFields[10].Descriptor()
+	ccswitchimportconfigDescAPIKeyField := ccswitchimportconfigFields[11].Descriptor()
 	// ccswitchimportconfig.DefaultAPIKeyField holds the default value on creation for the api_key_field field.
 	ccswitchimportconfig.DefaultAPIKeyField = ccswitchimportconfigDescAPIKeyField.Default.(string)
 	// ccswitchimportconfigDescCreatedAt is the schema descriptor for created_at field.
-	ccswitchimportconfigDescCreatedAt := ccswitchimportconfigFields[11].Descriptor()
+	ccswitchimportconfigDescCreatedAt := ccswitchimportconfigFields[12].Descriptor()
 	// ccswitchimportconfig.DefaultCreatedAt holds the default value on creation for the created_at field.
 	ccswitchimportconfig.DefaultCreatedAt = ccswitchimportconfigDescCreatedAt.Default.(string)
 	// ccswitchimportconfigDescUpdatedAt is the schema descriptor for updated_at field.
-	ccswitchimportconfigDescUpdatedAt := ccswitchimportconfigFields[12].Descriptor()
+	ccswitchimportconfigDescUpdatedAt := ccswitchimportconfigFields[13].Descriptor()
 	// ccswitchimportconfig.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	ccswitchimportconfig.DefaultUpdatedAt = ccswitchimportconfigDescUpdatedAt.Default.(string)
 	identityfingerprintFields := schema.IdentityFingerprint{}.Fields()
 	_ = identityfingerprintFields
+	// identityfingerprintDescTenantID is the schema descriptor for tenant_id field.
+	identityfingerprintDescTenantID := identityfingerprintFields[0].Descriptor()
+	// identityfingerprint.DefaultTenantID holds the default value on creation for the tenant_id field.
+	identityfingerprint.DefaultTenantID = identityfingerprintDescTenantID.Default.(string)
 	// identityfingerprintDescProfileKey is the schema descriptor for profile_key field.
-	identityfingerprintDescProfileKey := identityfingerprintFields[2].Descriptor()
+	identityfingerprintDescProfileKey := identityfingerprintFields[3].Descriptor()
 	// identityfingerprint.DefaultProfileKey holds the default value on creation for the profile_key field.
 	identityfingerprint.DefaultProfileKey = identityfingerprintDescProfileKey.Default.(string)
 	// identityfingerprintDescAuthSubjectID is the schema descriptor for auth_subject_id field.
-	identityfingerprintDescAuthSubjectID := identityfingerprintFields[3].Descriptor()
+	identityfingerprintDescAuthSubjectID := identityfingerprintFields[4].Descriptor()
 	// identityfingerprint.DefaultAuthSubjectID holds the default value on creation for the auth_subject_id field.
 	identityfingerprint.DefaultAuthSubjectID = identityfingerprintDescAuthSubjectID.Default.(string)
 	// identityfingerprintDescClientProduct is the schema descriptor for client_product field.
-	identityfingerprintDescClientProduct := identityfingerprintFields[4].Descriptor()
+	identityfingerprintDescClientProduct := identityfingerprintFields[5].Descriptor()
 	// identityfingerprint.DefaultClientProduct holds the default value on creation for the client_product field.
 	identityfingerprint.DefaultClientProduct = identityfingerprintDescClientProduct.Default.(string)
 	// identityfingerprintDescClientVariant is the schema descriptor for client_variant field.
-	identityfingerprintDescClientVariant := identityfingerprintFields[5].Descriptor()
+	identityfingerprintDescClientVariant := identityfingerprintFields[6].Descriptor()
 	// identityfingerprint.DefaultClientVariant holds the default value on creation for the client_variant field.
 	identityfingerprint.DefaultClientVariant = identityfingerprintDescClientVariant.Default.(string)
 	// identityfingerprintDescVersion is the schema descriptor for version field.
-	identityfingerprintDescVersion := identityfingerprintFields[6].Descriptor()
+	identityfingerprintDescVersion := identityfingerprintFields[7].Descriptor()
 	// identityfingerprint.DefaultVersion holds the default value on creation for the version field.
 	identityfingerprint.DefaultVersion = identityfingerprintDescVersion.Default.(string)
 	// identityfingerprintDescFieldsJSON is the schema descriptor for fields_json field.
-	identityfingerprintDescFieldsJSON := identityfingerprintFields[7].Descriptor()
+	identityfingerprintDescFieldsJSON := identityfingerprintFields[8].Descriptor()
 	// identityfingerprint.DefaultFieldsJSON holds the default value on creation for the fields_json field.
 	identityfingerprint.DefaultFieldsJSON = identityfingerprintDescFieldsJSON.Default.(string)
 	// identityfingerprintDescObservedHeadersJSON is the schema descriptor for observed_headers_json field.
-	identityfingerprintDescObservedHeadersJSON := identityfingerprintFields[8].Descriptor()
+	identityfingerprintDescObservedHeadersJSON := identityfingerprintFields[9].Descriptor()
 	// identityfingerprint.DefaultObservedHeadersJSON holds the default value on creation for the observed_headers_json field.
 	identityfingerprint.DefaultObservedHeadersJSON = identityfingerprintDescObservedHeadersJSON.Default.(string)
 	// identityfingerprintDescCreatedAt is the schema descriptor for created_at field.
-	identityfingerprintDescCreatedAt := identityfingerprintFields[9].Descriptor()
+	identityfingerprintDescCreatedAt := identityfingerprintFields[10].Descriptor()
 	// identityfingerprint.DefaultCreatedAt holds the default value on creation for the created_at field.
 	identityfingerprint.DefaultCreatedAt = identityfingerprintDescCreatedAt.Default.(string)
 	// identityfingerprintDescUpdatedAt is the schema descriptor for updated_at field.
-	identityfingerprintDescUpdatedAt := identityfingerprintFields[10].Descriptor()
+	identityfingerprintDescUpdatedAt := identityfingerprintFields[11].Descriptor()
 	// identityfingerprint.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	identityfingerprint.DefaultUpdatedAt = identityfingerprintDescUpdatedAt.Default.(string)
 	// identityfingerprintDescLastSeenAt is the schema descriptor for last_seen_at field.
-	identityfingerprintDescLastSeenAt := identityfingerprintFields[11].Descriptor()
+	identityfingerprintDescLastSeenAt := identityfingerprintFields[12].Descriptor()
 	// identityfingerprint.DefaultLastSeenAt holds the default value on creation for the last_seen_at field.
 	identityfingerprint.DefaultLastSeenAt = identityfingerprintDescLastSeenAt.Default.(string)
 	identityfingerprintaccountpolicyFields := schema.IdentityFingerprintAccountPolicy{}.Fields()
 	_ = identityfingerprintaccountpolicyFields
+	// identityfingerprintaccountpolicyDescTenantID is the schema descriptor for tenant_id field.
+	identityfingerprintaccountpolicyDescTenantID := identityfingerprintaccountpolicyFields[0].Descriptor()
+	// identityfingerprintaccountpolicy.DefaultTenantID holds the default value on creation for the tenant_id field.
+	identityfingerprintaccountpolicy.DefaultTenantID = identityfingerprintaccountpolicyDescTenantID.Default.(string)
 	// identityfingerprintaccountpolicyDescStrategy is the schema descriptor for strategy field.
-	identityfingerprintaccountpolicyDescStrategy := identityfingerprintaccountpolicyFields[2].Descriptor()
+	identityfingerprintaccountpolicyDescStrategy := identityfingerprintaccountpolicyFields[3].Descriptor()
 	// identityfingerprintaccountpolicy.DefaultStrategy holds the default value on creation for the strategy field.
 	identityfingerprintaccountpolicy.DefaultStrategy = identityfingerprintaccountpolicyDescStrategy.Default.(string)
 	// identityfingerprintaccountpolicyDescActiveProfileKey is the schema descriptor for active_profile_key field.
-	identityfingerprintaccountpolicyDescActiveProfileKey := identityfingerprintaccountpolicyFields[3].Descriptor()
+	identityfingerprintaccountpolicyDescActiveProfileKey := identityfingerprintaccountpolicyFields[4].Descriptor()
 	// identityfingerprintaccountpolicy.DefaultActiveProfileKey holds the default value on creation for the active_profile_key field.
 	identityfingerprintaccountpolicy.DefaultActiveProfileKey = identityfingerprintaccountpolicyDescActiveProfileKey.Default.(string)
 	// identityfingerprintaccountpolicyDescRevision is the schema descriptor for revision field.
-	identityfingerprintaccountpolicyDescRevision := identityfingerprintaccountpolicyFields[4].Descriptor()
+	identityfingerprintaccountpolicyDescRevision := identityfingerprintaccountpolicyFields[5].Descriptor()
 	// identityfingerprintaccountpolicy.DefaultRevision holds the default value on creation for the revision field.
 	identityfingerprintaccountpolicy.DefaultRevision = identityfingerprintaccountpolicyDescRevision.Default.(int64)
 	// identityfingerprintaccountpolicyDescUpdatedAt is the schema descriptor for updated_at field.
-	identityfingerprintaccountpolicyDescUpdatedAt := identityfingerprintaccountpolicyFields[5].Descriptor()
+	identityfingerprintaccountpolicyDescUpdatedAt := identityfingerprintaccountpolicyFields[6].Descriptor()
 	// identityfingerprintaccountpolicy.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	identityfingerprintaccountpolicy.DefaultUpdatedAt = identityfingerprintaccountpolicyDescUpdatedAt.Default.(string)
 	modelconfigFields := schema.ModelConfig{}.Fields()
 	_ = modelconfigFields
+	// modelconfigDescTenantID is the schema descriptor for tenant_id field.
+	modelconfigDescTenantID := modelconfigFields[0].Descriptor()
+	// modelconfig.DefaultTenantID holds the default value on creation for the tenant_id field.
+	modelconfig.DefaultTenantID = modelconfigDescTenantID.Default.(string)
 	// modelconfigDescOwnedBy is the schema descriptor for owned_by field.
-	modelconfigDescOwnedBy := modelconfigFields[1].Descriptor()
+	modelconfigDescOwnedBy := modelconfigFields[2].Descriptor()
 	// modelconfig.DefaultOwnedBy holds the default value on creation for the owned_by field.
 	modelconfig.DefaultOwnedBy = modelconfigDescOwnedBy.Default.(string)
 	// modelconfigDescDescription is the schema descriptor for description field.
-	modelconfigDescDescription := modelconfigFields[2].Descriptor()
+	modelconfigDescDescription := modelconfigFields[3].Descriptor()
 	// modelconfig.DefaultDescription holds the default value on creation for the description field.
 	modelconfig.DefaultDescription = modelconfigDescDescription.Default.(string)
 	// modelconfigDescEnabled is the schema descriptor for enabled field.
-	modelconfigDescEnabled := modelconfigFields[3].Descriptor()
+	modelconfigDescEnabled := modelconfigFields[4].Descriptor()
 	// modelconfig.DefaultEnabled holds the default value on creation for the enabled field.
 	modelconfig.DefaultEnabled = modelconfigDescEnabled.Default.(int)
 	// modelconfigDescInputModalities is the schema descriptor for input_modalities field.
-	modelconfigDescInputModalities := modelconfigFields[4].Descriptor()
+	modelconfigDescInputModalities := modelconfigFields[5].Descriptor()
 	// modelconfig.DefaultInputModalities holds the default value on creation for the input_modalities field.
 	modelconfig.DefaultInputModalities = modelconfigDescInputModalities.Default.(string)
 	// modelconfigDescOutputModalities is the schema descriptor for output_modalities field.
-	modelconfigDescOutputModalities := modelconfigFields[5].Descriptor()
+	modelconfigDescOutputModalities := modelconfigFields[6].Descriptor()
 	// modelconfig.DefaultOutputModalities holds the default value on creation for the output_modalities field.
 	modelconfig.DefaultOutputModalities = modelconfigDescOutputModalities.Default.(string)
 	// modelconfigDescPricingMode is the schema descriptor for pricing_mode field.
-	modelconfigDescPricingMode := modelconfigFields[6].Descriptor()
+	modelconfigDescPricingMode := modelconfigFields[7].Descriptor()
 	// modelconfig.DefaultPricingMode holds the default value on creation for the pricing_mode field.
 	modelconfig.DefaultPricingMode = modelconfigDescPricingMode.Default.(string)
 	// modelconfigDescInputPricePerMillion is the schema descriptor for input_price_per_million field.
-	modelconfigDescInputPricePerMillion := modelconfigFields[7].Descriptor()
+	modelconfigDescInputPricePerMillion := modelconfigFields[8].Descriptor()
 	// modelconfig.DefaultInputPricePerMillion holds the default value on creation for the input_price_per_million field.
 	modelconfig.DefaultInputPricePerMillion = modelconfigDescInputPricePerMillion.Default.(float64)
 	// modelconfigDescOutputPricePerMillion is the schema descriptor for output_price_per_million field.
-	modelconfigDescOutputPricePerMillion := modelconfigFields[8].Descriptor()
+	modelconfigDescOutputPricePerMillion := modelconfigFields[9].Descriptor()
 	// modelconfig.DefaultOutputPricePerMillion holds the default value on creation for the output_price_per_million field.
 	modelconfig.DefaultOutputPricePerMillion = modelconfigDescOutputPricePerMillion.Default.(float64)
 	// modelconfigDescCachedPricePerMillion is the schema descriptor for cached_price_per_million field.
-	modelconfigDescCachedPricePerMillion := modelconfigFields[9].Descriptor()
+	modelconfigDescCachedPricePerMillion := modelconfigFields[10].Descriptor()
 	// modelconfig.DefaultCachedPricePerMillion holds the default value on creation for the cached_price_per_million field.
 	modelconfig.DefaultCachedPricePerMillion = modelconfigDescCachedPricePerMillion.Default.(float64)
 	// modelconfigDescCacheReadPricePerMillion is the schema descriptor for cache_read_price_per_million field.
-	modelconfigDescCacheReadPricePerMillion := modelconfigFields[10].Descriptor()
+	modelconfigDescCacheReadPricePerMillion := modelconfigFields[11].Descriptor()
 	// modelconfig.DefaultCacheReadPricePerMillion holds the default value on creation for the cache_read_price_per_million field.
 	modelconfig.DefaultCacheReadPricePerMillion = modelconfigDescCacheReadPricePerMillion.Default.(float64)
 	// modelconfigDescCacheWritePricePerMillion is the schema descriptor for cache_write_price_per_million field.
-	modelconfigDescCacheWritePricePerMillion := modelconfigFields[11].Descriptor()
+	modelconfigDescCacheWritePricePerMillion := modelconfigFields[12].Descriptor()
 	// modelconfig.DefaultCacheWritePricePerMillion holds the default value on creation for the cache_write_price_per_million field.
 	modelconfig.DefaultCacheWritePricePerMillion = modelconfigDescCacheWritePricePerMillion.Default.(float64)
 	// modelconfigDescPricePerCall is the schema descriptor for price_per_call field.
-	modelconfigDescPricePerCall := modelconfigFields[12].Descriptor()
+	modelconfigDescPricePerCall := modelconfigFields[13].Descriptor()
 	// modelconfig.DefaultPricePerCall holds the default value on creation for the price_per_call field.
 	modelconfig.DefaultPricePerCall = modelconfigDescPricePerCall.Default.(float64)
 	// modelconfigDescSource is the schema descriptor for source field.
-	modelconfigDescSource := modelconfigFields[13].Descriptor()
+	modelconfigDescSource := modelconfigFields[14].Descriptor()
 	// modelconfig.DefaultSource holds the default value on creation for the source field.
 	modelconfig.DefaultSource = modelconfigDescSource.Default.(string)
 	modelopenroutersyncstateFields := schema.ModelOpenrouterSyncState{}.Fields()
 	_ = modelopenroutersyncstateFields
+	// modelopenroutersyncstateDescTenantID is the schema descriptor for tenant_id field.
+	modelopenroutersyncstateDescTenantID := modelopenroutersyncstateFields[0].Descriptor()
+	// modelopenroutersyncstate.DefaultTenantID holds the default value on creation for the tenant_id field.
+	modelopenroutersyncstate.DefaultTenantID = modelopenroutersyncstateDescTenantID.Default.(string)
 	// modelopenroutersyncstateDescEnabled is the schema descriptor for enabled field.
-	modelopenroutersyncstateDescEnabled := modelopenroutersyncstateFields[1].Descriptor()
+	modelopenroutersyncstateDescEnabled := modelopenroutersyncstateFields[2].Descriptor()
 	// modelopenroutersyncstate.DefaultEnabled holds the default value on creation for the enabled field.
 	modelopenroutersyncstate.DefaultEnabled = modelopenroutersyncstateDescEnabled.Default.(int)
 	// modelopenroutersyncstateDescIntervalMinutes is the schema descriptor for interval_minutes field.
-	modelopenroutersyncstateDescIntervalMinutes := modelopenroutersyncstateFields[2].Descriptor()
+	modelopenroutersyncstateDescIntervalMinutes := modelopenroutersyncstateFields[3].Descriptor()
 	// modelopenroutersyncstate.DefaultIntervalMinutes holds the default value on creation for the interval_minutes field.
 	modelopenroutersyncstate.DefaultIntervalMinutes = modelopenroutersyncstateDescIntervalMinutes.Default.(int)
 	// modelopenroutersyncstateDescLastSyncAt is the schema descriptor for last_sync_at field.
-	modelopenroutersyncstateDescLastSyncAt := modelopenroutersyncstateFields[3].Descriptor()
+	modelopenroutersyncstateDescLastSyncAt := modelopenroutersyncstateFields[4].Descriptor()
 	// modelopenroutersyncstate.DefaultLastSyncAt holds the default value on creation for the last_sync_at field.
 	modelopenroutersyncstate.DefaultLastSyncAt = modelopenroutersyncstateDescLastSyncAt.Default.(string)
 	// modelopenroutersyncstateDescLastSuccessAt is the schema descriptor for last_success_at field.
-	modelopenroutersyncstateDescLastSuccessAt := modelopenroutersyncstateFields[4].Descriptor()
+	modelopenroutersyncstateDescLastSuccessAt := modelopenroutersyncstateFields[5].Descriptor()
 	// modelopenroutersyncstate.DefaultLastSuccessAt holds the default value on creation for the last_success_at field.
 	modelopenroutersyncstate.DefaultLastSuccessAt = modelopenroutersyncstateDescLastSuccessAt.Default.(string)
 	// modelopenroutersyncstateDescLastError is the schema descriptor for last_error field.
-	modelopenroutersyncstateDescLastError := modelopenroutersyncstateFields[5].Descriptor()
+	modelopenroutersyncstateDescLastError := modelopenroutersyncstateFields[6].Descriptor()
 	// modelopenroutersyncstate.DefaultLastError holds the default value on creation for the last_error field.
 	modelopenroutersyncstate.DefaultLastError = modelopenroutersyncstateDescLastError.Default.(string)
 	// modelopenroutersyncstateDescLastSeen is the schema descriptor for last_seen field.
-	modelopenroutersyncstateDescLastSeen := modelopenroutersyncstateFields[6].Descriptor()
+	modelopenroutersyncstateDescLastSeen := modelopenroutersyncstateFields[7].Descriptor()
 	// modelopenroutersyncstate.DefaultLastSeen holds the default value on creation for the last_seen field.
 	modelopenroutersyncstate.DefaultLastSeen = modelopenroutersyncstateDescLastSeen.Default.(int)
 	// modelopenroutersyncstateDescLastAdded is the schema descriptor for last_added field.
-	modelopenroutersyncstateDescLastAdded := modelopenroutersyncstateFields[7].Descriptor()
+	modelopenroutersyncstateDescLastAdded := modelopenroutersyncstateFields[8].Descriptor()
 	// modelopenroutersyncstate.DefaultLastAdded holds the default value on creation for the last_added field.
 	modelopenroutersyncstate.DefaultLastAdded = modelopenroutersyncstateDescLastAdded.Default.(int)
 	// modelopenroutersyncstateDescLastUpdated is the schema descriptor for last_updated field.
-	modelopenroutersyncstateDescLastUpdated := modelopenroutersyncstateFields[8].Descriptor()
+	modelopenroutersyncstateDescLastUpdated := modelopenroutersyncstateFields[9].Descriptor()
 	// modelopenroutersyncstate.DefaultLastUpdated holds the default value on creation for the last_updated field.
 	modelopenroutersyncstate.DefaultLastUpdated = modelopenroutersyncstateDescLastUpdated.Default.(int)
 	// modelopenroutersyncstateDescLastSkipped is the schema descriptor for last_skipped field.
-	modelopenroutersyncstateDescLastSkipped := modelopenroutersyncstateFields[9].Descriptor()
+	modelopenroutersyncstateDescLastSkipped := modelopenroutersyncstateFields[10].Descriptor()
 	// modelopenroutersyncstate.DefaultLastSkipped holds the default value on creation for the last_skipped field.
 	modelopenroutersyncstate.DefaultLastSkipped = modelopenroutersyncstateDescLastSkipped.Default.(int)
 	// modelopenroutersyncstateDescID is the schema descriptor for id field.
-	modelopenroutersyncstateDescID := modelopenroutersyncstateFields[0].Descriptor()
+	modelopenroutersyncstateDescID := modelopenroutersyncstateFields[1].Descriptor()
 	// modelopenroutersyncstate.DefaultID holds the default value on creation for the id field.
 	modelopenroutersyncstate.DefaultID = modelopenroutersyncstateDescID.Default.(int)
 	modelownerpresetFields := schema.ModelOwnerPreset{}.Fields()
 	_ = modelownerpresetFields
+	// modelownerpresetDescTenantID is the schema descriptor for tenant_id field.
+	modelownerpresetDescTenantID := modelownerpresetFields[0].Descriptor()
+	// modelownerpreset.DefaultTenantID holds the default value on creation for the tenant_id field.
+	modelownerpreset.DefaultTenantID = modelownerpresetDescTenantID.Default.(string)
 	// modelownerpresetDescLabel is the schema descriptor for label field.
-	modelownerpresetDescLabel := modelownerpresetFields[1].Descriptor()
+	modelownerpresetDescLabel := modelownerpresetFields[2].Descriptor()
 	// modelownerpreset.DefaultLabel holds the default value on creation for the label field.
 	modelownerpreset.DefaultLabel = modelownerpresetDescLabel.Default.(string)
 	// modelownerpresetDescDescription is the schema descriptor for description field.
-	modelownerpresetDescDescription := modelownerpresetFields[2].Descriptor()
+	modelownerpresetDescDescription := modelownerpresetFields[3].Descriptor()
 	// modelownerpreset.DefaultDescription holds the default value on creation for the description field.
 	modelownerpreset.DefaultDescription = modelownerpresetDescDescription.Default.(string)
 	// modelownerpresetDescEnabled is the schema descriptor for enabled field.
-	modelownerpresetDescEnabled := modelownerpresetFields[3].Descriptor()
+	modelownerpresetDescEnabled := modelownerpresetFields[4].Descriptor()
 	// modelownerpreset.DefaultEnabled holds the default value on creation for the enabled field.
 	modelownerpreset.DefaultEnabled = modelownerpresetDescEnabled.Default.(int)
 	modelpricingFields := schema.ModelPricing{}.Fields()
 	_ = modelpricingFields
+	// modelpricingDescTenantID is the schema descriptor for tenant_id field.
+	modelpricingDescTenantID := modelpricingFields[0].Descriptor()
+	// modelpricing.DefaultTenantID holds the default value on creation for the tenant_id field.
+	modelpricing.DefaultTenantID = modelpricingDescTenantID.Default.(string)
 	// modelpricingDescInputPricePerMillion is the schema descriptor for input_price_per_million field.
-	modelpricingDescInputPricePerMillion := modelpricingFields[1].Descriptor()
+	modelpricingDescInputPricePerMillion := modelpricingFields[2].Descriptor()
 	// modelpricing.DefaultInputPricePerMillion holds the default value on creation for the input_price_per_million field.
 	modelpricing.DefaultInputPricePerMillion = modelpricingDescInputPricePerMillion.Default.(float64)
 	// modelpricingDescOutputPricePerMillion is the schema descriptor for output_price_per_million field.
-	modelpricingDescOutputPricePerMillion := modelpricingFields[2].Descriptor()
+	modelpricingDescOutputPricePerMillion := modelpricingFields[3].Descriptor()
 	// modelpricing.DefaultOutputPricePerMillion holds the default value on creation for the output_price_per_million field.
 	modelpricing.DefaultOutputPricePerMillion = modelpricingDescOutputPricePerMillion.Default.(float64)
 	// modelpricingDescCachedPricePerMillion is the schema descriptor for cached_price_per_million field.
-	modelpricingDescCachedPricePerMillion := modelpricingFields[3].Descriptor()
+	modelpricingDescCachedPricePerMillion := modelpricingFields[4].Descriptor()
 	// modelpricing.DefaultCachedPricePerMillion holds the default value on creation for the cached_price_per_million field.
 	modelpricing.DefaultCachedPricePerMillion = modelpricingDescCachedPricePerMillion.Default.(float64)
 	// modelpricingDescCacheReadPricePerMillion is the schema descriptor for cache_read_price_per_million field.
-	modelpricingDescCacheReadPricePerMillion := modelpricingFields[4].Descriptor()
+	modelpricingDescCacheReadPricePerMillion := modelpricingFields[5].Descriptor()
 	// modelpricing.DefaultCacheReadPricePerMillion holds the default value on creation for the cache_read_price_per_million field.
 	modelpricing.DefaultCacheReadPricePerMillion = modelpricingDescCacheReadPricePerMillion.Default.(float64)
 	// modelpricingDescCacheWritePricePerMillion is the schema descriptor for cache_write_price_per_million field.
-	modelpricingDescCacheWritePricePerMillion := modelpricingFields[5].Descriptor()
+	modelpricingDescCacheWritePricePerMillion := modelpricingFields[6].Descriptor()
 	// modelpricing.DefaultCacheWritePricePerMillion holds the default value on creation for the cache_write_price_per_million field.
 	modelpricing.DefaultCacheWritePricePerMillion = modelpricingDescCacheWritePricePerMillion.Default.(float64)
+	permissionFields := schema.Permission{}.Fields()
+	_ = permissionFields
+	// permissionDescDescription is the schema descriptor for description field.
+	permissionDescDescription := permissionFields[2].Descriptor()
+	// permission.DefaultDescription holds the default value on creation for the description field.
+	permission.DefaultDescription = permissionDescDescription.Default.(string)
+	// permissionDescSensitive is the schema descriptor for sensitive field.
+	permissionDescSensitive := permissionFields[6].Descriptor()
+	// permission.DefaultSensitive holds the default value on creation for the sensitive field.
+	permission.DefaultSensitive = permissionDescSensitive.Default.(bool)
+	// permissionDescSortOrder is the schema descriptor for sort_order field.
+	permissionDescSortOrder := permissionFields[7].Descriptor()
+	// permission.DefaultSortOrder holds the default value on creation for the sort_order field.
+	permission.DefaultSortOrder = permissionDescSortOrder.Default.(int)
+	// permissionDescUpdatedAt is the schema descriptor for updated_at field.
+	permissionDescUpdatedAt := permissionFields[8].Descriptor()
+	// permission.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	permission.DefaultUpdatedAt = permissionDescUpdatedAt.Default.(func() time.Time)
 	proxypoolFields := schema.ProxyPool{}.Fields()
 	_ = proxypoolFields
+	// proxypoolDescTenantID is the schema descriptor for tenant_id field.
+	proxypoolDescTenantID := proxypoolFields[0].Descriptor()
+	// proxypool.DefaultTenantID holds the default value on creation for the tenant_id field.
+	proxypool.DefaultTenantID = proxypoolDescTenantID.Default.(string)
 	// proxypoolDescName is the schema descriptor for name field.
-	proxypoolDescName := proxypoolFields[1].Descriptor()
+	proxypoolDescName := proxypoolFields[2].Descriptor()
 	// proxypool.DefaultName holds the default value on creation for the name field.
 	proxypool.DefaultName = proxypoolDescName.Default.(string)
 	// proxypoolDescEnabled is the schema descriptor for enabled field.
-	proxypoolDescEnabled := proxypoolFields[3].Descriptor()
+	proxypoolDescEnabled := proxypoolFields[4].Descriptor()
 	// proxypool.DefaultEnabled holds the default value on creation for the enabled field.
 	proxypool.DefaultEnabled = proxypoolDescEnabled.Default.(int)
 	// proxypoolDescDescription is the schema descriptor for description field.
-	proxypoolDescDescription := proxypoolFields[4].Descriptor()
+	proxypoolDescDescription := proxypoolFields[5].Descriptor()
 	// proxypool.DefaultDescription holds the default value on creation for the description field.
 	proxypool.DefaultDescription = proxypoolDescDescription.Default.(string)
 	// proxypoolDescCreatedAt is the schema descriptor for created_at field.
-	proxypoolDescCreatedAt := proxypoolFields[5].Descriptor()
+	proxypoolDescCreatedAt := proxypoolFields[6].Descriptor()
 	// proxypool.DefaultCreatedAt holds the default value on creation for the created_at field.
 	proxypool.DefaultCreatedAt = proxypoolDescCreatedAt.Default.(string)
 	// proxypoolDescUpdatedAt is the schema descriptor for updated_at field.
-	proxypoolDescUpdatedAt := proxypoolFields[6].Descriptor()
+	proxypoolDescUpdatedAt := proxypoolFields[7].Descriptor()
 	// proxypool.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	proxypool.DefaultUpdatedAt = proxypoolDescUpdatedAt.Default.(string)
 	requestlogFields := schema.RequestLog{}.Fields()
 	_ = requestlogFields
+	// requestlogDescTenantID is the schema descriptor for tenant_id field.
+	requestlogDescTenantID := requestlogFields[0].Descriptor()
+	// requestlog.DefaultTenantID holds the default value on creation for the tenant_id field.
+	requestlog.DefaultTenantID = requestlogDescTenantID.Default.(string)
 	// requestlogDescTimestamp is the schema descriptor for timestamp field.
-	requestlogDescTimestamp := requestlogFields[1].Descriptor()
+	requestlogDescTimestamp := requestlogFields[2].Descriptor()
 	// requestlog.DefaultTimestamp holds the default value on creation for the timestamp field.
 	requestlog.DefaultTimestamp = requestlogDescTimestamp.Default.(func() time.Time)
 	// requestlogDescAPIKey is the schema descriptor for api_key field.
-	requestlogDescAPIKey := requestlogFields[2].Descriptor()
+	requestlogDescAPIKey := requestlogFields[3].Descriptor()
 	// requestlog.DefaultAPIKey holds the default value on creation for the api_key field.
 	requestlog.DefaultAPIKey = requestlogDescAPIKey.Default.(string)
 	// requestlogDescAPIKeyID is the schema descriptor for api_key_id field.
-	requestlogDescAPIKeyID := requestlogFields[3].Descriptor()
+	requestlogDescAPIKeyID := requestlogFields[4].Descriptor()
 	// requestlog.DefaultAPIKeyID holds the default value on creation for the api_key_id field.
 	requestlog.DefaultAPIKeyID = requestlogDescAPIKeyID.Default.(string)
 	// requestlogDescAuthSubjectID is the schema descriptor for auth_subject_id field.
-	requestlogDescAuthSubjectID := requestlogFields[4].Descriptor()
+	requestlogDescAuthSubjectID := requestlogFields[5].Descriptor()
 	// requestlog.DefaultAuthSubjectID holds the default value on creation for the auth_subject_id field.
 	requestlog.DefaultAuthSubjectID = requestlogDescAuthSubjectID.Default.(string)
 	// requestlogDescAPIKeyName is the schema descriptor for api_key_name field.
-	requestlogDescAPIKeyName := requestlogFields[5].Descriptor()
+	requestlogDescAPIKeyName := requestlogFields[6].Descriptor()
 	// requestlog.DefaultAPIKeyName holds the default value on creation for the api_key_name field.
 	requestlog.DefaultAPIKeyName = requestlogDescAPIKeyName.Default.(string)
 	// requestlogDescModel is the schema descriptor for model field.
-	requestlogDescModel := requestlogFields[6].Descriptor()
+	requestlogDescModel := requestlogFields[7].Descriptor()
 	// requestlog.DefaultModel holds the default value on creation for the model field.
 	requestlog.DefaultModel = requestlogDescModel.Default.(string)
 	// requestlogDescUpstreamModel is the schema descriptor for upstream_model field.
-	requestlogDescUpstreamModel := requestlogFields[7].Descriptor()
+	requestlogDescUpstreamModel := requestlogFields[8].Descriptor()
 	// requestlog.DefaultUpstreamModel holds the default value on creation for the upstream_model field.
 	requestlog.DefaultUpstreamModel = requestlogDescUpstreamModel.Default.(string)
 	// requestlogDescVisionFallbackModel is the schema descriptor for vision_fallback_model field.
-	requestlogDescVisionFallbackModel := requestlogFields[8].Descriptor()
+	requestlogDescVisionFallbackModel := requestlogFields[9].Descriptor()
 	// requestlog.DefaultVisionFallbackModel holds the default value on creation for the vision_fallback_model field.
 	requestlog.DefaultVisionFallbackModel = requestlogDescVisionFallbackModel.Default.(string)
 	// requestlogDescSource is the schema descriptor for source field.
-	requestlogDescSource := requestlogFields[9].Descriptor()
+	requestlogDescSource := requestlogFields[10].Descriptor()
 	// requestlog.DefaultSource holds the default value on creation for the source field.
 	requestlog.DefaultSource = requestlogDescSource.Default.(string)
 	// requestlogDescChannelName is the schema descriptor for channel_name field.
-	requestlogDescChannelName := requestlogFields[10].Descriptor()
+	requestlogDescChannelName := requestlogFields[11].Descriptor()
 	// requestlog.DefaultChannelName holds the default value on creation for the channel_name field.
 	requestlog.DefaultChannelName = requestlogDescChannelName.Default.(string)
 	// requestlogDescAuthIndex is the schema descriptor for auth_index field.
-	requestlogDescAuthIndex := requestlogFields[11].Descriptor()
+	requestlogDescAuthIndex := requestlogFields[12].Descriptor()
 	// requestlog.DefaultAuthIndex holds the default value on creation for the auth_index field.
 	requestlog.DefaultAuthIndex = requestlogDescAuthIndex.Default.(string)
 	// requestlogDescFailed is the schema descriptor for failed field.
-	requestlogDescFailed := requestlogFields[12].Descriptor()
+	requestlogDescFailed := requestlogFields[13].Descriptor()
 	// requestlog.DefaultFailed holds the default value on creation for the failed field.
 	requestlog.DefaultFailed = requestlogDescFailed.Default.(int)
 	// requestlogDescStreaming is the schema descriptor for streaming field.
-	requestlogDescStreaming := requestlogFields[13].Descriptor()
+	requestlogDescStreaming := requestlogFields[14].Descriptor()
 	// requestlog.DefaultStreaming holds the default value on creation for the streaming field.
 	requestlog.DefaultStreaming = requestlogDescStreaming.Default.(int)
 	// requestlogDescLatencyMs is the schema descriptor for latency_ms field.
-	requestlogDescLatencyMs := requestlogFields[14].Descriptor()
+	requestlogDescLatencyMs := requestlogFields[15].Descriptor()
 	// requestlog.DefaultLatencyMs holds the default value on creation for the latency_ms field.
 	requestlog.DefaultLatencyMs = requestlogDescLatencyMs.Default.(int64)
 	// requestlogDescFirstTokenMs is the schema descriptor for first_token_ms field.
-	requestlogDescFirstTokenMs := requestlogFields[15].Descriptor()
+	requestlogDescFirstTokenMs := requestlogFields[16].Descriptor()
 	// requestlog.DefaultFirstTokenMs holds the default value on creation for the first_token_ms field.
 	requestlog.DefaultFirstTokenMs = requestlogDescFirstTokenMs.Default.(int64)
 	// requestlogDescInputTokens is the schema descriptor for input_tokens field.
-	requestlogDescInputTokens := requestlogFields[16].Descriptor()
+	requestlogDescInputTokens := requestlogFields[17].Descriptor()
 	// requestlog.DefaultInputTokens holds the default value on creation for the input_tokens field.
 	requestlog.DefaultInputTokens = requestlogDescInputTokens.Default.(int64)
 	// requestlogDescOutputTokens is the schema descriptor for output_tokens field.
-	requestlogDescOutputTokens := requestlogFields[17].Descriptor()
+	requestlogDescOutputTokens := requestlogFields[18].Descriptor()
 	// requestlog.DefaultOutputTokens holds the default value on creation for the output_tokens field.
 	requestlog.DefaultOutputTokens = requestlogDescOutputTokens.Default.(int64)
 	// requestlogDescReasoningTokens is the schema descriptor for reasoning_tokens field.
-	requestlogDescReasoningTokens := requestlogFields[18].Descriptor()
+	requestlogDescReasoningTokens := requestlogFields[19].Descriptor()
 	// requestlog.DefaultReasoningTokens holds the default value on creation for the reasoning_tokens field.
 	requestlog.DefaultReasoningTokens = requestlogDescReasoningTokens.Default.(int64)
 	// requestlogDescCachedTokens is the schema descriptor for cached_tokens field.
-	requestlogDescCachedTokens := requestlogFields[19].Descriptor()
+	requestlogDescCachedTokens := requestlogFields[20].Descriptor()
 	// requestlog.DefaultCachedTokens holds the default value on creation for the cached_tokens field.
 	requestlog.DefaultCachedTokens = requestlogDescCachedTokens.Default.(int64)
 	// requestlogDescTotalTokens is the schema descriptor for total_tokens field.
-	requestlogDescTotalTokens := requestlogFields[20].Descriptor()
+	requestlogDescTotalTokens := requestlogFields[21].Descriptor()
 	// requestlog.DefaultTotalTokens holds the default value on creation for the total_tokens field.
 	requestlog.DefaultTotalTokens = requestlogDescTotalTokens.Default.(int64)
 	// requestlogDescCost is the schema descriptor for cost field.
-	requestlogDescCost := requestlogFields[21].Descriptor()
+	requestlogDescCost := requestlogFields[22].Descriptor()
 	// requestlog.DefaultCost holds the default value on creation for the cost field.
 	requestlog.DefaultCost = requestlogDescCost.Default.(float64)
 	// requestlogDescInputContent is the schema descriptor for input_content field.
-	requestlogDescInputContent := requestlogFields[22].Descriptor()
+	requestlogDescInputContent := requestlogFields[23].Descriptor()
 	// requestlog.DefaultInputContent holds the default value on creation for the input_content field.
 	requestlog.DefaultInputContent = requestlogDescInputContent.Default.(string)
 	// requestlogDescOutputContent is the schema descriptor for output_content field.
-	requestlogDescOutputContent := requestlogFields[23].Descriptor()
+	requestlogDescOutputContent := requestlogFields[24].Descriptor()
 	// requestlog.DefaultOutputContent holds the default value on creation for the output_content field.
 	requestlog.DefaultOutputContent = requestlogDescOutputContent.Default.(string)
 	requestlogcontentFields := schema.RequestLogContent{}.Fields()
 	_ = requestlogcontentFields
+	// requestlogcontentDescTenantID is the schema descriptor for tenant_id field.
+	requestlogcontentDescTenantID := requestlogcontentFields[0].Descriptor()
+	// requestlogcontent.DefaultTenantID holds the default value on creation for the tenant_id field.
+	requestlogcontent.DefaultTenantID = requestlogcontentDescTenantID.Default.(string)
 	// requestlogcontentDescTimestamp is the schema descriptor for timestamp field.
-	requestlogcontentDescTimestamp := requestlogcontentFields[1].Descriptor()
+	requestlogcontentDescTimestamp := requestlogcontentFields[2].Descriptor()
 	// requestlogcontent.DefaultTimestamp holds the default value on creation for the timestamp field.
 	requestlogcontent.DefaultTimestamp = requestlogcontentDescTimestamp.Default.(func() time.Time)
 	// requestlogcontentDescCompression is the schema descriptor for compression field.
-	requestlogcontentDescCompression := requestlogcontentFields[2].Descriptor()
+	requestlogcontentDescCompression := requestlogcontentFields[3].Descriptor()
 	// requestlogcontent.DefaultCompression holds the default value on creation for the compression field.
 	requestlogcontent.DefaultCompression = requestlogcontentDescCompression.Default.(string)
 	// requestlogcontentDescSessionID is the schema descriptor for session_id field.
-	requestlogcontentDescSessionID := requestlogcontentFields[6].Descriptor()
+	requestlogcontentDescSessionID := requestlogcontentFields[7].Descriptor()
 	// requestlogcontent.DefaultSessionID holds the default value on creation for the session_id field.
 	requestlogcontent.DefaultSessionID = requestlogcontentDescSessionID.Default.(string)
+	roleFields := schema.Role{}.Fields()
+	_ = roleFields
+	// roleDescDescription is the schema descriptor for description field.
+	roleDescDescription := roleFields[4].Descriptor()
+	// role.DefaultDescription holds the default value on creation for the description field.
+	role.DefaultDescription = roleDescDescription.Default.(string)
+	// roleDescSystemProtected is the schema descriptor for system_protected field.
+	roleDescSystemProtected := roleFields[6].Descriptor()
+	// role.DefaultSystemProtected holds the default value on creation for the system_protected field.
+	role.DefaultSystemProtected = roleDescSystemProtected.Default.(bool)
+	// roleDescCreatedAt is the schema descriptor for created_at field.
+	roleDescCreatedAt := roleFields[7].Descriptor()
+	// role.DefaultCreatedAt holds the default value on creation for the created_at field.
+	role.DefaultCreatedAt = roleDescCreatedAt.Default.(func() time.Time)
+	// roleDescUpdatedAt is the schema descriptor for updated_at field.
+	roleDescUpdatedAt := roleFields[8].Descriptor()
+	// role.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	role.DefaultUpdatedAt = roleDescUpdatedAt.Default.(func() time.Time)
+	// roleDescVersion is the schema descriptor for version field.
+	roleDescVersion := roleFields[9].Descriptor()
+	// role.DefaultVersion holds the default value on creation for the version field.
+	role.DefaultVersion = roleDescVersion.Default.(int64)
+	rolepermissionFields := schema.RolePermission{}.Fields()
+	_ = rolepermissionFields
+	// rolepermissionDescCreatedAt is the schema descriptor for created_at field.
+	rolepermissionDescCreatedAt := rolepermissionFields[2].Descriptor()
+	// rolepermission.DefaultCreatedAt holds the default value on creation for the created_at field.
+	rolepermission.DefaultCreatedAt = rolepermissionDescCreatedAt.Default.(func() time.Time)
 	routingconfigFields := schema.RoutingConfig{}.Fields()
 	_ = routingconfigFields
+	// routingconfigDescTenantID is the schema descriptor for tenant_id field.
+	routingconfigDescTenantID := routingconfigFields[0].Descriptor()
+	// routingconfig.DefaultTenantID holds the default value on creation for the tenant_id field.
+	routingconfig.DefaultTenantID = routingconfigDescTenantID.Default.(string)
 	// routingconfigDescPayload is the schema descriptor for payload field.
-	routingconfigDescPayload := routingconfigFields[1].Descriptor()
+	routingconfigDescPayload := routingconfigFields[2].Descriptor()
 	// routingconfig.DefaultPayload holds the default value on creation for the payload field.
 	routingconfig.DefaultPayload = routingconfigDescPayload.Default.(string)
 	// routingconfigDescUpdatedAt is the schema descriptor for updated_at field.
-	routingconfigDescUpdatedAt := routingconfigFields[2].Descriptor()
+	routingconfigDescUpdatedAt := routingconfigFields[3].Descriptor()
 	// routingconfig.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	routingconfig.DefaultUpdatedAt = routingconfigDescUpdatedAt.Default.(string)
 	// routingconfigDescID is the schema descriptor for id field.
-	routingconfigDescID := routingconfigFields[0].Descriptor()
+	routingconfigDescID := routingconfigFields[1].Descriptor()
 	// routingconfig.DefaultID holds the default value on creation for the id field.
 	routingconfig.DefaultID = routingconfigDescID.Default.(int)
 	runtimesettingFields := schema.RuntimeSetting{}.Fields()
 	_ = runtimesettingFields
+	// runtimesettingDescTenantID is the schema descriptor for tenant_id field.
+	runtimesettingDescTenantID := runtimesettingFields[0].Descriptor()
+	// runtimesetting.DefaultTenantID holds the default value on creation for the tenant_id field.
+	runtimesetting.DefaultTenantID = runtimesettingDescTenantID.Default.(string)
 	// runtimesettingDescPayload is the schema descriptor for payload field.
-	runtimesettingDescPayload := runtimesettingFields[1].Descriptor()
+	runtimesettingDescPayload := runtimesettingFields[2].Descriptor()
 	// runtimesetting.DefaultPayload holds the default value on creation for the payload field.
 	runtimesetting.DefaultPayload = runtimesettingDescPayload.Default.(string)
 	// runtimesettingDescUpdatedAt is the schema descriptor for updated_at field.
-	runtimesettingDescUpdatedAt := runtimesettingFields[2].Descriptor()
+	runtimesettingDescUpdatedAt := runtimesettingFields[3].Descriptor()
 	// runtimesetting.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	runtimesetting.DefaultUpdatedAt = runtimesettingDescUpdatedAt.Default.(string)
+	tenantFields := schema.Tenant{}.Fields()
+	_ = tenantFields
+	// tenantDescStatus is the schema descriptor for status field.
+	tenantDescStatus := tenantFields[4].Descriptor()
+	// tenant.DefaultStatus holds the default value on creation for the status field.
+	tenant.DefaultStatus = tenantDescStatus.Default.(string)
+	// tenantDescDescription is the schema descriptor for description field.
+	tenantDescDescription := tenantFields[6].Descriptor()
+	// tenant.DefaultDescription holds the default value on creation for the description field.
+	tenant.DefaultDescription = tenantDescDescription.Default.(string)
+	// tenantDescCreatedAt is the schema descriptor for created_at field.
+	tenantDescCreatedAt := tenantFields[8].Descriptor()
+	// tenant.DefaultCreatedAt holds the default value on creation for the created_at field.
+	tenant.DefaultCreatedAt = tenantDescCreatedAt.Default.(func() time.Time)
+	// tenantDescUpdatedAt is the schema descriptor for updated_at field.
+	tenantDescUpdatedAt := tenantFields[9].Descriptor()
+	// tenant.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	tenant.DefaultUpdatedAt = tenantDescUpdatedAt.Default.(func() time.Time)
+	// tenantDescVersion is the schema descriptor for version field.
+	tenantDescVersion := tenantFields[10].Descriptor()
+	// tenant.DefaultVersion holds the default value on creation for the version field.
+	tenant.DefaultVersion = tenantDescVersion.Default.(int64)
+	userFields := schema.User{}.Fields()
+	_ = userFields
+	// userDescStatus is the schema descriptor for status field.
+	userDescStatus := userFields[6].Descriptor()
+	// user.DefaultStatus holds the default value on creation for the status field.
+	user.DefaultStatus = userDescStatus.Default.(string)
+	// userDescMustChangePassword is the schema descriptor for must_change_password field.
+	userDescMustChangePassword := userFields[7].Descriptor()
+	// user.DefaultMustChangePassword holds the default value on creation for the must_change_password field.
+	user.DefaultMustChangePassword = userDescMustChangePassword.Default.(bool)
+	// userDescPasswordChangedAt is the schema descriptor for password_changed_at field.
+	userDescPasswordChangedAt := userFields[8].Descriptor()
+	// user.DefaultPasswordChangedAt holds the default value on creation for the password_changed_at field.
+	user.DefaultPasswordChangedAt = userDescPasswordChangedAt.Default.(func() time.Time)
+	// userDescFailedLoginCount is the schema descriptor for failed_login_count field.
+	userDescFailedLoginCount := userFields[10].Descriptor()
+	// user.DefaultFailedLoginCount holds the default value on creation for the failed_login_count field.
+	user.DefaultFailedLoginCount = userDescFailedLoginCount.Default.(int)
+	// userDescCreatedAt is the schema descriptor for created_at field.
+	userDescCreatedAt := userFields[13].Descriptor()
+	// user.DefaultCreatedAt holds the default value on creation for the created_at field.
+	user.DefaultCreatedAt = userDescCreatedAt.Default.(func() time.Time)
+	// userDescUpdatedAt is the schema descriptor for updated_at field.
+	userDescUpdatedAt := userFields[14].Descriptor()
+	// user.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	user.DefaultUpdatedAt = userDescUpdatedAt.Default.(func() time.Time)
+	// userDescVersion is the schema descriptor for version field.
+	userDescVersion := userFields[15].Descriptor()
+	// user.DefaultVersion holds the default value on creation for the version field.
+	user.DefaultVersion = userDescVersion.Default.(int64)
+	userroleFields := schema.UserRole{}.Fields()
+	_ = userroleFields
+	// userroleDescCreatedAt is the schema descriptor for created_at field.
+	userroleDescCreatedAt := userroleFields[2].Descriptor()
+	// userrole.DefaultCreatedAt holds the default value on creation for the created_at field.
+	userrole.DefaultCreatedAt = userroleDescCreatedAt.Default.(func() time.Time)
+	usersessionFields := schema.UserSession{}.Fields()
+	_ = usersessionFields
+	// usersessionDescCreatedAt is the schema descriptor for created_at field.
+	usersessionDescCreatedAt := usersessionFields[4].Descriptor()
+	// usersession.DefaultCreatedAt holds the default value on creation for the created_at field.
+	usersession.DefaultCreatedAt = usersessionDescCreatedAt.Default.(func() time.Time)
+	// usersessionDescLastSeenAt is the schema descriptor for last_seen_at field.
+	usersessionDescLastSeenAt := usersessionFields[6].Descriptor()
+	// usersession.DefaultLastSeenAt holds the default value on creation for the last_seen_at field.
+	usersession.DefaultLastSeenAt = usersessionDescLastSeenAt.Default.(func() time.Time)
+	// usersessionDescRevokeReason is the schema descriptor for revoke_reason field.
+	usersessionDescRevokeReason := usersessionFields[8].Descriptor()
+	// usersession.DefaultRevokeReason holds the default value on creation for the revoke_reason field.
+	usersession.DefaultRevokeReason = usersessionDescRevokeReason.Default.(string)
+	// usersessionDescUserAgentHash is the schema descriptor for user_agent_hash field.
+	usersessionDescUserAgentHash := usersessionFields[9].Descriptor()
+	// usersession.DefaultUserAgentHash holds the default value on creation for the user_agent_hash field.
+	usersession.DefaultUserAgentHash = usersessionDescUserAgentHash.Default.(string)
 }

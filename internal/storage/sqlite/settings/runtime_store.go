@@ -14,18 +14,29 @@ import (
 
 const createRuntimeSettingsTableSQL = `
 CREATE TABLE IF NOT EXISTS runtime_settings (
-  setting_key TEXT PRIMARY KEY NOT NULL,
+  tenant_id   TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+  setting_key TEXT NOT NULL,
   payload     TEXT NOT NULL DEFAULT '{}',
-  updated_at  TEXT NOT NULL DEFAULT ''
+  updated_at  TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (tenant_id, setting_key)
 );
 `
 
 type RuntimeSettingsStore struct {
-	db *sql.DB
+	db       *sql.DB
+	tenantID string
 }
 
 func NewRuntimeSettingsStore(db *sql.DB) RuntimeSettingsStore {
-	return RuntimeSettingsStore{db: db}
+	return NewTenantRuntimeSettingsStore(db, "")
+}
+
+func NewTenantRuntimeSettingsStore(db *sql.DB, tenantID string) RuntimeSettingsStore {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = "00000000-0000-0000-0000-000000000001"
+	}
+	return RuntimeSettingsStore{db: db, tenantID: tenantID}
 }
 
 func InitRuntimeSettingsTable(db *sql.DB) {
@@ -35,6 +46,7 @@ func InitRuntimeSettingsTable(db *sql.DB) {
 	if _, err := db.Exec(createRuntimeSettingsTableSQL); err != nil {
 		log.Errorf("sqlite/settings: create runtime_settings table: %v", err)
 	}
+	migrateRuntimeSettingsTenantSchema(db)
 }
 
 func (s RuntimeSettingsStore) Payload(key string) (json.RawMessage, bool) {
@@ -42,7 +54,7 @@ func (s RuntimeSettingsStore) Payload(key string) (json.RawMessage, bool) {
 		return nil, false
 	}
 	var payload string
-	if err := s.db.QueryRow(`SELECT payload FROM runtime_settings WHERE setting_key = $1`, key).Scan(&payload); err != nil {
+	if err := s.db.QueryRow(`SELECT payload FROM runtime_settings WHERE tenant_id = $1 AND setting_key = $2`, s.tenantID, key).Scan(&payload); err != nil {
 		if err != sql.ErrNoRows {
 			log.Warnf("sqlite/settings: load runtime setting %s: %v", key, err)
 		}
@@ -73,9 +85,10 @@ func (s RuntimeSettingsStore) Upsert(key string, value any) error {
 		return err
 	}
 	_, err = s.db.Exec(
-		`INSERT INTO runtime_settings (setting_key, payload, updated_at)
-		 VALUES ($1, $2, $3)
-		 ON CONFLICT(setting_key) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`,
+		`INSERT INTO runtime_settings (tenant_id, setting_key, payload, updated_at)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT(tenant_id, setting_key) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`,
+		s.tenantID,
 		key,
 		string(payload),
 		time.Now().UTC().Format(time.RFC3339),
@@ -188,4 +201,53 @@ func yamlRootKeys(data []byte) map[string]bool {
 		}
 	}
 	return keys
+}
+
+func migrateRuntimeSettingsTenantSchema(db *sql.DB) {
+	rows, err := db.Query("PRAGMA table_info(runtime_settings)")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	hasTenant, tenantPrimary, keyPrimary := false, false, false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, typ string
+		var def sql.NullString
+		if rows.Scan(&cid, &name, &typ, &notNull, &def, &pk) != nil {
+			return
+		}
+		hasTenant = hasTenant || name == "tenant_id"
+		tenantPrimary = tenantPrimary || (name == "tenant_id" && pk > 0)
+		keyPrimary = keyPrimary || (name == "setting_key" && pk > 0)
+	}
+	_ = rows.Close()
+	if hasTenant && tenantPrimary && keyPrimary {
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if !hasTenant {
+		if _, err = tx.Exec("ALTER TABLE runtime_settings ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'"); err != nil {
+			return
+		}
+	}
+	if _, err = tx.Exec("ALTER TABLE runtime_settings RENAME TO runtime_settings_legacy"); err != nil {
+		return
+	}
+	if _, err = tx.Exec(createRuntimeSettingsTableSQL); err != nil {
+		return
+	}
+	if _, err = tx.Exec("INSERT INTO runtime_settings(tenant_id,setting_key,payload,updated_at) SELECT tenant_id,setting_key,payload,updated_at FROM runtime_settings_legacy"); err != nil {
+		return
+	}
+	if _, err = tx.Exec("DROP TABLE runtime_settings_legacy"); err != nil {
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		log.Warnf("sqlite/settings: migrate tenant schema: %v", err)
+	}
 }

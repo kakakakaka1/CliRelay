@@ -28,6 +28,20 @@ func (_u *RequestLogUpdate) Where(ps ...predicate.RequestLog) *RequestLogUpdate 
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *RequestLogUpdate) SetTenantID(v string) *RequestLogUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *RequestLogUpdate) SetNillableTenantID(v *string) *RequestLogUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetTimestamp sets the "timestamp" field.
 func (_u *RequestLogUpdate) SetTimestamp(v time.Time) *RequestLogUpdate {
 	_u.mutation.SetTimestamp(v)
@@ -461,6 +475,9 @@ func (_u *RequestLogUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(requestlog.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Timestamp(); ok {
 		_spec.SetField(requestlog.FieldTimestamp, field.TypeTime, value)
 	}
@@ -578,6 +595,20 @@ type RequestLogUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *RequestLogMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *RequestLogUpdateOne) SetTenantID(v string) *RequestLogUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *RequestLogUpdateOne) SetNillableTenantID(v *string) *RequestLogUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetTimestamp sets the "timestamp" field.
@@ -1042,6 +1073,9 @@ func (_u *RequestLogUpdateOne) sqlSave(ctx context.Context) (_node *RequestLog, 
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(requestlog.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Timestamp(); ok {
 		_spec.SetField(requestlog.FieldTimestamp, field.TypeTime, value)

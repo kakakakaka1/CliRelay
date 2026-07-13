@@ -5,28 +5,44 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	apikeysettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/apikey"
-	routingconfigsettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/routingconfig"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
-func currentRoutingConfig(cfg *config.Config) config.RoutingConfig {
-	if cfg == nil {
-		return config.RoutingConfig{IncludeDefaultGroup: true}
+func currentRoutingConfigForTenant(cfg *config.Config, tenantID string) config.RoutingConfig {
+	if stored := usage.GetRoutingConfigForTenant(tenantID); stored != nil {
+		return *stored
 	}
-	return cfg.Routing
+	if tenantID == identity.SystemTenantID && cfg != nil {
+		return cfg.Routing
+	}
+	return config.RoutingConfig{IncludeDefaultGroup: true}
 }
 
-func sqliteAPIKeyEntries() []config.APIKeyEntry {
-	return apikeysettings.NewService(nil).ListEntries()
+func currentRoutingConfig(cfg *config.Config) config.RoutingConfig {
+	return currentRoutingConfigForTenant(cfg, identity.SystemTenantID)
+}
+
+func sqliteAPIKeyEntries(tenantID string) []config.APIKeyEntry {
+	return apikeysettings.NewService(nil, apikeysettings.WithTenantID(tenantID)).ListEntries()
+}
+
+func effectiveTenantID(c *gin.Context) string {
+	if principal, ok := principalFromContext(c); ok && principal.EffectiveTenant.ID != "" {
+		return principal.EffectiveTenant.ID
+	}
+	return identity.SystemTenantID
 }
 
 func (h *Handler) GetRoutingConfig(c *gin.Context) {
+	tenantID := effectiveTenantID(c)
 	var auths []*coreauth.Auth
 	if h != nil && h.authManager != nil {
-		auths = h.authManager.List()
+		auths = h.authManager.ListForTenant(tenantID)
 	}
-	routing := currentRoutingConfig(h.cfg)
+	routing := currentRoutingConfigForTenant(h.cfg, tenantID)
 	if known, err := collectKnownChannels(h.cfg, auths, ""); err == nil {
 		routing = canonicalizeRoutingConfigChannels(routing, known)
 	}
@@ -34,6 +50,7 @@ func (h *Handler) GetRoutingConfig(c *gin.Context) {
 }
 
 func (h *Handler) PutRoutingConfig(c *gin.Context) {
+	tenantID := effectiveTenantID(c)
 	var body config.RoutingConfig
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
@@ -42,7 +59,7 @@ func (h *Handler) PutRoutingConfig(c *gin.Context) {
 
 	candidate := &config.Config{
 		SDKConfig: config.SDKConfig{
-			APIKeyEntries: sqliteAPIKeyEntries(),
+			APIKeyEntries: sqliteAPIKeyEntries(tenantID),
 		},
 		Routing: body,
 	}
@@ -50,7 +67,7 @@ func (h *Handler) PutRoutingConfig(c *gin.Context) {
 
 	var auths []*coreauth.Auth
 	if h != nil && h.authManager != nil {
-		auths = h.authManager.List()
+		auths = h.authManager.ListForTenant(tenantID)
 	}
 	if known, err := collectKnownChannels(h.cfg, auths, ""); err == nil {
 		candidate.Routing = canonicalizeRoutingConfigChannels(candidate.Routing, known)
@@ -60,7 +77,7 @@ func (h *Handler) PutRoutingConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := routingconfigsettings.Upsert(candidate.Routing); err != nil {
+	if err := usage.UpsertRoutingConfigForTenant(tenantID, candidate.Routing); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -70,16 +87,20 @@ func (h *Handler) PutRoutingConfig(c *gin.Context) {
 		h.cfg = &config.Config{}
 		h.cfg.Routing.IncludeDefaultGroup = true
 	}
-	h.cfg.Routing = candidate.Routing
+	tenantCfg := usage.BuildTenantRuntimeConfig(h.cfg, tenantID)
+	tenantCfg.Routing = candidate.Routing
+	if tenantID == identity.SystemTenantID {
+		h.cfg.Routing = candidate.Routing
+	}
 	cfgRef := h.cfg
 	h.mu.Unlock()
 
 	if h.authManager != nil {
-		h.authManager.SetConfig(cfgRef)
+		h.authManager.SetConfigForTenant(tenantID, &tenantCfg)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	if h != nil && h.onConfigMutated != nil {
+	if tenantID == identity.SystemTenantID && h != nil && h.onConfigMutated != nil {
 		h.onConfigMutated(cfgRef)
 	}
 }

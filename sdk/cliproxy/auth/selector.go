@@ -36,7 +36,7 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 		return nil, err
 	}
 	available = preferCodexWebsocketAuths(ctx, provider, available)
-	key := provider + ":" + canonicalModelKey(model)
+	key := tenantSelectionPrefix(opts.Metadata) + provider + ":" + canonicalModelKey(model)
 	s.mu.Lock()
 	if s.cursors == nil {
 		s.cursors = make(map[string]int)

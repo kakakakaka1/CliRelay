@@ -33,7 +33,7 @@ func (w *Watcher) start(ctx context.Context) error {
 	}
 	log.Debugf("watching config file: %s", w.configPath)
 
-	if errAddAuthDir := w.watcher.Add(w.authDir); errAddAuthDir != nil {
+	if errAddAuthDir := w.addAuthDirectoryWatches(); errAddAuthDir != nil {
 		log.Errorf("failed to watch auth directory %s: %v", w.authDir, errAddAuthDir)
 		return errAddAuthDir
 	}
@@ -65,6 +65,14 @@ func (w *Watcher) processEvents(ctx context.Context) {
 }
 
 func (w *Watcher) handleEvent(event fsnotify.Event) {
+	if event.Op&fsnotify.Create != 0 {
+		if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+			if errAdd := w.watcher.Add(event.Name); errAdd != nil {
+				log.WithError(errAdd).Warnf("failed to watch tenant auth directory %s", event.Name)
+			}
+			return
+		}
+	}
 	// Filter only relevant events: config file or auth-dir JSON files.
 	configOps := fsnotify.Write | fsnotify.Create | fsnotify.Rename
 	normalizedName := w.normalizeAuthPath(event.Name)
@@ -122,6 +130,18 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 		log.Infof("auth file changed (%s): %s, processing incrementally", event.Op.String(), filepath.Base(event.Name))
 		w.addOrUpdateClient(event.Name)
 	}
+}
+
+func (w *Watcher) addAuthDirectoryWatches() error {
+	return filepath.WalkDir(w.authDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return w.watcher.Add(path)
+		}
+		return nil
+	})
 }
 
 func (w *Watcher) authFileUnchanged(path string) (bool, error) {

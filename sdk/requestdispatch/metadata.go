@@ -24,11 +24,16 @@ func BuildScopedExecutionMetadata(ctx context.Context) map[string]any {
 	allowedChannelGroups := ""
 	routeGroup := ""
 	routeFallback := ""
+	tenantID := ""
 	if route := sdkrouting.PathRouteContextFromContext(ctx); route != nil {
 		routeGroup = strings.TrimSpace(route.Group)
 		routeFallback = strings.TrimSpace(route.Fallback)
 	}
 	if ginCtx := ginContextFromExecutionContext(ctx); ginCtx != nil {
+		if tenantValue, exists := ginCtx.Get("tenantID"); exists {
+			tenantID, _ = tenantValue.(string)
+			tenantID = strings.TrimSpace(tenantID)
+		}
 		if metadataVal, exists := ginCtx.Get("accessMetadata"); exists {
 			if metadata, okMeta := metadataVal.(map[string]string); okMeta {
 				allowedChannels = strings.TrimSpace(metadata["allowed-channels"])
@@ -53,6 +58,9 @@ func BuildScopedExecutionMetadata(ctx context.Context) map[string]any {
 		}
 	}
 	meta := map[string]any{}
+	if tenantID != "" {
+		meta[coreexecutor.TenantMetadataKey] = tenantID
+	}
 	if allowedChannels != "" {
 		meta["allowed-channels"] = allowedChannels
 	}

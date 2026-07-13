@@ -12,12 +12,16 @@ type ModelSource interface {
 }
 
 func ModelLookupAuthID(manager *coreauth.Manager, name string) string {
+	return ModelLookupAuthIDForTenant(manager, "", name)
+}
+
+func ModelLookupAuthIDForTenant(manager *coreauth.Manager, tenantID, name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return ""
 	}
 	if manager != nil {
-		for _, auth := range manager.List() {
+		for _, auth := range manager.ListForTenant(NormalizeTenantID(tenantID)) {
 			if auth == nil {
 				continue
 			}
@@ -30,10 +34,14 @@ func ModelLookupAuthID(manager *coreauth.Manager, name string) string {
 }
 
 func ListModelEntries(manager *coreauth.Manager, source ModelSource, name string) []map[string]any {
+	return ListModelEntriesForTenant(manager, source, "", name)
+}
+
+func ListModelEntriesForTenant(manager *coreauth.Manager, source ModelSource, tenantID, name string) []map[string]any {
 	if source == nil {
 		return nil
 	}
-	authID := ModelLookupAuthID(manager, name)
+	authID := ModelLookupAuthIDForTenant(manager, tenantID, name)
 	models := source.GetModelsForClient(authID)
 	result := make([]map[string]any, 0, len(models))
 	for _, model := range models {

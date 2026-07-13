@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
@@ -73,7 +72,7 @@ var (
 	openRouterModelFetcherMu sync.RWMutex
 	openRouterModelFetcher   OpenRouterModelFetcher = fetchOpenRouterModels
 
-	openRouterSyncRunning       atomic.Bool
+	openRouterSyncRunning       sync.Map
 	openRouterSyncSchedulerOnce sync.Once
 )
 
@@ -90,6 +89,11 @@ func SetOpenRouterModelFetcherForTest(fetcher OpenRouterModelFetcher) func() {
 }
 
 func SyncOpenRouterModelList(ctx context.Context, models []OpenRouterRemoteModel) (OpenRouterModelSyncResult, error) {
+	return SyncOpenRouterModelListForTenant(ctx, systemTenantID, models)
+}
+
+func SyncOpenRouterModelListForTenant(ctx context.Context, tenantID string, models []OpenRouterRemoteModel) (OpenRouterModelSyncResult, error) {
+	tenantID = normalizeTenantID(tenantID)
 	result := OpenRouterModelSyncResult{Seen: len(models)}
 	for _, model := range models {
 		if err := ctx.Err(); err != nil {
@@ -107,33 +111,33 @@ func SyncOpenRouterModelList(ctx context.Context, models []OpenRouterRemoteModel
 			result.Skipped++
 			continue
 		}
-		legacyModelIDs := openRouterLegacyLocalModelIDs(remoteModelID, owner, modelID)
-		if existing, exists := GetModelConfig(modelID); exists {
+		legacyModelIDs := openRouterLegacyLocalModelIDs(tenantID, remoteModelID, owner, modelID)
+		if existing, exists := GetModelConfigForTenant(tenantID, modelID); exists {
 			openRouterApplyModelSync(&existing, model, owner)
-			if err := UpsertModelConfig(existing); err != nil {
+			if err := UpsertModelConfigForTenant(tenantID, existing); err != nil {
 				return result, fmt.Errorf("sync openrouter model pricing %s: %w", modelID, err)
 			}
-			if err := openRouterDeleteLegacyOpenRouterRows(modelID, legacyModelIDs); err != nil {
+			if err := openRouterDeleteLegacyOpenRouterRows(tenantID, modelID, legacyModelIDs); err != nil {
 				return result, err
 			}
-			if err := openRouterSyncExistingAliasRows(modelID, model, owner, legacyModelIDs); err != nil {
+			if err := openRouterSyncExistingAliasRows(tenantID, modelID, model, owner, legacyModelIDs); err != nil {
 				return result, err
 			}
-			if err := openRouterSyncExistingWrapperRows(modelID, model); err != nil {
+			if err := openRouterSyncExistingWrapperRows(tenantID, modelID, model); err != nil {
 				return result, err
 			}
 			result.Updated++
 			continue
 		}
-		migrated, err := openRouterMigrateLegacyOpenRouterRow(modelID, owner, model, legacyModelIDs)
+		migrated, err := openRouterMigrateLegacyOpenRouterRow(tenantID, modelID, owner, model, legacyModelIDs)
 		if err != nil {
 			return result, err
 		}
 		if migrated {
-			if err := openRouterSyncExistingAliasRows(modelID, model, owner, legacyModelIDs); err != nil {
+			if err := openRouterSyncExistingAliasRows(tenantID, modelID, model, owner, legacyModelIDs); err != nil {
 				return result, err
 			}
-			if err := openRouterSyncExistingWrapperRows(modelID, model); err != nil {
+			if err := openRouterSyncExistingWrapperRows(tenantID, modelID, model); err != nil {
 				return result, err
 			}
 			result.Updated++
@@ -153,37 +157,43 @@ func SyncOpenRouterModelList(ctx context.Context, models []OpenRouterRemoteModel
 		}
 		row.InputModalities, row.OutputModalities = openRouterModelModalities(model)
 		openRouterApplyImageGenerationSemantics(&row, model)
-		if err := UpsertModelConfig(row); err != nil {
+		if err := UpsertModelConfigForTenant(tenantID, row); err != nil {
 			return result, fmt.Errorf("sync openrouter model %s: %w", modelID, err)
 		}
-		if err := openRouterSyncExistingAliasRows(modelID, model, owner, legacyModelIDs); err != nil {
+		if err := openRouterSyncExistingAliasRows(tenantID, modelID, model, owner, legacyModelIDs); err != nil {
 			return result, err
 		}
-		if err := openRouterSyncExistingWrapperRows(modelID, model); err != nil {
+		if err := openRouterSyncExistingWrapperRows(tenantID, modelID, model); err != nil {
 			return result, err
 		}
 		result.Added++
 	}
-	if err := openRouterMergeVariantGroups(models); err != nil {
+	if err := openRouterMergeVariantGroups(tenantID, models); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
 func GetOpenRouterModelSyncState() OpenRouterModelSyncState {
+	return GetOpenRouterModelSyncStateForTenant(systemTenantID)
+}
+
+func GetOpenRouterModelSyncStateForTenant(tenantID string) OpenRouterModelSyncState {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	state := OpenRouterModelSyncState{
 		IntervalMinutes: defaultOpenRouterModelSyncIntervalMinutes,
-		Running:         openRouterSyncRunning.Load(),
+		Running:         openRouterModelSyncRunning(tenantID),
 	}
 	if db == nil {
 		return state
 	}
-	ensureOpenRouterModelSyncStateRow()
+	ensureOpenRouterModelSyncStateRowForTenant(tenantID)
 	var enabled int
 	if err := db.QueryRow(
 		`SELECT enabled, interval_minutes, last_sync_at, last_success_at, last_error, last_seen, last_added, last_updated, last_skipped, updated_at
-		 FROM model_openrouter_sync_state WHERE id = 1`,
+		 FROM model_openrouter_sync_state WHERE tenant_id = ? AND id = 1`,
+		tenantID,
 	).Scan(
 		&enabled,
 		&state.IntervalMinutes,
@@ -200,39 +210,50 @@ func GetOpenRouterModelSyncState() OpenRouterModelSyncState {
 	}
 	state.Enabled = intToBool(enabled)
 	state.IntervalMinutes = normalizeOpenRouterModelSyncInterval(state.IntervalMinutes)
-	state.Running = openRouterSyncRunning.Load()
+	state.Running = openRouterModelSyncRunning(tenantID)
 	return state
 }
 
 func UpdateOpenRouterModelSyncSettings(enabled bool, intervalMinutes int) (OpenRouterModelSyncState, error) {
+	return UpdateOpenRouterModelSyncSettingsForTenant(systemTenantID, enabled, intervalMinutes)
+}
+
+func UpdateOpenRouterModelSyncSettingsForTenant(tenantID string, enabled bool, intervalMinutes int) (OpenRouterModelSyncState, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
 		return OpenRouterModelSyncState{}, fmt.Errorf("usage: database not initialised")
 	}
-	ensureOpenRouterModelSyncStateRow()
+	ensureOpenRouterModelSyncStateRowForTenant(tenantID)
 	_, err := db.Exec(
 		`UPDATE model_openrouter_sync_state
 		 SET enabled = ?, interval_minutes = ?, updated_at = ?
-		 WHERE id = 1`,
+		 WHERE tenant_id = ? AND id = 1`,
 		boolToInt(enabled),
 		normalizeOpenRouterModelSyncInterval(intervalMinutes),
 		nowRFC3339(),
+		tenantID,
 	)
 	if err != nil {
 		return OpenRouterModelSyncState{}, fmt.Errorf("usage: update openrouter sync settings: %w", err)
 	}
-	return GetOpenRouterModelSyncState(), nil
+	return GetOpenRouterModelSyncStateForTenant(tenantID), nil
 }
 
 func RunOpenRouterModelSync(ctx context.Context) (OpenRouterModelSyncResult, OpenRouterModelSyncState, error) {
+	return RunOpenRouterModelSyncForTenant(ctx, systemTenantID)
+}
+
+func RunOpenRouterModelSyncForTenant(ctx context.Context, tenantID string) (OpenRouterModelSyncResult, OpenRouterModelSyncState, error) {
+	tenantID = normalizeTenantID(tenantID)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if !openRouterSyncRunning.CompareAndSwap(false, true) {
-		state := GetOpenRouterModelSyncState()
+	if _, loaded := openRouterSyncRunning.LoadOrStore(tenantID, struct{}{}); loaded {
+		state := GetOpenRouterModelSyncStateForTenant(tenantID)
 		return OpenRouterModelSyncResult{}, state, fmt.Errorf("usage: openrouter model sync already running")
 	}
-	defer openRouterSyncRunning.Store(false)
+	defer openRouterSyncRunning.Delete(tenantID)
 
 	openRouterModelFetcherMu.RLock()
 	fetcher := openRouterModelFetcher
@@ -243,11 +264,11 @@ func RunOpenRouterModelSync(ctx context.Context) (OpenRouterModelSyncResult, Ope
 
 	models, err := fetcher(ctx)
 	if err != nil {
-		state := recordOpenRouterModelSyncResult(OpenRouterModelSyncResult{}, err)
+		state := recordOpenRouterModelSyncResultForTenant(tenantID, OpenRouterModelSyncResult{}, err)
 		return OpenRouterModelSyncResult{}, state, err
 	}
-	result, err := SyncOpenRouterModelList(ctx, models)
-	state := recordOpenRouterModelSyncResult(result, err)
+	result, err := SyncOpenRouterModelListForTenant(ctx, tenantID, models)
+	state := recordOpenRouterModelSyncResultForTenant(tenantID, result, err)
 	return result, state, err
 }
 
@@ -265,14 +286,17 @@ func runOpenRouterModelSyncScheduler(ctx context.Context) {
 	defer ticker.Stop()
 
 	runIfDue := func() {
-		state := GetOpenRouterModelSyncState()
-		if !state.Enabled || !isOpenRouterModelSyncDue(state, time.Now().UTC()) {
-			return
-		}
-		syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		defer cancel()
-		if _, _, err := RunOpenRouterModelSync(syncCtx); err != nil {
-			log.Warnf("usage: scheduled openrouter model sync failed: %v", err)
+		for _, tenantID := range enabledOpenRouterSyncTenantIDs() {
+			state := GetOpenRouterModelSyncStateForTenant(tenantID)
+			if !isOpenRouterModelSyncDue(state, time.Now().UTC()) {
+				continue
+			}
+			syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			_, _, err := RunOpenRouterModelSyncForTenant(syncCtx, tenantID)
+			cancel()
+			if err != nil {
+				log.Warnf("usage: scheduled openrouter model sync failed for tenant %s: %v", tenantID, err)
+			}
 		}
 	}
 
@@ -285,6 +309,33 @@ func runOpenRouterModelSyncScheduler(ctx context.Context) {
 			runIfDue()
 		}
 	}
+}
+
+func openRouterModelSyncRunning(tenantID string) bool {
+	_, running := openRouterSyncRunning.Load(normalizeTenantID(tenantID))
+	return running
+}
+
+func enabledOpenRouterSyncTenantIDs() []string {
+	db := getDB()
+	if db == nil {
+		return nil
+	}
+	ensureOpenRouterModelSyncStateRowForTenant(systemTenantID)
+	rows, err := db.Query(`SELECT tenant_id FROM model_openrouter_sync_state WHERE enabled = 1 ORDER BY tenant_id`)
+	if err != nil {
+		log.Warnf("usage: list enabled openrouter model sync tenants: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	var tenantIDs []string
+	for rows.Next() {
+		var tenantID string
+		if rows.Scan(&tenantID) == nil {
+			tenantIDs = append(tenantIDs, normalizeTenantID(tenantID))
+		}
+	}
+	return tenantIDs
 }
 
 func fetchOpenRouterModels(ctx context.Context) ([]OpenRouterRemoteModel, error) {
@@ -315,7 +366,7 @@ func fetchOpenRouterModels(ctx context.Context) ([]OpenRouterRemoteModel, error)
 	return payload.Data, nil
 }
 
-func ensureOpenRouterModelSyncStateRow() {
+func ensureOpenRouterModelSyncStateRowForTenant(tenantID string) {
 	db := getDB()
 	if db == nil {
 		return
@@ -323,8 +374,9 @@ func ensureOpenRouterModelSyncStateRow() {
 	ensureOpenRouterModelSyncStateSchema(db)
 	_, _ = db.Exec(
 		`INSERT OR IGNORE INTO model_openrouter_sync_state
-		 (id, enabled, interval_minutes, last_sync_at, last_success_at, last_error, last_seen, last_added, last_updated, last_skipped, updated_at)
-		 VALUES (1, 0, ?, '', '', '', 0, 0, 0, 0, ?)`,
+		 (tenant_id, id, enabled, interval_minutes, last_sync_at, last_success_at, last_error, last_seen, last_added, last_updated, last_skipped, updated_at)
+		 VALUES (?, 1, 0, ?, '', '', '', 0, 0, 0, 0, ?)`,
+		tenantID,
 		defaultOpenRouterModelSyncIntervalMinutes,
 		nowRFC3339(),
 	)
@@ -363,14 +415,15 @@ func sqliteColumnExists(db *sql.DB, tableName, columnName string) bool {
 	return false
 }
 
-func recordOpenRouterModelSyncResult(result OpenRouterModelSyncResult, syncErr error) OpenRouterModelSyncState {
+func recordOpenRouterModelSyncResultForTenant(tenantID string, result OpenRouterModelSyncResult, syncErr error) OpenRouterModelSyncState {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
-		return GetOpenRouterModelSyncState()
+		return GetOpenRouterModelSyncStateForTenant(tenantID)
 	}
-	ensureOpenRouterModelSyncStateRow()
+	ensureOpenRouterModelSyncStateRowForTenant(tenantID)
 	now := nowRFC3339()
-	state := GetOpenRouterModelSyncState()
+	state := GetOpenRouterModelSyncStateForTenant(tenantID)
 	lastSuccessAt := state.LastSuccessAt
 	lastError := ""
 	if syncErr != nil {
@@ -381,7 +434,7 @@ func recordOpenRouterModelSyncResult(result OpenRouterModelSyncResult, syncErr e
 	_, _ = db.Exec(
 		`UPDATE model_openrouter_sync_state
 		 SET last_sync_at = ?, last_success_at = ?, last_error = ?, last_seen = ?, last_added = ?, last_updated = ?, last_skipped = ?, updated_at = ?
-		 WHERE id = 1`,
+		 WHERE tenant_id = ? AND id = 1`,
 		now,
 		lastSuccessAt,
 		lastError,
@@ -390,8 +443,9 @@ func recordOpenRouterModelSyncResult(result OpenRouterModelSyncResult, syncErr e
 		result.Updated,
 		result.Skipped,
 		now,
+		tenantID,
 	)
-	return GetOpenRouterModelSyncState()
+	return GetOpenRouterModelSyncStateForTenant(tenantID)
 }
 
 func normalizeOpenRouterModelSyncInterval(minutes int) int {
@@ -520,21 +574,21 @@ func openRouterShouldSyncDescription(row ModelConfigRow) bool {
 	}
 }
 
-func openRouterMigrateLegacyOpenRouterRow(modelID, owner string, model OpenRouterRemoteModel, legacyModelIDs []string) (bool, error) {
+func openRouterMigrateLegacyOpenRouterRow(tenantID, modelID, owner string, model OpenRouterRemoteModel, legacyModelIDs []string) (bool, error) {
 	for _, legacyModelID := range legacyModelIDs {
 		if openRouterIsDateSuffixAlias(legacyModelID, modelID) {
 			continue
 		}
-		existing, exists := GetModelConfig(legacyModelID)
+		existing, exists := GetModelConfigForTenant(tenantID, legacyModelID)
 		if !exists || existing.Source != openRouterModelSource {
 			continue
 		}
 		existing.ModelID = modelID
 		openRouterApplyModelSync(&existing, model, owner)
-		if err := UpsertModelConfig(existing); err != nil {
+		if err := UpsertModelConfigForTenant(tenantID, existing); err != nil {
 			return false, fmt.Errorf("migrate openrouter model %s to %s: %w", legacyModelID, modelID, err)
 		}
-		if err := openRouterDeleteLegacyOpenRouterRows(modelID, legacyModelIDs); err != nil {
+		if err := openRouterDeleteLegacyOpenRouterRows(tenantID, modelID, legacyModelIDs); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -542,25 +596,25 @@ func openRouterMigrateLegacyOpenRouterRow(modelID, owner string, model OpenRoute
 	return false, nil
 }
 
-func openRouterDeleteLegacyOpenRouterRows(baseModelID string, modelIDs []string) error {
+func openRouterDeleteLegacyOpenRouterRows(tenantID, baseModelID string, modelIDs []string) error {
 	for _, modelID := range modelIDs {
 		if openRouterIsDateSuffixAlias(modelID, baseModelID) {
 			continue
 		}
-		existing, exists := GetModelConfig(modelID)
+		existing, exists := GetModelConfigForTenant(tenantID, modelID)
 		if !exists || existing.Source != openRouterModelSource {
 			continue
 		}
-		if err := DeleteModelConfig(modelID); err != nil {
+		if err := DeleteModelConfigForTenant(tenantID, modelID); err != nil {
 			return fmt.Errorf("delete old openrouter model %s: %w", modelID, err)
 		}
 	}
 	return nil
 }
 
-func openRouterSyncExistingAliasRows(baseModelID string, model OpenRouterRemoteModel, owner string, modelIDs []string) error {
+func openRouterSyncExistingAliasRows(tenantID, baseModelID string, model OpenRouterRemoteModel, owner string, modelIDs []string) error {
 	for _, modelID := range modelIDs {
-		existing, exists := GetModelConfig(modelID)
+		existing, exists := GetModelConfigForTenant(tenantID, modelID)
 		if !exists {
 			continue
 		}
@@ -568,16 +622,16 @@ func openRouterSyncExistingAliasRows(baseModelID string, model OpenRouterRemoteM
 			continue
 		}
 		openRouterApplyModelSync(&existing, model, owner)
-		if err := UpsertModelConfig(existing); err != nil {
+		if err := UpsertModelConfigForTenant(tenantID, existing); err != nil {
 			return fmt.Errorf("sync openrouter model alias %s: %w", modelID, err)
 		}
 	}
 	return nil
 }
 
-func openRouterSyncExistingWrapperRows(baseModelID string, model OpenRouterRemoteModel) error {
+func openRouterSyncExistingWrapperRows(tenantID, baseModelID string, model OpenRouterRemoteModel) error {
 	for _, wrapperID := range openRouterWrapperModelIDs(baseModelID) {
-		existing, exists := GetModelConfig(wrapperID)
+		existing, exists := GetModelConfigForTenant(tenantID, wrapperID)
 		if !exists {
 			continue
 		}
@@ -586,7 +640,7 @@ func openRouterSyncExistingWrapperRows(baseModelID string, model OpenRouterRemot
 			existing.Description = description
 		}
 		openRouterApplyModelSyncValues(&existing, model)
-		if err := UpsertModelConfig(existing); err != nil {
+		if err := UpsertModelConfigForTenant(tenantID, existing); err != nil {
 			return fmt.Errorf("sync openrouter model wrapper %s: %w", wrapperID, err)
 		}
 	}
@@ -637,7 +691,7 @@ func openRouterStaticBaseModelRow(modelID string) (ModelConfigRow, bool) {
 //   - When an exact base match AND dated variants exist in the same sync batch,
 //     the base model ends up with the highest prices from any member of the group,
 //     rather than being overwritten by the last-processed variant.
-func openRouterMergeVariantGroups(models []OpenRouterRemoteModel) error {
+func openRouterMergeVariantGroups(tenantID string, models []OpenRouterRemoteModel) error {
 	type groupEntry struct {
 		providerlessID string
 		model          OpenRouterRemoteModel
@@ -658,7 +712,7 @@ func openRouterMergeVariantGroups(models []OpenRouterRemoteModel) error {
 	}
 
 	for baseID, entries := range groups {
-		baseModel, exists := GetModelConfig(baseID)
+		baseModel, exists := GetModelConfigForTenant(tenantID, baseID)
 		if !exists {
 			var ok bool
 			baseModel, ok = openRouterStaticBaseModelRow(baseID)
@@ -728,7 +782,7 @@ func openRouterMergeVariantGroups(models []OpenRouterRemoteModel) error {
 		}
 
 		if updated {
-			if err := UpsertModelConfig(baseModel); err != nil {
+			if err := UpsertModelConfigForTenant(tenantID, baseModel); err != nil {
 				return fmt.Errorf("merge variant group for %s: %w", baseID, err)
 			}
 		}

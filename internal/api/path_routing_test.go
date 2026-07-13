@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
@@ -41,7 +42,7 @@ func TestResolvePathRouteContextUsesCcSwitchEndpointPath(t *testing.T) {
 		},
 	})
 
-	route, ok := resolvePathRouteContext(&config.Config{}, authManager, "/kimicode/cs_opus")
+	route, ok := resolvePathRouteContext(&config.Config{}, authManager, identity.SystemTenantID, "/kimicode/cs_opus")
 	if !ok || route == nil {
 		t.Fatal("resolvePathRouteContext() did not resolve CC Switch route")
 	}
@@ -63,7 +64,7 @@ func TestResolvePathRouteContextUsesCcSwitchEndpointPath(t *testing.T) {
 		t.Fatalf("route.CcSwitch.ModelMappings = %#v", route.CcSwitch.ModelMappings)
 	}
 
-	legacyRoute, ok := resolvePathRouteContext(&config.Config{}, authManager, "/kimicode")
+	legacyRoute, ok := resolvePathRouteContext(&config.Config{}, authManager, identity.SystemTenantID, "/kimicode")
 	if !ok || legacyRoute == nil {
 		t.Fatal("resolvePathRouteContext() did not resolve legacy channel group route")
 	}

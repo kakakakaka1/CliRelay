@@ -9,6 +9,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/bodyutil"
 	internalserviceapp "github.com/router-for-me/CLIProxyAPI/v6/internal/app/service"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/managementasset"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
@@ -158,6 +159,11 @@ func (s *Server) applyRuntimeLogLevel(oldCfg, cfg *config.Config) {
 
 func (s *Server) updateManagementRouteAvailability(oldCfg, cfg *config.Config) {
 	if s == nil || cfg == nil {
+		return
+	}
+	if identity.Default() != nil {
+		s.registerManagementRoutes()
+		s.managementRoutesEnabled.Store(true)
 		return
 	}
 	if s.envManagementSecret {

@@ -8,8 +8,13 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	serviceapp "github.com/router-for-me/CLIProxyAPI/v6/internal/app/service"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	providersettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/providers"
+	settingsstore "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/store"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
 type ProviderKeysHandler struct {
@@ -23,16 +28,97 @@ func (h *Handler) ProviderKeys() *ProviderKeysHandler {
 	return &ProviderKeysHandler{Handler: h}
 }
 
-func providerSettingsService(h *ProviderKeysHandler) *providersettings.Service {
+const providerTenantConfigKey = "management.provider_tenant_config"
+
+func providerSettingsService(h *ProviderKeysHandler, c *gin.Context) *providersettings.Service {
 	if h == nil {
 		return providersettings.NewService(nil, nil)
 	}
-	return providersettings.NewService(h.cfg, h.validateChannelNames)
+	cfg := h.providerConfigForTenant(c)
+	tenantID := effectiveTenantID(c)
+	return providersettings.NewService(cfg, func() error {
+		var auths []*coreauth.Auth
+		if h.authManager != nil {
+			auths = h.authManager.ListForTenant(tenantID)
+		}
+		_, err := collectKnownChannels(cfg, auths, "")
+		return err
+	})
+}
+
+func (h *Handler) providerConfigForTenant(c *gin.Context) *config.Config {
+	if c != nil {
+		if existing, ok := c.Get(providerTenantConfigKey); ok {
+			if cfg, valid := existing.(*config.Config); valid {
+				return cfg
+			}
+		}
+	}
+	tenantID := effectiveTenantID(c)
+	if tenantID == identity.SystemTenantID {
+		return h.cfg
+	}
+	cfg := usage.BuildTenantRuntimeConfig(h.cfg, tenantID)
+	if c != nil {
+		c.Set(providerTenantConfigKey, &cfg)
+	}
+	return &cfg
+}
+
+func (h *ProviderKeysHandler) persistProviderSettings(c *gin.Context) bool {
+	tenantID := effectiveTenantID(c)
+	if tenantID == identity.SystemTenantID {
+		return h.persist(c)
+	}
+	cfg := h.providerConfigForTenant(c)
+	key, value := providerRuntimeSetting(c.Request.URL.Path, cfg)
+	if key == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "unsupported provider setting"})
+		return false
+	}
+	if err := usage.UpsertRuntimeSettingForTenant(tenantID, key, value); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to save provider setting: %v", err)})
+		return false
+	}
+	if h.authManager != nil {
+		serviceapp.SyncConfigDerivedAuthsForTenant(h.cfg, h.authManager, tenantID)
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	return true
+}
+
+func providerRuntimeSetting(path string, cfg *config.Config) (string, any) {
+	if cfg == nil {
+		return "", nil
+	}
+	relative := strings.TrimPrefix(path, "/v0/management")
+	switch {
+	case strings.HasPrefix(relative, "/gemini-api-key"):
+		return settingsstore.RuntimeSettingGeminiKeys, cfg.GeminiKey
+	case strings.HasPrefix(relative, "/claude-api-key"):
+		return settingsstore.RuntimeSettingClaudeKeys, cfg.ClaudeKey
+	case strings.HasPrefix(relative, "/bedrock-api-key"):
+		return settingsstore.RuntimeSettingBedrockKeys, cfg.BedrockKey
+	case strings.HasPrefix(relative, "/opencode-go-api-key"):
+		return settingsstore.RuntimeSettingOpenCodeGoKeys, cfg.OpenCodeGoKey
+	case strings.HasPrefix(relative, "/cline-api-key"):
+		return settingsstore.RuntimeSettingClineKeys, cfg.ClineKey
+	case strings.HasPrefix(relative, "/ollama-cloud-api-key"):
+		return settingsstore.RuntimeSettingOllamaCloudKeys, cfg.OllamaCloudKey
+	case strings.HasPrefix(relative, "/codex-api-key"):
+		return settingsstore.RuntimeSettingCodexKeys, cfg.CodexKey
+	case strings.HasPrefix(relative, "/openai-compatibility"):
+		return settingsstore.RuntimeSettingOpenAICompatibility, cfg.OpenAICompatibility
+	case strings.HasPrefix(relative, "/vertex-api-key"):
+		return settingsstore.RuntimeSettingVertexCompatKeys, cfg.VertexCompatAPIKey
+	default:
+		return "", nil
+	}
 }
 
 // gemini-api-key: []GeminiKey
 func (h *ProviderKeysHandler) GetGeminiKeys(c *gin.Context) {
-	c.JSON(200, gin.H{"gemini-api-key": providerSettingsService(h).GeminiKeys()})
+	c.JSON(200, gin.H{"gemini-api-key": providerSettingsService(h, c).GeminiKeys()})
 }
 
 func (h *ProviderKeysHandler) PutGeminiKeys(c *gin.Context) {
@@ -52,11 +138,11 @@ func (h *ProviderKeysHandler) PutGeminiKeys(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	if err := providerSettingsService(h).ReplaceGeminiKeys(arr); err != nil {
+	if err := providerSettingsService(h, c).ReplaceGeminiKeys(arr); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) PatchGeminiKey(c *gin.Context) {
@@ -69,7 +155,7 @@ func (h *ProviderKeysHandler) PatchGeminiKey(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := providerSettingsService(h).PatchGeminiKey(body.Index, body.Match, *body.Value); err != nil {
+	if err := providerSettingsService(h, c).PatchGeminiKey(body.Index, body.Match, *body.Value); err != nil {
 		if errors.Is(err, providersettings.ErrItemNotFound) {
 			c.JSON(404, gin.H{"error": "item not found"})
 			return
@@ -77,13 +163,13 @@ func (h *ProviderKeysHandler) PatchGeminiKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) DeleteGeminiKey(c *gin.Context) {
 	if val := strings.TrimSpace(c.Query("api-key")); val != "" {
-		if providerSettingsService(h).DeleteGeminiKeyByAPIKey(val) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteGeminiKeyByAPIKey(val) {
+			h.persistProviderSettings(c)
 		} else {
 			c.JSON(404, gin.H{"error": "item not found"})
 		}
@@ -91,8 +177,8 @@ func (h *ProviderKeysHandler) DeleteGeminiKey(c *gin.Context) {
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
-		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h).DeleteGeminiKeyByIndex(idx) {
-			h.persist(c)
+		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h, c).DeleteGeminiKeyByIndex(idx) {
+			h.persistProviderSettings(c)
 			return
 		}
 	}
@@ -101,7 +187,7 @@ func (h *ProviderKeysHandler) DeleteGeminiKey(c *gin.Context) {
 
 // claude-api-key: []ClaudeKey
 func (h *ProviderKeysHandler) GetClaudeKeys(c *gin.Context) {
-	c.JSON(200, gin.H{"claude-api-key": providerSettingsService(h).ClaudeKeys()})
+	c.JSON(200, gin.H{"claude-api-key": providerSettingsService(h, c).ClaudeKeys()})
 }
 
 func (h *ProviderKeysHandler) PutClaudeKeys(c *gin.Context) {
@@ -121,11 +207,11 @@ func (h *ProviderKeysHandler) PutClaudeKeys(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	if err := providerSettingsService(h).ReplaceClaudeKeys(arr); err != nil {
+	if err := providerSettingsService(h, c).ReplaceClaudeKeys(arr); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) PatchClaudeKey(c *gin.Context) {
@@ -138,7 +224,7 @@ func (h *ProviderKeysHandler) PatchClaudeKey(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := providerSettingsService(h).PatchClaudeKey(body.Index, body.Match, *body.Value); err != nil {
+	if err := providerSettingsService(h, c).PatchClaudeKey(body.Index, body.Match, *body.Value); err != nil {
 		if errors.Is(err, providersettings.ErrItemNotFound) {
 			c.JSON(404, gin.H{"error": "item not found"})
 			return
@@ -146,20 +232,20 @@ func (h *ProviderKeysHandler) PatchClaudeKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) DeleteClaudeKey(c *gin.Context) {
 	if val := c.Query("api-key"); val != "" {
-		providerSettingsService(h).DeleteClaudeKeyByAPIKey(val)
-		h.persist(c)
+		providerSettingsService(h, c).DeleteClaudeKeyByAPIKey(val)
+		h.persistProviderSettings(c)
 		return
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
 		_, err := fmt.Sscanf(idxStr, "%d", &idx)
-		if err == nil && providerSettingsService(h).DeleteClaudeKeyByIndex(idx) {
-			h.persist(c)
+		if err == nil && providerSettingsService(h, c).DeleteClaudeKeyByIndex(idx) {
+			h.persistProviderSettings(c)
 			return
 		}
 	}
@@ -168,7 +254,7 @@ func (h *ProviderKeysHandler) DeleteClaudeKey(c *gin.Context) {
 
 // bedrock-api-key: []BedrockKey
 func (h *ProviderKeysHandler) GetBedrockKeys(c *gin.Context) {
-	c.JSON(200, gin.H{"bedrock-api-key": providerSettingsService(h).BedrockKeys()})
+	c.JSON(200, gin.H{"bedrock-api-key": providerSettingsService(h, c).BedrockKeys()})
 }
 
 func (h *ProviderKeysHandler) PutBedrockKeys(c *gin.Context) {
@@ -188,11 +274,11 @@ func (h *ProviderKeysHandler) PutBedrockKeys(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	if err := providerSettingsService(h).ReplaceBedrockKeys(arr); err != nil {
+	if err := providerSettingsService(h, c).ReplaceBedrockKeys(arr); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) PatchBedrockKey(c *gin.Context) {
@@ -205,7 +291,7 @@ func (h *ProviderKeysHandler) PatchBedrockKey(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := providerSettingsService(h).PatchBedrockKey(body.Index, body.Match, *body.Value); err != nil {
+	if err := providerSettingsService(h, c).PatchBedrockKey(body.Index, body.Match, *body.Value); err != nil {
 		if errors.Is(err, providersettings.ErrItemNotFound) {
 			c.JSON(404, gin.H{"error": "item not found"})
 			return
@@ -213,29 +299,29 @@ func (h *ProviderKeysHandler) PatchBedrockKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) DeleteBedrockKey(c *gin.Context) {
 	if val := strings.TrimSpace(c.Query("api-key")); val != "" {
-		if providerSettingsService(h).DeleteBedrockKeyByAPIKey(val) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteBedrockKeyByAPIKey(val) {
+			h.persistProviderSettings(c)
 			return
 		}
 		c.JSON(404, gin.H{"error": "item not found"})
 		return
 	}
 	if val := strings.TrimSpace(c.Query("access-key-id")); val != "" {
-		if providerSettingsService(h).DeleteBedrockKeyByAccessKeyID(val) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteBedrockKeyByAccessKeyID(val) {
+			h.persistProviderSettings(c)
 			return
 		}
 		c.JSON(404, gin.H{"error": "item not found"})
 		return
 	}
 	if val := strings.TrimSpace(c.Query("name")); val != "" {
-		if providerSettingsService(h).DeleteBedrockKeyByName(val) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteBedrockKeyByName(val) {
+			h.persistProviderSettings(c)
 			return
 		}
 		c.JSON(404, gin.H{"error": "item not found"})
@@ -243,8 +329,8 @@ func (h *ProviderKeysHandler) DeleteBedrockKey(c *gin.Context) {
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
-		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h).DeleteBedrockKeyByIndex(idx) {
-			h.persist(c)
+		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h, c).DeleteBedrockKeyByIndex(idx) {
+			h.persistProviderSettings(c)
 			return
 		}
 	}
@@ -253,7 +339,7 @@ func (h *ProviderKeysHandler) DeleteBedrockKey(c *gin.Context) {
 
 // opencode-go-api-key: []OpenCodeGoKey
 func (h *ProviderKeysHandler) GetOpenCodeGoKeys(c *gin.Context) {
-	c.JSON(200, gin.H{"opencode-go-api-key": providerSettingsService(h).OpenCodeGoKeys()})
+	c.JSON(200, gin.H{"opencode-go-api-key": providerSettingsService(h, c).OpenCodeGoKeys()})
 }
 
 func (h *ProviderKeysHandler) PutOpenCodeGoKeys(c *gin.Context) {
@@ -273,11 +359,11 @@ func (h *ProviderKeysHandler) PutOpenCodeGoKeys(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	if err := providerSettingsService(h).ReplaceOpenCodeGoKeys(arr); err != nil {
+	if err := providerSettingsService(h, c).ReplaceOpenCodeGoKeys(arr); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) PatchOpenCodeGoKey(c *gin.Context) {
@@ -291,7 +377,7 @@ func (h *ProviderKeysHandler) PatchOpenCodeGoKey(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := providerSettingsService(h).PatchOpenCodeGoKey(body.Index, body.APIKey, body.Name, *body.Value); err != nil {
+	if err := providerSettingsService(h, c).PatchOpenCodeGoKey(body.Index, body.APIKey, body.Name, *body.Value); err != nil {
 		if errors.Is(err, providersettings.ErrItemNotFound) {
 			c.JSON(404, gin.H{"error": "item not found"})
 			return
@@ -299,21 +385,21 @@ func (h *ProviderKeysHandler) PatchOpenCodeGoKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) DeleteOpenCodeGoKey(c *gin.Context) {
 	if apiKey := strings.TrimSpace(c.Query("api-key")); apiKey != "" {
-		if providerSettingsService(h).DeleteOpenCodeGoKeyByAPIKey(apiKey) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteOpenCodeGoKeyByAPIKey(apiKey) {
+			h.persistProviderSettings(c)
 			return
 		}
 		c.JSON(404, gin.H{"error": "item not found"})
 		return
 	}
 	if name := strings.TrimSpace(c.Query("name")); name != "" {
-		if providerSettingsService(h).DeleteOpenCodeGoKeyByName(name) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteOpenCodeGoKeyByName(name) {
+			h.persistProviderSettings(c)
 			return
 		}
 		c.JSON(404, gin.H{"error": "item not found"})
@@ -321,8 +407,8 @@ func (h *ProviderKeysHandler) DeleteOpenCodeGoKey(c *gin.Context) {
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
-		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h).DeleteOpenCodeGoKeyByIndex(idx) {
-			h.persist(c)
+		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h, c).DeleteOpenCodeGoKeyByIndex(idx) {
+			h.persistProviderSettings(c)
 			return
 		}
 	}
@@ -331,7 +417,7 @@ func (h *ProviderKeysHandler) DeleteOpenCodeGoKey(c *gin.Context) {
 
 // cline-api-key: []ClineKey
 func (h *ProviderKeysHandler) GetClineKeys(c *gin.Context) {
-	c.JSON(200, gin.H{"cline-api-key": providerSettingsService(h).ClineKeys()})
+	c.JSON(200, gin.H{"cline-api-key": providerSettingsService(h, c).ClineKeys()})
 }
 
 func (h *ProviderKeysHandler) PutClineKeys(c *gin.Context) {
@@ -351,11 +437,11 @@ func (h *ProviderKeysHandler) PutClineKeys(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	if err := providerSettingsService(h).ReplaceClineKeys(arr); err != nil {
+	if err := providerSettingsService(h, c).ReplaceClineKeys(arr); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) PatchClineKey(c *gin.Context) {
@@ -369,7 +455,7 @@ func (h *ProviderKeysHandler) PatchClineKey(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := providerSettingsService(h).PatchClineKey(body.Index, body.APIKey, body.Name, *body.Value); err != nil {
+	if err := providerSettingsService(h, c).PatchClineKey(body.Index, body.APIKey, body.Name, *body.Value); err != nil {
 		if errors.Is(err, providersettings.ErrItemNotFound) {
 			c.JSON(404, gin.H{"error": "item not found"})
 			return
@@ -377,21 +463,21 @@ func (h *ProviderKeysHandler) PatchClineKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) DeleteClineKey(c *gin.Context) {
 	if apiKey := strings.TrimSpace(c.Query("api-key")); apiKey != "" {
-		if providerSettingsService(h).DeleteClineKeyByAPIKey(apiKey) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteClineKeyByAPIKey(apiKey) {
+			h.persistProviderSettings(c)
 			return
 		}
 		c.JSON(404, gin.H{"error": "item not found"})
 		return
 	}
 	if name := strings.TrimSpace(c.Query("name")); name != "" {
-		if providerSettingsService(h).DeleteClineKeyByName(name) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteClineKeyByName(name) {
+			h.persistProviderSettings(c)
 			return
 		}
 		c.JSON(404, gin.H{"error": "item not found"})
@@ -399,8 +485,8 @@ func (h *ProviderKeysHandler) DeleteClineKey(c *gin.Context) {
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
-		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h).DeleteClineKeyByIndex(idx) {
-			h.persist(c)
+		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h, c).DeleteClineKeyByIndex(idx) {
+			h.persistProviderSettings(c)
 			return
 		}
 	}
@@ -409,7 +495,7 @@ func (h *ProviderKeysHandler) DeleteClineKey(c *gin.Context) {
 
 // ollama-cloud-api-key: []OllamaCloudKey
 func (h *ProviderKeysHandler) GetOllamaCloudKeys(c *gin.Context) {
-	c.JSON(200, gin.H{"ollama-cloud-api-key": providerSettingsService(h).OllamaCloudKeys()})
+	c.JSON(200, gin.H{"ollama-cloud-api-key": providerSettingsService(h, c).OllamaCloudKeys()})
 }
 
 func (h *ProviderKeysHandler) PutOllamaCloudKeys(c *gin.Context) {
@@ -429,11 +515,11 @@ func (h *ProviderKeysHandler) PutOllamaCloudKeys(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	if err := providerSettingsService(h).ReplaceOllamaCloudKeys(arr); err != nil {
+	if err := providerSettingsService(h, c).ReplaceOllamaCloudKeys(arr); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) PatchOllamaCloudKey(c *gin.Context) {
@@ -447,7 +533,7 @@ func (h *ProviderKeysHandler) PatchOllamaCloudKey(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := providerSettingsService(h).PatchOllamaCloudKey(body.Index, body.APIKey, body.Name, *body.Value); err != nil {
+	if err := providerSettingsService(h, c).PatchOllamaCloudKey(body.Index, body.APIKey, body.Name, *body.Value); err != nil {
 		if errors.Is(err, providersettings.ErrItemNotFound) {
 			c.JSON(404, gin.H{"error": "item not found"})
 			return
@@ -455,21 +541,21 @@ func (h *ProviderKeysHandler) PatchOllamaCloudKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) DeleteOllamaCloudKey(c *gin.Context) {
 	if apiKey := strings.TrimSpace(c.Query("api-key")); apiKey != "" {
-		if providerSettingsService(h).DeleteOllamaCloudKeyByAPIKey(apiKey) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteOllamaCloudKeyByAPIKey(apiKey) {
+			h.persistProviderSettings(c)
 			return
 		}
 		c.JSON(404, gin.H{"error": "item not found"})
 		return
 	}
 	if name := strings.TrimSpace(c.Query("name")); name != "" {
-		if providerSettingsService(h).DeleteOllamaCloudKeyByName(name) {
-			h.persist(c)
+		if providerSettingsService(h, c).DeleteOllamaCloudKeyByName(name) {
+			h.persistProviderSettings(c)
 			return
 		}
 		c.JSON(404, gin.H{"error": "item not found"})
@@ -477,8 +563,8 @@ func (h *ProviderKeysHandler) DeleteOllamaCloudKey(c *gin.Context) {
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
-		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h).DeleteOllamaCloudKeyByIndex(idx) {
-			h.persist(c)
+		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil && providerSettingsService(h, c).DeleteOllamaCloudKeyByIndex(idx) {
+			h.persistProviderSettings(c)
 			return
 		}
 	}
@@ -487,7 +573,7 @@ func (h *ProviderKeysHandler) DeleteOllamaCloudKey(c *gin.Context) {
 
 // openai-compatibility: []OpenAICompatibility
 func (h *ProviderKeysHandler) GetOpenAICompat(c *gin.Context) {
-	c.JSON(200, gin.H{"openai-compatibility": providerSettingsService(h).OpenAICompatibility()})
+	c.JSON(200, gin.H{"openai-compatibility": providerSettingsService(h, c).OpenAICompatibility()})
 }
 
 func (h *ProviderKeysHandler) PutOpenAICompat(c *gin.Context) {
@@ -507,11 +593,11 @@ func (h *ProviderKeysHandler) PutOpenAICompat(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	if err := providerSettingsService(h).ReplaceOpenAICompatibility(arr); err != nil {
+	if err := providerSettingsService(h, c).ReplaceOpenAICompatibility(arr); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) PatchOpenAICompat(c *gin.Context) {
@@ -524,7 +610,7 @@ func (h *ProviderKeysHandler) PatchOpenAICompat(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := providerSettingsService(h).PatchOpenAICompatibility(body.Index, body.Name, *body.Value); err != nil {
+	if err := providerSettingsService(h, c).PatchOpenAICompatibility(body.Index, body.Name, *body.Value); err != nil {
 		if errors.Is(err, providersettings.ErrItemNotFound) {
 			c.JSON(404, gin.H{"error": "item not found"})
 			return
@@ -532,20 +618,20 @@ func (h *ProviderKeysHandler) PatchOpenAICompat(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) DeleteOpenAICompat(c *gin.Context) {
 	if name := c.Query("name"); name != "" {
-		providerSettingsService(h).DeleteOpenAICompatibilityByName(name)
-		h.persist(c)
+		providerSettingsService(h, c).DeleteOpenAICompatibilityByName(name)
+		h.persistProviderSettings(c)
 		return
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
 		_, err := fmt.Sscanf(idxStr, "%d", &idx)
-		if err == nil && providerSettingsService(h).DeleteOpenAICompatibilityByIndex(idx) {
-			h.persist(c)
+		if err == nil && providerSettingsService(h, c).DeleteOpenAICompatibilityByIndex(idx) {
+			h.persistProviderSettings(c)
 			return
 		}
 	}
@@ -554,7 +640,7 @@ func (h *ProviderKeysHandler) DeleteOpenAICompat(c *gin.Context) {
 
 // vertex-api-key: []VertexCompatKey
 func (h *ProviderKeysHandler) GetVertexCompatKeys(c *gin.Context) {
-	c.JSON(200, gin.H{"vertex-api-key": providerSettingsService(h).VertexCompatKeys()})
+	c.JSON(200, gin.H{"vertex-api-key": providerSettingsService(h, c).VertexCompatKeys()})
 }
 
 func (h *ProviderKeysHandler) PutVertexCompatKeys(c *gin.Context) {
@@ -574,8 +660,8 @@ func (h *ProviderKeysHandler) PutVertexCompatKeys(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	providerSettingsService(h).ReplaceVertexCompatKeys(arr)
-	h.persist(c)
+	providerSettingsService(h, c).ReplaceVertexCompatKeys(arr)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) PatchVertexCompatKey(c *gin.Context) {
@@ -588,24 +674,24 @@ func (h *ProviderKeysHandler) PatchVertexCompatKey(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := providerSettingsService(h).PatchVertexCompatKey(body.Index, body.Match, *body.Value); err != nil {
+	if err := providerSettingsService(h, c).PatchVertexCompatKey(body.Index, body.Match, *body.Value); err != nil {
 		c.JSON(404, gin.H{"error": "item not found"})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) DeleteVertexCompatKey(c *gin.Context) {
 	if val := strings.TrimSpace(c.Query("api-key")); val != "" {
-		providerSettingsService(h).DeleteVertexCompatKeyByAPIKey(val)
-		h.persist(c)
+		providerSettingsService(h, c).DeleteVertexCompatKeyByAPIKey(val)
+		h.persistProviderSettings(c)
 		return
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
 		_, errScan := fmt.Sscanf(idxStr, "%d", &idx)
-		if errScan == nil && providerSettingsService(h).DeleteVertexCompatKeyByIndex(idx) {
-			h.persist(c)
+		if errScan == nil && providerSettingsService(h, c).DeleteVertexCompatKeyByIndex(idx) {
+			h.persistProviderSettings(c)
 			return
 		}
 	}
@@ -614,7 +700,7 @@ func (h *ProviderKeysHandler) DeleteVertexCompatKey(c *gin.Context) {
 
 // codex-api-key: []CodexKey
 func (h *ProviderKeysHandler) GetCodexKeys(c *gin.Context) {
-	c.JSON(200, gin.H{"codex-api-key": providerSettingsService(h).CodexKeys()})
+	c.JSON(200, gin.H{"codex-api-key": providerSettingsService(h, c).CodexKeys()})
 }
 
 func (h *ProviderKeysHandler) PutCodexKeys(c *gin.Context) {
@@ -634,11 +720,11 @@ func (h *ProviderKeysHandler) PutCodexKeys(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	if err := providerSettingsService(h).ReplaceCodexKeys(arr); err != nil {
+	if err := providerSettingsService(h, c).ReplaceCodexKeys(arr); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) PatchCodexKey(c *gin.Context) {
@@ -651,7 +737,7 @@ func (h *ProviderKeysHandler) PatchCodexKey(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := providerSettingsService(h).PatchCodexKey(body.Index, body.Match, *body.Value); err != nil {
+	if err := providerSettingsService(h, c).PatchCodexKey(body.Index, body.Match, *body.Value); err != nil {
 		if errors.Is(err, providersettings.ErrItemNotFound) {
 			c.JSON(404, gin.H{"error": "item not found"})
 			return
@@ -659,20 +745,20 @@ func (h *ProviderKeysHandler) PatchCodexKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.persist(c)
+	h.persistProviderSettings(c)
 }
 
 func (h *ProviderKeysHandler) DeleteCodexKey(c *gin.Context) {
 	if val := c.Query("api-key"); val != "" {
-		providerSettingsService(h).DeleteCodexKeyByAPIKey(val)
-		h.persist(c)
+		providerSettingsService(h, c).DeleteCodexKeyByAPIKey(val)
+		h.persistProviderSettings(c)
 		return
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
 		_, err := fmt.Sscanf(idxStr, "%d", &idx)
-		if err == nil && providerSettingsService(h).DeleteCodexKeyByIndex(idx) {
-			h.persist(c)
+		if err == nil && providerSettingsService(h, c).DeleteCodexKeyByIndex(idx) {
+			h.persistProviderSettings(c)
 			return
 		}
 	}

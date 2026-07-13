@@ -20,6 +20,20 @@ type AuthSubjectQuotaCycleCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *AuthSubjectQuotaCycleCreate) SetTenantID(v string) *AuthSubjectQuotaCycleCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *AuthSubjectQuotaCycleCreate) SetNillableTenantID(v *string) *AuthSubjectQuotaCycleCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetSubjectID sets the "subject_id" field.
 func (_c *AuthSubjectQuotaCycleCreate) SetSubjectID(v string) *AuthSubjectQuotaCycleCreate {
 	_c.mutation.SetSubjectID(v)
@@ -127,6 +141,10 @@ func (_c *AuthSubjectQuotaCycleCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *AuthSubjectQuotaCycleCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := authsubjectquotacycle.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.AuthIndex(); !ok {
 		v := authsubjectquotacycle.DefaultAuthIndex
 		_c.mutation.SetAuthIndex(v)
@@ -143,6 +161,9 @@ func (_c *AuthSubjectQuotaCycleCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *AuthSubjectQuotaCycleCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "AuthSubjectQuotaCycle.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.SubjectID(); !ok {
 		return &ValidationError{Name: "subject_id", err: errors.New(`ent: missing required field "AuthSubjectQuotaCycle.subject_id"`)}
 	}
@@ -193,6 +214,10 @@ func (_c *AuthSubjectQuotaCycleCreate) createSpec() (*AuthSubjectQuotaCycle, *sq
 		_node = &AuthSubjectQuotaCycle{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(authsubjectquotacycle.Table, sqlgraph.NewFieldSpec(authsubjectquotacycle.FieldID, field.TypeInt))
 	)
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(authsubjectquotacycle.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
+	}
 	if value, ok := _c.mutation.SubjectID(); ok {
 		_spec.SetField(authsubjectquotacycle.FieldSubjectID, field.TypeString, value)
 		_node.SubjectID = value

@@ -33,6 +33,22 @@ func (m *Manager) List() []*Auth {
 	return list
 }
 
+func (m *Manager) ListForTenant(tenantID string) []*Auth {
+	if m == nil {
+		return nil
+	}
+	tenantID = normalizedTenantID(tenantID)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	list := make([]*Auth, 0)
+	for _, auth := range m.auths {
+		if auth != nil && normalizedTenantID(auth.TenantID) == tenantID {
+			list = append(list, auth.Clone())
+		}
+	}
+	return list
+}
+
 func (m *Manager) SetSelector(selector Selector) {
 	if m == nil {
 		return
@@ -129,8 +145,13 @@ func (m *Manager) GetByID(id string) (*Auth, bool) {
 	return auth.Clone(), true
 }
 
-// Executor returns the registered provider executor for a provider key.
+// Executor returns the registered system-tenant executor for a provider key.
 func (m *Manager) Executor(provider string) (ProviderExecutor, bool) {
+	return m.ExecutorForTenant(defaultTenantID, provider)
+}
+
+// ExecutorForTenant returns the executor bound to one tenant runtime config.
+func (m *Manager) ExecutorForTenant(tenantID, provider string) (ProviderExecutor, bool) {
 	if m == nil {
 		return nil, false
 	}
@@ -138,11 +159,10 @@ func (m *Manager) Executor(provider string) (ProviderExecutor, bool) {
 	if provider == "" {
 		return nil, false
 	}
-
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	executor, ok := m.executors[provider]
-	return executor, ok
+	executor := m.executorForTenantLocked(tenantID, provider)
+	return executor, executor != nil
 }
 
 // CloseExecutionSession asks all registered executors to release the supplied execution session.
@@ -153,9 +173,14 @@ func (m *Manager) CloseExecutionSession(sessionID string) {
 	}
 
 	m.mu.RLock()
-	executors := make([]ProviderExecutor, 0, len(m.executors))
+	executors := make([]ProviderExecutor, 0, len(m.executors)+len(m.tenantExecutors))
 	for _, exec := range m.executors {
 		executors = append(executors, exec)
+	}
+	for _, byProvider := range m.tenantExecutors {
+		for _, exec := range byProvider {
+			executors = append(executors, exec)
+		}
 	}
 	m.mu.RUnlock()
 

@@ -27,6 +27,20 @@ func (_u *IdentityFingerprintAccountPolicyUpdate) Where(ps ...predicate.Identity
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *IdentityFingerprintAccountPolicyUpdate) SetTenantID(v string) *IdentityFingerprintAccountPolicyUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *IdentityFingerprintAccountPolicyUpdate) SetNillableTenantID(v *string) *IdentityFingerprintAccountPolicyUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetProvider sets the "provider" field.
 func (_u *IdentityFingerprintAccountPolicyUpdate) SetProvider(v string) *IdentityFingerprintAccountPolicyUpdate {
 	_u.mutation.SetProvider(v)
@@ -159,6 +173,9 @@ func (_u *IdentityFingerprintAccountPolicyUpdate) sqlSave(ctx context.Context) (
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(identityfingerprintaccountpolicy.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Provider(); ok {
 		_spec.SetField(identityfingerprintaccountpolicy.FieldProvider, field.TypeString, value)
 	}
@@ -198,6 +215,20 @@ type IdentityFingerprintAccountPolicyUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *IdentityFingerprintAccountPolicyMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *IdentityFingerprintAccountPolicyUpdateOne) SetTenantID(v string) *IdentityFingerprintAccountPolicyUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *IdentityFingerprintAccountPolicyUpdateOne) SetNillableTenantID(v *string) *IdentityFingerprintAccountPolicyUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetProvider sets the "provider" field.
@@ -361,6 +392,9 @@ func (_u *IdentityFingerprintAccountPolicyUpdateOne) sqlSave(ctx context.Context
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(identityfingerprintaccountpolicy.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Provider(); ok {
 		_spec.SetField(identityfingerprintaccountpolicy.FieldProvider, field.TypeString, value)

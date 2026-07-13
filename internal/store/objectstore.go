@@ -586,6 +586,7 @@ func (s *ObjectTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Aut
 	}
 	auth := &cliproxyauth.Auth{
 		ID:               rel,
+		TenantID:         cliproxyauth.TenantIDFromAuthID(rel),
 		Provider:         provider,
 		FileName:         rel,
 		Label:            labelFor(metadata),

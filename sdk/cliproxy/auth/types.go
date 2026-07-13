@@ -44,6 +44,8 @@ func GetRequestInfo(ctx context.Context) *RequestInfo {
 type Auth struct {
 	// ID uniquely identifies the auth record across restarts.
 	ID string `json:"id"`
+	// TenantID is the trusted tenant scope that owns this credential.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Index is a stable runtime identifier derived from auth metadata (not persisted).
 	Index string `json:"-"`
 	// Provider is the upstream provider key (e.g. "gemini", "claude").

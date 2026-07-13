@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	proxypoolsettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/proxypool"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
@@ -65,7 +66,8 @@ func (h *Handler) GetUsageLogEgress(c *gin.Context) {
 		return
 	}
 
-	logRow, err := usage.QueryLogRowByID(id)
+	tenantID := effectiveTenantID(c)
+	logRow, err := usage.QueryLogRowByIDForTenant(tenantID, id)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "log entry not found"})
@@ -75,7 +77,7 @@ func (h *Handler) GetUsageLogEgress(c *gin.Context) {
 		return
 	}
 
-	detailsPart, err := usage.QueryLogContentPart(id, "details")
+	detailsPart, err := usage.QueryLogContentPartForTenant(tenantID, id, "details")
 	if err != nil && !strings.Contains(err.Error(), "no rows") {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -110,7 +112,7 @@ func (h *Handler) GetUsageLogEgress(c *gin.Context) {
 	effectiveIP := resp.ServerIP
 	effectiveErr := serverErr
 	if resp.UsingProxy {
-		proxyURL := h.resolveUsageLogEgressProxyURL(logRow.AuthIndex, meta)
+		proxyURL := h.resolveUsageLogEgressProxyURL(tenantID, logRow.AuthIndex, meta)
 		if proxyURL == "" {
 			resp.Error = "proxy configuration is no longer available for recheck"
 			if serverErr != nil {
@@ -157,9 +159,12 @@ func parseUsageLogEgressMetadata(raw string) usageLogEgressMetadata {
 	return payload.Egress
 }
 
-func (h *Handler) resolveUsageLogEgressProxyURL(authIndex string, meta usageLogEgressMetadata) string {
-	cfg := h.cfg
-	auth := h.findAuthByIndex(authIndex)
+func (h *Handler) resolveUsageLogEgressProxyURL(tenantID, authIndex string, meta usageLogEgressMetadata) string {
+	var cfg *config.Config
+	if tenantID == identity.SystemTenantID {
+		cfg = h.cfg
+	}
+	auth := h.findAuthByIndexForTenant(tenantID, authIndex)
 	proxyID := strings.TrimSpace(meta.ProxyID)
 	if proxyID == "" && auth != nil {
 		proxyID = strings.TrimSpace(auth.ProxyID)
@@ -172,7 +177,7 @@ func (h *Handler) resolveUsageLogEgressProxyURL(authIndex string, meta usageLogE
 	switch strings.ToLower(meta.ProxySource) {
 	case "proxy_id":
 		if proxyID != "" {
-			if resolved := resolveUsageLogProxyPoolURL(cfg, proxyID, authProxyURL); resolved != "" {
+			if resolved := resolveUsageLogProxyPoolURL(tenantID, cfg, proxyID, authProxyURL); resolved != "" {
 				return resolved
 			}
 		}
@@ -198,7 +203,7 @@ func (h *Handler) resolveUsageLogEgressProxyURL(authIndex string, meta usageLogE
 	}
 
 	if proxyID != "" {
-		if resolved := resolveUsageLogProxyPoolURL(cfg, proxyID, authProxyURL); resolved != "" {
+		if resolved := resolveUsageLogProxyPoolURL(tenantID, cfg, proxyID, authProxyURL); resolved != "" {
 			return resolved
 		}
 	}
@@ -213,8 +218,8 @@ func (h *Handler) resolveUsageLogEgressProxyURL(authIndex string, meta usageLogE
 	return ""
 }
 
-func resolveUsageLogProxyPoolURL(cfg *config.Config, proxyID string, fallbackURL string) string {
-	if entry := proxypoolsettings.Get(proxyID); entry != nil && entry.Enabled {
+func resolveUsageLogProxyPoolURL(tenantID string, cfg *config.Config, proxyID string, fallbackURL string) string {
+	if entry := proxypoolsettings.GetForTenant(tenantID, proxyID); entry != nil && entry.Enabled {
 		if proxyURL := strings.TrimSpace(entry.URL); proxyURL != "" {
 			return proxyURL
 		}
@@ -225,12 +230,12 @@ func resolveUsageLogProxyPoolURL(cfg *config.Config, proxyID string, fallbackURL
 	return strings.TrimSpace(cfg.ResolveProxyURL(proxyID, fallbackURL))
 }
 
-func (h *Handler) findAuthByIndex(authIndex string) *coreauth.Auth {
+func (h *Handler) findAuthByIndexForTenant(tenantID, authIndex string) *coreauth.Auth {
 	authIndex = strings.TrimSpace(authIndex)
 	if authIndex == "" || h == nil || h.authManager == nil {
 		return nil
 	}
-	for _, auth := range h.authManager.List() {
+	for _, auth := range h.authManager.ListForTenant(tenantID) {
 		if auth == nil {
 			continue
 		}

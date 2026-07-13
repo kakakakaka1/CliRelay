@@ -54,6 +54,11 @@ func IDLTE(id int) predicate.AuthSubjectQuotaCycle {
 	return predicate.AuthSubjectQuotaCycle(sql.FieldLTE(FieldID, id))
 }
 
+// TenantID applies equality check predicate on the "tenant_id" field. It's identical to TenantIDEQ.
+func TenantID(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldEQ(FieldTenantID, v))
+}
+
 // SubjectID applies equality check predicate on the "subject_id" field. It's identical to SubjectIDEQ.
 func SubjectID(v string) predicate.AuthSubjectQuotaCycle {
 	return predicate.AuthSubjectQuotaCycle(sql.FieldEQ(FieldSubjectID, v))
@@ -92,6 +97,71 @@ func WindowSeconds(v int64) predicate.AuthSubjectQuotaCycle {
 // LastVerifiedAt applies equality check predicate on the "last_verified_at" field. It's identical to LastVerifiedAtEQ.
 func LastVerifiedAt(v time.Time) predicate.AuthSubjectQuotaCycle {
 	return predicate.AuthSubjectQuotaCycle(sql.FieldEQ(FieldLastVerifiedAt, v))
+}
+
+// TenantIDEQ applies the EQ predicate on the "tenant_id" field.
+func TenantIDEQ(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldEQ(FieldTenantID, v))
+}
+
+// TenantIDNEQ applies the NEQ predicate on the "tenant_id" field.
+func TenantIDNEQ(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldNEQ(FieldTenantID, v))
+}
+
+// TenantIDIn applies the In predicate on the "tenant_id" field.
+func TenantIDIn(vs ...string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldIn(FieldTenantID, vs...))
+}
+
+// TenantIDNotIn applies the NotIn predicate on the "tenant_id" field.
+func TenantIDNotIn(vs ...string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldNotIn(FieldTenantID, vs...))
+}
+
+// TenantIDGT applies the GT predicate on the "tenant_id" field.
+func TenantIDGT(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldGT(FieldTenantID, v))
+}
+
+// TenantIDGTE applies the GTE predicate on the "tenant_id" field.
+func TenantIDGTE(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldGTE(FieldTenantID, v))
+}
+
+// TenantIDLT applies the LT predicate on the "tenant_id" field.
+func TenantIDLT(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldLT(FieldTenantID, v))
+}
+
+// TenantIDLTE applies the LTE predicate on the "tenant_id" field.
+func TenantIDLTE(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldLTE(FieldTenantID, v))
+}
+
+// TenantIDContains applies the Contains predicate on the "tenant_id" field.
+func TenantIDContains(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldContains(FieldTenantID, v))
+}
+
+// TenantIDHasPrefix applies the HasPrefix predicate on the "tenant_id" field.
+func TenantIDHasPrefix(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldHasPrefix(FieldTenantID, v))
+}
+
+// TenantIDHasSuffix applies the HasSuffix predicate on the "tenant_id" field.
+func TenantIDHasSuffix(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldHasSuffix(FieldTenantID, v))
+}
+
+// TenantIDEqualFold applies the EqualFold predicate on the "tenant_id" field.
+func TenantIDEqualFold(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldEqualFold(FieldTenantID, v))
+}
+
+// TenantIDContainsFold applies the ContainsFold predicate on the "tenant_id" field.
+func TenantIDContainsFold(v string) predicate.AuthSubjectQuotaCycle {
+	return predicate.AuthSubjectQuotaCycle(sql.FieldContainsFold(FieldTenantID, v))
 }
 
 // SubjectIDEQ applies the EQ predicate on the "subject_id" field.

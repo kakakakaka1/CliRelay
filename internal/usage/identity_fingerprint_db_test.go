@@ -1,12 +1,14 @@
 package usage
 
 import (
+	"database/sql"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/identityfingerprint"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
 func TestObserveIdentityFingerprintLearnsAndMergesClaudeAccount(t *testing.T) {
@@ -256,5 +258,141 @@ func TestObserveIdentityFingerprintSkipsRecentUnchangedLastSeenWrite(t *testing.
 	}
 	if !record.LastSeenAt.After(firstSeen) {
 		t.Fatalf("LastSeenAt = %s, want refreshed after %s", record.LastSeenAt, firstSeen)
+	}
+}
+
+func TestIdentityFingerprintSharedCatalogUsesSystemTenantStorage(t *testing.T) {
+	// Fingerprints are shared by AI account_key. Storage tenant_id is always the
+	// platform system catalog — a row written only under a business tenant_id is
+	// not part of the shared catalog and must not be returned.
+	initTestUsageDB(t, config.RequestLogStorageConfig{})
+	db := getDB()
+	if db == nil {
+		t.Fatal("usage database unavailable")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO identity_fingerprints (
+			tenant_id, provider, account_key, profile_key, fields_json, observed_headers_json,
+			created_at, updated_at, last_seen_at
+		) VALUES (?, ?, ?, ?, '{}', '{}', ?, ?, ?)
+	`, "11111111-1111-1111-1111-111111111111", string(identityfingerprint.ProviderCodex), "shared-account", "codex_cli_rs", time.Now(), time.Now(), time.Now()); err != nil {
+		t.Fatalf("insert business-tenant-only fingerprint: %v", err)
+	}
+	if record, err := GetIdentityFingerprint(identityfingerprint.ProviderCodex, "shared-account"); err != nil || record != nil {
+		t.Fatalf("GetIdentityFingerprint() record=%#v err=%v, want nil for non-shared-catalog row", record, err)
+	}
+	if records, err := ListIdentityFingerprints(identityfingerprint.ProviderCodex, 10); err != nil || len(records) != 0 {
+		t.Fatalf("ListIdentityFingerprints() records=%#v err=%v, want empty shared catalog", records, err)
+	}
+}
+
+func TestIdentityFingerprintSharedByAccountKeyAcrossBusinessTenants(t *testing.T) {
+	// Same OAuth account_id resolves to one account_key; learning once must be
+	// visible for credentials that later live under a different business tenant.
+	initTestUsageDB(t, config.RequestLogStorageConfig{})
+
+	authA := &coreauth.Auth{
+		ID:       "auth-on-tenant-a",
+		TenantID: "11111111-1111-1111-1111-111111111111",
+		Provider: "codex",
+		Metadata: map[string]any{"account_id": "chatgpt-shared-account"},
+	}
+	authB := &coreauth.Auth{
+		ID:       "auth-on-tenant-b",
+		TenantID: "22222222-2222-2222-2222-222222222222",
+		Provider: "codex",
+		Metadata: map[string]any{"account_id": "chatgpt-shared-account"},
+	}
+	identityA := ResolveAuthSubjectIdentity(authA)
+	identityB := ResolveAuthSubjectIdentity(authB)
+	if identityA == nil || identityB == nil || identityA.ID == "" || identityA.ID != identityB.ID {
+		t.Fatalf("expected same account_key for shared OAuth account, got A=%#v B=%#v", identityA, identityB)
+	}
+	accountKey := identityA.ID
+
+	headers := http.Header{}
+	headers.Set("User-Agent", "codex_cli_rs/0.201.0 (Mac OS; arm64)")
+	headers.Set("Version", "0.201.0")
+	headers.Set("Originator", "codex_cli_rs")
+	if _, result, err := ObserveIdentityFingerprint(identityfingerprint.LearnInput{
+		Provider:      identityfingerprint.ProviderCodex,
+		AccountKey:    accountKey,
+		AuthSubjectID: accountKey,
+		Headers:       headers,
+		ObservedAt:    time.Now().UTC(),
+	}); err != nil || !result.Changed {
+		t.Fatalf("ObserveIdentityFingerprint: result=%+v err=%v", result, err)
+	}
+
+	stored, err := GetIdentityFingerprint(identityfingerprint.ProviderCodex, accountKey)
+	if err != nil || stored == nil {
+		t.Fatalf("GetIdentityFingerprint: %#v err=%v", stored, err)
+	}
+	if stored.Version != "0.201.0" {
+		t.Fatalf("shared fingerprint version = %q, want 0.201.0", stored.Version)
+	}
+	// Business-tenant-only duplicate must not shadow the shared catalog entry.
+	db := getDB()
+	if _, err := db.Exec(`
+		INSERT INTO identity_fingerprints (
+			tenant_id, provider, account_key, profile_key, version, fields_json, observed_headers_json,
+			created_at, updated_at, last_seen_at
+		) VALUES (?, ?, ?, ?, '9.9.9', '{}', '{}', ?, ?, ?)
+	`, authB.TenantID, string(identityfingerprint.ProviderCodex), accountKey, "codex_cli_rs", time.Now(), time.Now(), time.Now()); err != nil {
+		t.Fatalf("insert tenant-b shadow row: %v", err)
+	}
+	again, err := GetIdentityFingerprint(identityfingerprint.ProviderCodex, accountKey)
+	if err != nil || again == nil || again.Version != "0.201.0" {
+		t.Fatalf("shared catalog should still return 0.201.0, got %#v err=%v", again, err)
+	}
+}
+
+func TestIdentityFingerprintLegacySchemaMigratesToTenantPrimaryKeys(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+t.Name()+"?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`CREATE TABLE identity_fingerprints (
+		tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001', provider TEXT NOT NULL,
+		account_key TEXT NOT NULL, profile_key TEXT NOT NULL DEFAULT 'default', auth_subject_id TEXT NOT NULL DEFAULT '',
+		client_product TEXT NOT NULL DEFAULT '', client_variant TEXT NOT NULL DEFAULT '', version TEXT NOT NULL DEFAULT '',
+		fields_json TEXT NOT NULL DEFAULT '{}', observed_headers_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT '',
+		updated_at TEXT NOT NULL DEFAULT '', last_seen_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (provider, account_key, profile_key));
+		CREATE TABLE identity_fingerprint_account_policies (
+		tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001', provider TEXT NOT NULL,
+		account_key TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'cli_preferred', active_profile_key TEXT NOT NULL DEFAULT '',
+		revision INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (provider, account_key));
+		INSERT INTO identity_fingerprints(tenant_id,provider,account_key,profile_key) VALUES
+		('00000000-0000-0000-0000-000000000001','codex','shared','codex_cli_rs');
+		INSERT INTO identity_fingerprint_account_policies(tenant_id,provider,account_key) VALUES
+		('00000000-0000-0000-0000-000000000001','codex','shared');`); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+
+	initIdentityFingerprintsTable(db)
+
+	if pk, errPK := sqlitePrimaryKeyColumns(db, "identity_fingerprints"); errPK != nil || len(pk) != 4 || pk[0] != "tenant_id" {
+		t.Fatalf("identity_fingerprints primary key = %v, err=%v", pk, errPK)
+	}
+	if pk, errPK := sqlitePrimaryKeyColumns(db, "identity_fingerprint_account_policies"); errPK != nil || len(pk) != 3 || pk[0] != "tenant_id" {
+		t.Fatalf("identity_fingerprint_account_policies primary key = %v, err=%v", pk, errPK)
+	}
+	const tenantB = "00000000-0000-0000-0000-00000000000b"
+	if _, err = db.Exec(`INSERT INTO identity_fingerprints(tenant_id,provider,account_key,profile_key) VALUES(?,?,?,?)`, tenantB, "codex", "shared", "codex_cli_rs"); err != nil {
+		t.Fatalf("insert same fingerprint key for tenant B: %v", err)
+	}
+	if _, err = db.Exec(`INSERT INTO identity_fingerprint_account_policies(tenant_id,provider,account_key) VALUES(?,?,?)`, tenantB, "codex", "shared"); err != nil {
+		t.Fatalf("insert same policy key for tenant B: %v", err)
+	}
+	var fingerprints, policies int
+	if err = db.QueryRow(`SELECT COUNT(*) FROM identity_fingerprints WHERE provider='codex' AND account_key='shared'`).Scan(&fingerprints); err != nil {
+		t.Fatalf("count fingerprints: %v", err)
+	}
+	if err = db.QueryRow(`SELECT COUNT(*) FROM identity_fingerprint_account_policies WHERE provider='codex' AND account_key='shared'`).Scan(&policies); err != nil {
+		t.Fatalf("count policies: %v", err)
+	}
+	if fingerprints != 2 || policies != 2 {
+		t.Fatalf("migrated row counts = fingerprints %d policies %d, want 2/2", fingerprints, policies)
 	}
 }

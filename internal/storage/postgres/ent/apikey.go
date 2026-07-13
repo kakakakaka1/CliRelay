@@ -16,6 +16,8 @@ type APIKey struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID string `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Key holds the value of the "key" field.
 	Key string `json:"key,omitempty"`
 	// Name holds the value of the "name" field.
@@ -62,7 +64,7 @@ func (*APIKey) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case apikey.FieldDisabled, apikey.FieldDailyLimit, apikey.FieldTotalQuota, apikey.FieldConcurrencyLimit, apikey.FieldRpmLimit, apikey.FieldTpmLimit:
 			values[i] = new(sql.NullInt64)
-		case apikey.FieldID, apikey.FieldKey, apikey.FieldName, apikey.FieldPermissionProfileID, apikey.FieldAllowedModels, apikey.FieldAllowedChannels, apikey.FieldAllowedChannelGroups, apikey.FieldSystemPrompt, apikey.FieldCreatedAt, apikey.FieldUpdatedAt:
+		case apikey.FieldID, apikey.FieldTenantID, apikey.FieldKey, apikey.FieldName, apikey.FieldPermissionProfileID, apikey.FieldAllowedModels, apikey.FieldAllowedChannels, apikey.FieldAllowedChannelGroups, apikey.FieldSystemPrompt, apikey.FieldCreatedAt, apikey.FieldUpdatedAt:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -84,6 +86,12 @@ func (_m *APIKey) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", values[i])
 			} else if value.Valid {
 				_m.ID = value.String
+			}
+		case apikey.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
 			}
 		case apikey.FieldKey:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -223,6 +231,9 @@ func (_m *APIKey) String() string {
 	var builder strings.Builder
 	builder.WriteString("APIKey(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("key=")
 	builder.WriteString(_m.Key)
 	builder.WriteString(", ")

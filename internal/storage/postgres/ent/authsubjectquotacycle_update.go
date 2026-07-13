@@ -28,6 +28,20 @@ func (_u *AuthSubjectQuotaCycleUpdate) Where(ps ...predicate.AuthSubjectQuotaCyc
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *AuthSubjectQuotaCycleUpdate) SetTenantID(v string) *AuthSubjectQuotaCycleUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *AuthSubjectQuotaCycleUpdate) SetNillableTenantID(v *string) *AuthSubjectQuotaCycleUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetSubjectID sets the "subject_id" field.
 func (_u *AuthSubjectQuotaCycleUpdate) SetSubjectID(v string) *AuthSubjectQuotaCycleUpdate {
 	_u.mutation.SetSubjectID(v)
@@ -188,6 +202,9 @@ func (_u *AuthSubjectQuotaCycleUpdate) sqlSave(ctx context.Context) (_node int, 
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(authsubjectquotacycle.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.SubjectID(); ok {
 		_spec.SetField(authsubjectquotacycle.FieldSubjectID, field.TypeString, value)
 	}
@@ -233,6 +250,20 @@ type AuthSubjectQuotaCycleUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *AuthSubjectQuotaCycleMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *AuthSubjectQuotaCycleUpdateOne) SetTenantID(v string) *AuthSubjectQuotaCycleUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *AuthSubjectQuotaCycleUpdateOne) SetNillableTenantID(v *string) *AuthSubjectQuotaCycleUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetSubjectID sets the "subject_id" field.
@@ -424,6 +455,9 @@ func (_u *AuthSubjectQuotaCycleUpdateOne) sqlSave(ctx context.Context) (_node *A
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(authsubjectquotacycle.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.SubjectID(); ok {
 		_spec.SetField(authsubjectquotacycle.FieldSubjectID, field.TypeString, value)

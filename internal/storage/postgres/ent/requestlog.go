@@ -17,6 +17,8 @@ type RequestLog struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int64 `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Timestamp holds the value of the "timestamp" field.
 	Timestamp time.Time `json:"timestamp,omitempty"`
 	// APIKey holds the value of the "api_key" field.
@@ -75,7 +77,7 @@ func (*RequestLog) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case requestlog.FieldID, requestlog.FieldFailed, requestlog.FieldStreaming, requestlog.FieldLatencyMs, requestlog.FieldFirstTokenMs, requestlog.FieldInputTokens, requestlog.FieldOutputTokens, requestlog.FieldReasoningTokens, requestlog.FieldCachedTokens, requestlog.FieldTotalTokens:
 			values[i] = new(sql.NullInt64)
-		case requestlog.FieldAPIKey, requestlog.FieldAPIKeyID, requestlog.FieldAuthSubjectID, requestlog.FieldAPIKeyName, requestlog.FieldModel, requestlog.FieldUpstreamModel, requestlog.FieldVisionFallbackModel, requestlog.FieldSource, requestlog.FieldChannelName, requestlog.FieldAuthIndex, requestlog.FieldInputContent, requestlog.FieldOutputContent:
+		case requestlog.FieldTenantID, requestlog.FieldAPIKey, requestlog.FieldAPIKeyID, requestlog.FieldAuthSubjectID, requestlog.FieldAPIKeyName, requestlog.FieldModel, requestlog.FieldUpstreamModel, requestlog.FieldVisionFallbackModel, requestlog.FieldSource, requestlog.FieldChannelName, requestlog.FieldAuthIndex, requestlog.FieldInputContent, requestlog.FieldOutputContent:
 			values[i] = new(sql.NullString)
 		case requestlog.FieldTimestamp:
 			values[i] = new(sql.NullTime)
@@ -100,6 +102,12 @@ func (_m *RequestLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int64(value.Int64)
+		case requestlog.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case requestlog.FieldTimestamp:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field timestamp", values[i])
@@ -274,6 +282,9 @@ func (_m *RequestLog) String() string {
 	var builder strings.Builder
 	builder.WriteString("RequestLog(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("timestamp=")
 	builder.WriteString(_m.Timestamp.Format(time.ANSIC))
 	builder.WriteString(", ")

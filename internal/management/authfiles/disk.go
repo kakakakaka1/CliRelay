@@ -2,6 +2,8 @@ package authfiles
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"time"
 
@@ -48,4 +50,19 @@ func ListDiskEntries(authDir string, now time.Time) ([]map[string]any, error) {
 		files = append(files, fileData)
 	}
 	return files, nil
+}
+
+func ListTenantDiskEntries(authDir, tenantID string, now time.Time) ([]map[string]any, error) {
+	files, err := ListDiskEntries(TenantAuthDir(authDir, tenantID), now)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	if NormalizeTenantID(tenantID) != systemTenantID {
+		return files, nil
+	}
+	legacy, legacyErr := ListDiskEntries(authDir, now)
+	if legacyErr != nil && !errors.Is(legacyErr, fs.ErrNotExist) {
+		return nil, legacyErr
+	}
+	return append(files, legacy...), nil
 }

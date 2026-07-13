@@ -18,6 +18,8 @@ func RegisterManagement(engine *gin.Engine, h *managementhandlers.Handler, opts 
 		return
 	}
 
+	registerIdentityAuthRoutes(engine, h, opts.Availability)
+
 	clearWriteDeadline := opts.ClearWriteDeadline
 	if clearWriteDeadline == nil {
 		clearWriteDeadline = func(*gin.Context) {}
@@ -37,6 +39,7 @@ func RegisterManagement(engine *gin.Engine, h *managementhandlers.Handler, opts 
 	mgmt := engine.Group("/v0/management")
 	mgmt.Use(mgmtMiddlewares...)
 
+	registerManagementIdentityRoutes(mgmt, h)
 	registerManagementCoreRoutes(mgmt, h, clearWriteDeadline)
 	registerManagementModelRoutes(mgmt, h)
 	registerManagementUsageRoutes(mgmt, h)

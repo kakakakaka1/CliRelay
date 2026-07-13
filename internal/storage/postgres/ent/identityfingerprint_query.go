@@ -262,12 +262,12 @@ func (_q *IdentityFingerprintQuery) Clone() *IdentityFingerprintQuery {
 // Example:
 //
 //	var v []struct {
-//		Provider string `json:"provider,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.IdentityFingerprint.Query().
-//		GroupBy(identityfingerprint.FieldProvider).
+//		GroupBy(identityfingerprint.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *IdentityFingerprintQuery) GroupBy(field string, fields ...string) *IdentityFingerprintGroupBy {
@@ -285,11 +285,11 @@ func (_q *IdentityFingerprintQuery) GroupBy(field string, fields ...string) *Ide
 // Example:
 //
 //	var v []struct {
-//		Provider string `json:"provider,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.IdentityFingerprint.Query().
-//		Select(identityfingerprint.FieldProvider).
+//		Select(identityfingerprint.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *IdentityFingerprintQuery) Select(fields ...string) *IdentityFingerprintSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

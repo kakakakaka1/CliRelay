@@ -27,6 +27,20 @@ func (_u *RoutingConfigUpdate) Where(ps ...predicate.RoutingConfig) *RoutingConf
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *RoutingConfigUpdate) SetTenantID(v string) *RoutingConfigUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *RoutingConfigUpdate) SetNillableTenantID(v *string) *RoutingConfigUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetPayload sets the "payload" field.
 func (_u *RoutingConfigUpdate) SetPayload(v string) *RoutingConfigUpdate {
 	_u.mutation.SetPayload(v)
@@ -96,6 +110,9 @@ func (_u *RoutingConfigUpdate) sqlSave(ctx context.Context) (_node int, err erro
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(routingconfig.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Payload(); ok {
 		_spec.SetField(routingconfig.FieldPayload, field.TypeString, value)
 	}
@@ -120,6 +137,20 @@ type RoutingConfigUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *RoutingConfigMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *RoutingConfigUpdateOne) SetTenantID(v string) *RoutingConfigUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *RoutingConfigUpdateOne) SetNillableTenantID(v *string) *RoutingConfigUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetPayload sets the "payload" field.
@@ -220,6 +251,9 @@ func (_u *RoutingConfigUpdateOne) sqlSave(ctx context.Context) (_node *RoutingCo
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(routingconfig.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Payload(); ok {
 		_spec.SetField(routingconfig.FieldPayload, field.TypeString, value)

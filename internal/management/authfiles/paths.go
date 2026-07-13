@@ -2,6 +2,7 @@ package authfiles
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,62 @@ import (
 )
 
 const invalidFilePathPlaceholder = "__invalid_auth_file_name__"
+
+const systemTenantID = "00000000-0000-0000-0000-000000000001"
+
+func NormalizeTenantID(tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return systemTenantID
+	}
+	return tenantID
+}
+
+func TenantAuthDir(authDir, tenantID string) string {
+	if strings.TrimSpace(tenantID) == "" {
+		return authDir
+	}
+	return filepath.Join(authDir, NormalizeTenantID(tenantID))
+}
+
+func TenantFilePath(authDir, tenantID, name string) string {
+	return FilePath(TenantAuthDir(authDir, tenantID), name)
+}
+
+// Existing installations stored system credentials directly in authDir. Prefer
+// the tenant directory, but keep the legacy root readable until startup migration
+// has moved every file.
+func ExistingTenantFilePath(authDir, tenantID, name string) string {
+	path := TenantFilePath(authDir, tenantID, name)
+	if _, err := os.Stat(path); err == nil || NormalizeTenantID(tenantID) != systemTenantID {
+		return path
+	}
+	return FilePath(authDir, name)
+}
+
+func OpenTenantFile(authDir, tenantID, name string) (*os.File, os.FileInfo, error) {
+	path := ExistingTenantFilePath(authDir, tenantID, name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("auth file is not a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() {
+		_ = file.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, fmt.Errorf("auth file is not a regular file")
+	}
+	return file, openedInfo, nil
+}
 
 func ValidateFileQueryName(name string, requireJSON bool) (string, error) {
 	name = strings.TrimSpace(name)

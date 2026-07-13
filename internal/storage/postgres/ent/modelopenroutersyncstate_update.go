@@ -28,6 +28,20 @@ func (_u *ModelOpenrouterSyncStateUpdate) Where(ps ...predicate.ModelOpenrouterS
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *ModelOpenrouterSyncStateUpdate) SetTenantID(v string) *ModelOpenrouterSyncStateUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *ModelOpenrouterSyncStateUpdate) SetNillableTenantID(v *string) *ModelOpenrouterSyncStateUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetEnabled sets the "enabled" field.
 func (_u *ModelOpenrouterSyncStateUpdate) SetEnabled(v int) *ModelOpenrouterSyncStateUpdate {
 	_u.mutation.ResetEnabled()
@@ -251,6 +265,9 @@ func (_u *ModelOpenrouterSyncStateUpdate) sqlSave(ctx context.Context) (_node in
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(modelopenroutersyncstate.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Enabled(); ok {
 		_spec.SetField(modelopenroutersyncstate.FieldEnabled, field.TypeInt, value)
 	}
@@ -317,6 +334,20 @@ type ModelOpenrouterSyncStateUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *ModelOpenrouterSyncStateMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *ModelOpenrouterSyncStateUpdateOne) SetTenantID(v string) *ModelOpenrouterSyncStateUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *ModelOpenrouterSyncStateUpdateOne) SetNillableTenantID(v *string) *ModelOpenrouterSyncStateUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetEnabled sets the "enabled" field.
@@ -571,6 +602,9 @@ func (_u *ModelOpenrouterSyncStateUpdateOne) sqlSave(ctx context.Context) (_node
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(modelopenroutersyncstate.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Enabled(); ok {
 		_spec.SetField(modelopenroutersyncstate.FieldEnabled, field.TypeInt, value)

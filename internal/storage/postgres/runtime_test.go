@@ -7,8 +7,8 @@ import (
 
 func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	migrations := RuntimeMigrations()
-	if len(migrations) != 2 {
-		t.Fatalf("RuntimeMigrations len = %d, want 2", len(migrations))
+	if len(migrations) != 9 {
+		t.Fatalf("RuntimeMigrations len = %d, want 9", len(migrations))
 	}
 	sqlText := migrations[0].SQL
 	for _, table := range []string{
@@ -26,6 +26,62 @@ func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	} {
 		if !strings.Contains(sqlText, "CREATE TABLE IF NOT EXISTS "+table) {
 			t.Fatalf("runtime migration does not create %s", table)
+		}
+	}
+
+	scopeSQL := migrations[3].SQL
+	for _, table := range []string{"api_keys", "request_logs", "runtime_settings", "identity_fingerprints"} {
+		if !strings.Contains(scopeSQL, "ALTER TABLE "+table+" ADD COLUMN IF NOT EXISTS tenant_id") {
+			t.Fatalf("tenant scope migration does not alter %s", table)
+		}
+	}
+
+	constraintsSQL := migrations[4].SQL
+	for _, fragment := range []string{
+		"ADD PRIMARY KEY (tenant_id, model_id)",
+		"FOREIGN KEY (tenant_id, log_id)",
+		"idx_ccswitch_import_configs_tenant_route_path",
+	} {
+		if !strings.Contains(constraintsSQL, fragment) {
+			t.Fatalf("tenant constraints migration missing %q", fragment)
+		}
+	}
+
+	deleteConstraintsSQL := migrations[5].SQL
+	for _, fragment := range []string{
+		"users_created_by_fkey",
+		"audit_logs_actor_user_id_fkey",
+		"audit_logs_actor_session_id_fkey",
+		"ON DELETE SET NULL",
+	} {
+		if !strings.Contains(deleteConstraintsSQL, fragment) {
+			t.Fatalf("identity delete constraints migration missing %q", fragment)
+		}
+	}
+
+	ccSwitchConstraintsSQL := migrations[6].SQL
+	if !strings.Contains(ccSwitchConstraintsSQL, "ADD PRIMARY KEY (tenant_id, id)") {
+		t.Fatal("ccswitch tenant primary key migration is missing composite primary key")
+	}
+
+	menuSQL := migrations[7].SQL
+	for _, fragment := range []string{"CREATE TABLE IF NOT EXISTS menus", "permission_code", "idx_menus_parent_sort"} {
+		if !strings.Contains(menuSQL, fragment) {
+			t.Fatalf("dynamic menu migration missing %q", fragment)
+		}
+	}
+
+	menuV2SQL := migrations[8].SQL
+	for _, fragment := range []string{"button", "component", "link_url", "hide_menu", "menus_menu_type_check"} {
+		if !strings.Contains(menuV2SQL, fragment) {
+			t.Fatalf("menu management v2 migration missing %q", fragment)
+		}
+	}
+
+	identitySQL := migrations[2].SQL
+	for _, table := range []string{"tenants", "users", "roles", "permissions", "role_permissions", "user_roles", "user_sessions", "audit_logs"} {
+		if !strings.Contains(identitySQL, "CREATE TABLE IF NOT EXISTS "+table) {
+			t.Fatalf("identity migration does not create %s", table)
 		}
 	}
 

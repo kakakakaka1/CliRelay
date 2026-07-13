@@ -12,7 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	proxypoolsettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/proxypool"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -30,10 +32,11 @@ type proxyPoolAPIEntry struct {
 
 // GetProxyPool returns reusable proxy entries for the management UI.
 func (h *Handler) GetProxyPool(c *gin.Context) {
+	tenantID := effectiveTenantID(c)
 	var entries []config.ProxyPoolEntry
-	if proxypoolsettings.StoreAvailable() {
-		entries = proxypoolsettings.List()
-	} else if h != nil {
+	if proxypoolsettings.StoreAvailableForTenant(tenantID) {
+		entries = proxypoolsettings.ListForTenant(tenantID)
+	} else if h != nil && tenantID == identity.SystemTenantID {
 		h.mu.Lock()
 		if h.cfg != nil {
 			entries = append(entries, h.cfg.ProxyPool...)
@@ -53,6 +56,7 @@ func (h *Handler) GetProxyPool(c *gin.Context) {
 
 // PutProxyPool replaces the reusable proxy list after normalization.
 func (h *Handler) PutProxyPool(c *gin.Context) {
+	tenantID := effectiveTenantID(c)
 	var body struct {
 		Items []config.ProxyPoolEntry `json:"items"`
 	}
@@ -70,20 +74,24 @@ func (h *Handler) PutProxyPool(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no valid proxy entries"})
 		return
 	}
-	if proxypoolsettings.StoreAvailable() {
-		if err := proxypoolsettings.Replace(normalized); err != nil {
+	if proxypoolsettings.StoreAvailableForTenant(tenantID) {
+		if err := proxypoolsettings.ReplaceForTenant(tenantID, normalized); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to save proxy pool: %v", err)})
 			return
 		}
-		h.mu.Lock()
-		if h.cfg == nil {
-			h.cfg = &config.Config{}
+		if tenantID == identity.SystemTenantID {
+			h.mu.Lock()
+			if h.cfg == nil {
+				h.cfg = &config.Config{}
+			}
+			h.cfg.ProxyPool = proxypoolsettings.ListForTenant(tenantID)
+			cfgRef := h.cfg
+			h.mu.Unlock()
+			h.notifyConfigMutated(cfgRef)
+		} else {
+			h.applyTenantProxyPoolConfig(tenantID)
 		}
-		h.cfg.ProxyPool = proxypoolsettings.List()
-		cfgRef := h.cfg
-		h.mu.Unlock()
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-		h.notifyConfigMutated(cfgRef)
 		return
 	}
 
@@ -99,6 +107,7 @@ func (h *Handler) PutProxyPool(c *gin.Context) {
 
 // PatchProxyPoolEntry updates one reusable proxy entry identified by its stable ID.
 func (h *Handler) PatchProxyPoolEntry(c *gin.Context) {
+	tenantID := effectiveTenantID(c)
 	originalID := config.NormalizeProxyID(c.Param("id"))
 	if originalID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
@@ -129,8 +138,8 @@ func (h *Handler) PatchProxyPoolEntry(c *gin.Context) {
 	}
 	updated := normalized[0]
 
-	if proxypoolsettings.StoreAvailable() {
-		if err := proxypoolsettings.Update(originalID, updated); err != nil {
+	if proxypoolsettings.StoreAvailableForTenant(tenantID) {
+		if err := proxypoolsettings.UpdateForTenant(tenantID, originalID, updated); err != nil {
 			if errors.Is(err, proxypoolsettings.ErrItemNotFound) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "item not found"})
 				return
@@ -138,15 +147,19 @@ func (h *Handler) PatchProxyPoolEntry(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update proxy pool entry: %v", err)})
 			return
 		}
-		h.mu.Lock()
-		if h.cfg == nil {
-			h.cfg = &config.Config{}
+		if tenantID == identity.SystemTenantID {
+			h.mu.Lock()
+			if h.cfg == nil {
+				h.cfg = &config.Config{}
+			}
+			h.cfg.ProxyPool = proxypoolsettings.ListForTenant(tenantID)
+			cfgRef := h.cfg
+			h.mu.Unlock()
+			h.notifyConfigMutated(cfgRef)
+		} else {
+			h.applyTenantProxyPoolConfig(tenantID)
 		}
-		h.cfg.ProxyPool = proxypoolsettings.List()
-		cfgRef := h.cfg
-		h.mu.Unlock()
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-		h.notifyConfigMutated(cfgRef)
 		return
 	}
 
@@ -175,6 +188,14 @@ func (h *Handler) PatchProxyPoolEntry(c *gin.Context) {
 	h.persist(c)
 }
 
+func (h *Handler) applyTenantProxyPoolConfig(tenantID string) {
+	if h == nil || h.authManager == nil || h.cfg == nil {
+		return
+	}
+	tenantCfg := usage.BuildTenantRuntimeConfig(h.cfg, tenantID)
+	h.authManager.SetConfigForTenant(tenantID, &tenantCfg)
+}
+
 // GetPublicPing returns a lightweight public 204 endpoint for proxy latency probes.
 func (h *Handler) GetPublicPing(c *gin.Context) {
 	c.Status(http.StatusNoContent)
@@ -182,6 +203,7 @@ func (h *Handler) GetPublicPing(c *gin.Context) {
 
 // PostProxyPoolCheck checks whether a proxy can reach the deployed server.
 func (h *Handler) PostProxyPoolCheck(c *gin.Context) {
+	tenantID := effectiveTenantID(c)
 	var body struct {
 		ID      string `json:"id"`
 		URL     string `json:"url"`
@@ -193,12 +215,12 @@ func (h *Handler) PostProxyPoolCheck(c *gin.Context) {
 	}
 
 	proxyURL := strings.TrimSpace(body.URL)
-	if proxyURL == "" && proxypoolsettings.StoreAvailable() {
-		if entry := proxypoolsettings.Get(body.ID); entry != nil && entry.Enabled {
+	if proxyURL == "" && proxypoolsettings.StoreAvailableForTenant(tenantID) {
+		if entry := proxypoolsettings.GetForTenant(tenantID, body.ID); entry != nil && entry.Enabled {
 			proxyURL = strings.TrimSpace(entry.URL)
 		}
 	}
-	if proxyURL == "" && h != nil && h.cfg != nil {
+	if proxyURL == "" && tenantID == identity.SystemTenantID && h != nil && h.cfg != nil {
 		proxyURL = h.cfg.ResolveProxyURL(body.ID, "")
 	}
 	if err := config.ValidateProxyURL(proxyURL); err != nil {

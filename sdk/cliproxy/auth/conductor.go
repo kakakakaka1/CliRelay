@@ -145,6 +145,7 @@ func (NoopHook) OnResult(context.Context, Result) {}
 type Manager struct {
 	store                 Store
 	executors             map[string]ProviderExecutor
+	tenantExecutors       map[string]map[string]ProviderExecutor
 	selector              Selector
 	roundRobinSelector    *RoundRobinSelector
 	fillFirstSelector     *FillFirstSelector
@@ -159,7 +160,7 @@ type Manager struct {
 	requestRetry     atomic.Int32
 	maxRetryInterval atomic.Int64
 
-	// oauthModelAlias stores global OAuth model alias mappings (alias -> upstream name) keyed by channel.
+	// oauthModelAlias stores tenant -> channel -> alias mappings used during OAuth execution.
 	oauthModelAlias atomic.Value
 
 	// apiKeyModelAlias caches resolved model alias mappings for API-key auths.
@@ -204,6 +205,7 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 	manager := &Manager{
 		store:                 store,
 		executors:             make(map[string]ProviderExecutor),
+		tenantExecutors:       make(map[string]map[string]ProviderExecutor),
 		selector:              selector,
 		roundRobinSelector:    roundRobinSelector,
 		fillFirstSelector:     fillFirstSelector,
@@ -215,7 +217,7 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		quotaProbeAfter:       make(map[string]time.Time),
 	}
 	// atomic.Value requires non-nil initial value.
-	manager.runtimeConfig.Store(newRuntimeConfigSnapshot(nil))
+	manager.runtimeConfig.Store(runtimeConfigSnapshotSet{defaultTenantID: newRuntimeConfigSnapshot(nil)})
 	manager.apiKeyModelAlias.Store(apiKeyModelAliasTable(nil))
 	AttachDefaultModelRegistry(manager)
 	return manager

@@ -262,12 +262,12 @@ func (_q *AuthFileQuotaSnapshotQuery) Clone() *AuthFileQuotaSnapshotQuery {
 // Example:
 //
 //	var v []struct {
-//		DateKey string `json:"date_key,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.AuthFileQuotaSnapshot.Query().
-//		GroupBy(authfilequotasnapshot.FieldDateKey).
+//		GroupBy(authfilequotasnapshot.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *AuthFileQuotaSnapshotQuery) GroupBy(field string, fields ...string) *AuthFileQuotaSnapshotGroupBy {
@@ -285,11 +285,11 @@ func (_q *AuthFileQuotaSnapshotQuery) GroupBy(field string, fields ...string) *A
 // Example:
 //
 //	var v []struct {
-//		DateKey string `json:"date_key,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.AuthFileQuotaSnapshot.Query().
-//		Select(authfilequotasnapshot.FieldDateKey).
+//		Select(authfilequotasnapshot.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *AuthFileQuotaSnapshotQuery) Select(fields ...string) *AuthFileQuotaSnapshotSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

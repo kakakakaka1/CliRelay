@@ -10,16 +10,16 @@ import (
 	settingsstore "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/store"
 )
 
-func oauthSettingsService(h *ProviderKeysHandler) *oauthsettings.Service {
+func oauthSettingsService(h *ProviderKeysHandler, c *gin.Context) *oauthsettings.Service {
 	if h == nil {
 		return oauthsettings.NewService(nil)
 	}
-	return oauthsettings.NewService(h.cfg)
+	return oauthsettings.NewService(h.providerConfigForTenant(c))
 }
 
 // oauth-excluded-models: map[string][]string
 func (h *ProviderKeysHandler) GetOAuthExcludedModels(c *gin.Context) {
-	c.JSON(200, gin.H{"oauth-excluded-models": oauthSettingsService(h).ExcludedModels()})
+	c.JSON(200, gin.H{"oauth-excluded-models": oauthSettingsService(h, c).ExcludedModels()})
 }
 
 func (h *ProviderKeysHandler) PutOAuthExcludedModels(c *gin.Context) {
@@ -39,8 +39,8 @@ func (h *ProviderKeysHandler) PutOAuthExcludedModels(c *gin.Context) {
 		}
 		entries = wrapper.Items
 	}
-	setting := oauthSettingsService(h).SetExcludedModels(entries)
-	h.persistRuntimeSetting(c, settingsstore.RuntimeSettingOAuthExcludedModels, setting)
+	setting := oauthSettingsService(h, c).SetExcludedModels(entries)
+	h.persistRuntimeSettingForTenant(c, settingsstore.RuntimeSettingOAuthExcludedModels, setting, h.providerConfigForTenant(c))
 }
 
 func (h *ProviderKeysHandler) PatchOAuthExcludedModels(c *gin.Context) {
@@ -52,7 +52,7 @@ func (h *ProviderKeysHandler) PatchOAuthExcludedModels(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	setting, err := oauthSettingsService(h).PatchExcludedModels(*body.Provider, body.Models)
+	setting, err := oauthSettingsService(h, c).PatchExcludedModels(*body.Provider, body.Models)
 	if err == oauthsettings.ErrInvalidProvider {
 		c.JSON(400, gin.H{"error": "invalid provider"})
 		return
@@ -61,11 +61,11 @@ func (h *ProviderKeysHandler) PatchOAuthExcludedModels(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "provider not found"})
 		return
 	}
-	h.persistRuntimeSetting(c, settingsstore.RuntimeSettingOAuthExcludedModels, setting)
+	h.persistRuntimeSettingForTenant(c, settingsstore.RuntimeSettingOAuthExcludedModels, setting, h.providerConfigForTenant(c))
 }
 
 func (h *ProviderKeysHandler) DeleteOAuthExcludedModels(c *gin.Context) {
-	setting, err := oauthSettingsService(h).DeleteExcludedModels(c.Query("provider"))
+	setting, err := oauthSettingsService(h, c).DeleteExcludedModels(c.Query("provider"))
 	if err == oauthsettings.ErrInvalidProvider {
 		c.JSON(400, gin.H{"error": "missing provider"})
 		return
@@ -74,12 +74,12 @@ func (h *ProviderKeysHandler) DeleteOAuthExcludedModels(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "provider not found"})
 		return
 	}
-	h.persistRuntimeSetting(c, settingsstore.RuntimeSettingOAuthExcludedModels, setting)
+	h.persistRuntimeSettingForTenant(c, settingsstore.RuntimeSettingOAuthExcludedModels, setting, h.providerConfigForTenant(c))
 }
 
 // oauth-model-alias: map[string][]OAuthModelAlias
 func (h *ProviderKeysHandler) GetOAuthModelAlias(c *gin.Context) {
-	c.JSON(200, gin.H{"oauth-model-alias": oauthSettingsService(h).ModelAlias()})
+	c.JSON(200, gin.H{"oauth-model-alias": oauthSettingsService(h, c).ModelAlias()})
 }
 
 func (h *ProviderKeysHandler) PutOAuthModelAlias(c *gin.Context) {
@@ -99,8 +99,8 @@ func (h *ProviderKeysHandler) PutOAuthModelAlias(c *gin.Context) {
 		}
 		entries = wrapper.Items
 	}
-	setting := oauthSettingsService(h).SetModelAlias(entries)
-	h.persistRuntimeSetting(c, settingsstore.RuntimeSettingOAuthModelAlias, setting)
+	setting := oauthSettingsService(h, c).SetModelAlias(entries)
+	h.persistRuntimeSettingForTenant(c, settingsstore.RuntimeSettingOAuthModelAlias, setting, h.providerConfigForTenant(c))
 }
 
 func (h *ProviderKeysHandler) PatchOAuthModelAlias(c *gin.Context) {
@@ -119,7 +119,7 @@ func (h *ProviderKeysHandler) PatchOAuthModelAlias(c *gin.Context) {
 	} else if body.Provider != nil {
 		channelRaw = *body.Provider
 	}
-	setting, err := oauthSettingsService(h).PatchModelAlias(channelRaw, body.Aliases)
+	setting, err := oauthSettingsService(h, c).PatchModelAlias(channelRaw, body.Aliases)
 	if err == oauthsettings.ErrInvalidChannel {
 		c.JSON(400, gin.H{"error": "invalid channel"})
 		return
@@ -128,7 +128,7 @@ func (h *ProviderKeysHandler) PatchOAuthModelAlias(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "channel not found"})
 		return
 	}
-	h.persistRuntimeSetting(c, settingsstore.RuntimeSettingOAuthModelAlias, setting)
+	h.persistRuntimeSettingForTenant(c, settingsstore.RuntimeSettingOAuthModelAlias, setting, h.providerConfigForTenant(c))
 }
 
 func (h *ProviderKeysHandler) DeleteOAuthModelAlias(c *gin.Context) {
@@ -140,10 +140,10 @@ func (h *ProviderKeysHandler) DeleteOAuthModelAlias(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "missing channel"})
 		return
 	}
-	setting, err := oauthSettingsService(h).DeleteModelAlias(channel)
+	setting, err := oauthSettingsService(h, c).DeleteModelAlias(channel)
 	if err == oauthsettings.ErrChannelNotFound {
 		c.JSON(404, gin.H{"error": "channel not found"})
 		return
 	}
-	h.persistRuntimeSetting(c, settingsstore.RuntimeSettingOAuthModelAlias, setting)
+	h.persistRuntimeSettingForTenant(c, settingsstore.RuntimeSettingOAuthModelAlias, setting, h.providerConfigForTenant(c))
 }

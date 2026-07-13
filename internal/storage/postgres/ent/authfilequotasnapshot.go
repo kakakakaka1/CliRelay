@@ -17,6 +17,8 @@ type AuthFileQuotaSnapshot struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// DateKey holds the value of the "date_key" field.
 	DateKey string `json:"date_key,omitempty"`
 	// AuthIndex holds the value of the "auth_index" field.
@@ -43,7 +45,7 @@ func (*AuthFileQuotaSnapshot) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case authfilequotasnapshot.FieldID:
 			values[i] = new(sql.NullInt64)
-		case authfilequotasnapshot.FieldDateKey, authfilequotasnapshot.FieldAuthIndex, authfilequotasnapshot.FieldAuthSubjectID, authfilequotasnapshot.FieldProvider, authfilequotasnapshot.FieldQuotaKey:
+		case authfilequotasnapshot.FieldTenantID, authfilequotasnapshot.FieldDateKey, authfilequotasnapshot.FieldAuthIndex, authfilequotasnapshot.FieldAuthSubjectID, authfilequotasnapshot.FieldProvider, authfilequotasnapshot.FieldQuotaKey:
 			values[i] = new(sql.NullString)
 		case authfilequotasnapshot.FieldRecordedAt:
 			values[i] = new(sql.NullTime)
@@ -68,6 +70,12 @@ func (_m *AuthFileQuotaSnapshot) assignValues(columns []string, values []any) er
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case authfilequotasnapshot.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case authfilequotasnapshot.FieldDateKey:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field date_key", values[i])
@@ -147,6 +155,9 @@ func (_m *AuthFileQuotaSnapshot) String() string {
 	var builder strings.Builder
 	builder.WriteString("AuthFileQuotaSnapshot(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("date_key=")
 	builder.WriteString(_m.DateKey)
 	builder.WriteString(", ")

@@ -12,18 +12,29 @@ import (
 
 const createRoutingConfigTableSQL = `
 CREATE TABLE IF NOT EXISTS routing_config (
-  id         INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+  tenant_id  TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+  id         INTEGER NOT NULL CHECK (id = 1),
   payload    TEXT NOT NULL DEFAULT '{}',
-  updated_at TEXT NOT NULL DEFAULT ''
+  updated_at TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (tenant_id, id)
 );
 `
 
 type Store struct {
-	db *sql.DB
+	db       *sql.DB
+	tenantID string
 }
 
 func NewStore(db *sql.DB) Store {
-	return Store{db: db}
+	return NewTenantStore(db, "")
+}
+
+func NewTenantStore(db *sql.DB, tenantID string) Store {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = "00000000-0000-0000-0000-000000000001"
+	}
+	return Store{db: db, tenantID: tenantID}
 }
 
 func InitTable(db *sql.DB) {
@@ -33,6 +44,7 @@ func InitTable(db *sql.DB) {
 	if _, err := db.Exec(createRoutingConfigTableSQL); err != nil {
 		log.Errorf("sqlite/routing: create routing_config table: %v", err)
 	}
+	migrateTenantSchema(db)
 }
 
 func normalize(input config.RoutingConfig) config.RoutingConfig {
@@ -51,7 +63,7 @@ func (s Store) Get() *config.RoutingConfig {
 	}
 
 	var payload string
-	if err := s.db.QueryRow(`SELECT payload FROM routing_config WHERE id = 1`).Scan(&payload); err != nil {
+	if err := s.db.QueryRow(`SELECT payload FROM routing_config WHERE tenant_id = ? AND id = 1`, s.tenantID).Scan(&payload); err != nil {
 		if err != sql.ErrNoRows {
 			log.Warnf("sqlite/routing: load routing_config: %v", err)
 		}
@@ -84,9 +96,10 @@ func (s Store) Upsert(cfg config.RoutingConfig) error {
 	}
 
 	_, err = s.db.Exec(
-		`INSERT INTO routing_config (id, payload, updated_at)
-		 VALUES (1, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`,
+		`INSERT INTO routing_config (tenant_id, id, payload, updated_at)
+		 VALUES (?, 1, ?, ?)
+		 ON CONFLICT(tenant_id, id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`,
+		s.tenantID,
 		string(payload),
 		time.Now().UTC().Format(time.RFC3339),
 	)
@@ -120,4 +133,58 @@ func (s Store) MigrateFromConfig(cfg *config.Config) (migrated bool, hadStored b
 		return false, false
 	}
 	return true, false
+}
+
+func migrateTenantSchema(db *sql.DB) {
+	if db == nil {
+		return
+	}
+	rows, err := db.Query("PRAGMA table_info(routing_config)")
+	if err != nil {
+		return // PostgreSQL schema is handled by versioned migrations.
+	}
+	defer rows.Close()
+	hasTenant := false
+	tenantPrimary := false
+	idPrimary := false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, typ string
+		var def sql.NullString
+		if rows.Scan(&cid, &name, &typ, &notNull, &def, &pk) != nil {
+			return
+		}
+		hasTenant = hasTenant || name == "tenant_id"
+		tenantPrimary = tenantPrimary || (name == "tenant_id" && pk > 0)
+		idPrimary = idPrimary || (name == "id" && pk > 0)
+	}
+	_ = rows.Close()
+	if hasTenant && tenantPrimary && idPrimary {
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if !hasTenant {
+		if _, err = tx.Exec("ALTER TABLE routing_config ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'"); err != nil {
+			return
+		}
+	}
+	if _, err = tx.Exec("ALTER TABLE routing_config RENAME TO routing_config_legacy"); err != nil {
+		return
+	}
+	if _, err = tx.Exec(createRoutingConfigTableSQL); err != nil {
+		return
+	}
+	if _, err = tx.Exec("INSERT INTO routing_config(tenant_id,id,payload,updated_at) SELECT tenant_id,id,payload,updated_at FROM routing_config_legacy"); err != nil {
+		return
+	}
+	if _, err = tx.Exec("DROP TABLE routing_config_legacy"); err != nil {
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		log.Warnf("sqlite/routing: migrate tenant schema: %v", err)
+	}
 }

@@ -262,12 +262,12 @@ func (_q *APIKeyQuery) Clone() *APIKeyQuery {
 // Example:
 //
 //	var v []struct {
-//		Key string `json:"key,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.APIKey.Query().
-//		GroupBy(apikey.FieldKey).
+//		GroupBy(apikey.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *APIKeyQuery) GroupBy(field string, fields ...string) *APIKeyGroupBy {
@@ -285,11 +285,11 @@ func (_q *APIKeyQuery) GroupBy(field string, fields ...string) *APIKeyGroupBy {
 // Example:
 //
 //	var v []struct {
-//		Key string `json:"key,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.APIKey.Query().
-//		Select(apikey.FieldKey).
+//		Select(apikey.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *APIKeyQuery) Select(fields ...string) *APIKeySelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

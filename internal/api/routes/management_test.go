@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -25,7 +26,7 @@ func TestRegisterManagementRouteTable(t *testing.T) {
 		routes[key] = route
 	}
 
-	if got, want := len(routes), 235; got != want {
+	if got, want := len(routes), 262; got != want {
 		t.Fatalf("route count = %d, want %d", got, want)
 	}
 	if got, want := sortedRouteKeys(routes), expectedManagementRoutes(); !slices.Equal(got, want) {
@@ -78,6 +79,73 @@ func TestRegisterManagementRouteTable(t *testing.T) {
 	}
 }
 
+// TestManagementRoutePermissionsComplete fails if any non-public management
+// route maps to an empty permission (fail-open gap) or if sensitive/write
+// routes regress to the wrong class of permission.
+func TestManagementRoutePermissionsComplete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	engine := gin.New()
+	RegisterManagement(engine, &managementhandlers.Handler{}, ManagementOptions{})
+
+	var missing []string
+	for _, route := range engine.Routes() {
+		if !strings.HasPrefix(route.Path, "/v0/management") {
+			continue
+		}
+		// Public endpoints use separate middleware and do not go through
+		// permissionForManagementRequest.
+		if strings.Contains(route.Path, "/public/") {
+			continue
+		}
+		samplePath := managementPermissionSamplePath(route.Path)
+		perm := managementhandlers.ManagementRequestPermission(route.Method, samplePath)
+		if perm == "" {
+			missing = append(missing, route.Method+" "+route.Path)
+		}
+		// Non-read methods must never map to a *.read capability.
+		if route.Method != http.MethodGet && route.Method != http.MethodHead && strings.HasSuffix(perm, ".read") {
+			t.Errorf("%s %s maps write method to read permission %q", route.Method, route.Path, perm)
+		}
+	}
+	if len(missing) > 0 {
+		slices.Sort(missing)
+		t.Fatalf("routes without explicit permission (fail closed expected non-empty):\n%s", strings.Join(missing, "\n"))
+	}
+
+	// Lock sensitive / write cases called out in the review findings.
+	locked := []struct {
+		method, path, want string
+	}{
+		{http.MethodGet, "/v0/management/request-error-logs", "system.logs.read"},
+		{http.MethodGet, "/v0/management/request-error-logs/err.log", "system.logs.read"},
+		{http.MethodGet, "/v0/management/request-log-by-id/req-1", "system.logs.read"},
+		{http.MethodGet, "/v0/management/logs", "system.logs.read"},
+		{http.MethodDelete, "/v0/management/logs", "system.logs.delete"},
+		{http.MethodPost, "/v0/management/usage/import", "system.config.write"},
+		{http.MethodPost, "/v0/management/usage/auth-file-quota-snapshot", "auth_files.write"},
+		{http.MethodGet, "/v0/management/totally-unknown-route", ""},
+	}
+	for _, item := range locked {
+		if got := managementhandlers.ManagementRequestPermission(item.method, item.path); got != item.want {
+			t.Errorf("ManagementRequestPermission(%s,%s)=%q want %q", item.method, item.path, got, item.want)
+		}
+	}
+}
+
+func managementPermissionSamplePath(routePath string) string {
+	// permissionForManagementRequest uses prefix/suffix heuristics; substitute
+	// path params with stable sample segments.
+	path := routePath
+	path = strings.ReplaceAll(path, ":code", "system.config")
+	path = strings.ReplaceAll(path, ":id", "sample-id")
+	path = strings.ReplaceAll(path, ":name", "error.log")
+	path = strings.ReplaceAll(path, ":task_id", "task-1")
+	path = strings.ReplaceAll(path, ":channel", "openai")
+	path = strings.ReplaceAll(path, "*id", "wildcard-id")
+	return path
+}
+
 func sortedRouteKeys(routes map[string]gin.RouteInfo) []string {
 	keys := make([]string, 0, len(routes))
 	for key := range routes {
@@ -103,6 +171,33 @@ func diffStrings(want, got []string) []string {
 
 func expectedManagementRoutes() []string {
 	routes := []string{
+		"GET /v0/auth/me",
+		"POST /v0/auth/login",
+		"POST /v0/auth/logout",
+		"PUT /v0/auth/password",
+		"GET /v0/management/menus",
+		"POST /v0/management/menus",
+		"PATCH /v0/management/menus/:code",
+		"DELETE /v0/management/menus/:code",
+		"GET /v0/management/permissions",
+		"GET /v0/management/roles",
+		"POST /v0/management/roles",
+		"PUT /v0/management/roles/:id/permissions",
+		"PUT /v0/management/roles/:id/users",
+		"GET /v0/management/tenants",
+		"POST /v0/management/tenants",
+		"PATCH /v0/management/tenants/:id",
+		"DELETE /v0/management/tenants/:id",
+		"GET /v0/management/users",
+		"POST /v0/management/users",
+		"POST /v0/management/users/:id/reset-password",
+		"PATCH /v0/management/users/:id",
+		"DELETE /v0/management/users/:id",
+		"PUT /v0/management/users/:id/roles",
+		"GET /v0/management/audit-logs",
+		"GET /v0/management/audit-logs/:id",
+		"DELETE /v0/management/audit-logs/:id",
+		"DELETE /v0/management/roles/:id",
 		"DELETE /v0/management/ampcode/model-mappings",
 		"DELETE /v0/management/ampcode/upstream-api-key",
 		"DELETE /v0/management/ampcode/upstream-api-keys",

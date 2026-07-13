@@ -14,7 +14,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/bodyutil"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	settingsstore "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/store"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
@@ -32,7 +34,32 @@ func (h *Handler) GetConfig(c *gin.Context) {
 		c.JSON(200, gin.H{})
 		return
 	}
-	c.JSON(200, sanitizeConfigForAPI(h.cfg))
+	tenantID := effectiveTenantID(c)
+	if tenantID == identity.SystemTenantID {
+		c.JSON(200, sanitizeConfigForAPI(h.cfg))
+		return
+	}
+	runtimeCfg := usage.BuildTenantRuntimeConfig(h.cfg, tenantID)
+	tenantView := &config.Config{
+		Routing:              runtimeCfg.Routing,
+		ProxyPool:            runtimeCfg.ProxyPool,
+		GeminiKey:            runtimeCfg.GeminiKey,
+		CodexKey:             runtimeCfg.CodexKey,
+		ClaudeKey:            runtimeCfg.ClaudeKey,
+		BedrockKey:           runtimeCfg.BedrockKey,
+		OpenCodeGoKey:        runtimeCfg.OpenCodeGoKey,
+		ClineKey:             runtimeCfg.ClineKey,
+		OllamaCloudKey:       runtimeCfg.OllamaCloudKey,
+		OpenAICompatibility:  runtimeCfg.OpenAICompatibility,
+		VertexCompatAPIKey:   runtimeCfg.VertexCompatAPIKey,
+		ClaudeHeaderDefaults: runtimeCfg.ClaudeHeaderDefaults,
+		KimiHeaderDefaults:   runtimeCfg.KimiHeaderDefaults,
+		CodexOAuthAdmission:  runtimeCfg.CodexOAuthAdmission,
+		OAuthExcludedModels:  runtimeCfg.OAuthExcludedModels,
+		OAuthModelAlias:      runtimeCfg.OAuthModelAlias,
+		Payload:              runtimeCfg.Payload,
+	}
+	c.JSON(200, sanitizeConfigForAPI(tenantView))
 }
 
 // maskKey masks an API key / secret, preserving first 6 and last 4 characters.

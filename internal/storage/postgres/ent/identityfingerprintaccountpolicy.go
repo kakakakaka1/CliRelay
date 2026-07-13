@@ -16,6 +16,8 @@ type IdentityFingerprintAccountPolicy struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Provider holds the value of the "provider" field.
 	Provider string `json:"provider,omitempty"`
 	// AccountKey holds the value of the "account_key" field.
@@ -38,7 +40,7 @@ func (*IdentityFingerprintAccountPolicy) scanValues(columns []string) ([]any, er
 		switch columns[i] {
 		case identityfingerprintaccountpolicy.FieldID, identityfingerprintaccountpolicy.FieldRevision:
 			values[i] = new(sql.NullInt64)
-		case identityfingerprintaccountpolicy.FieldProvider, identityfingerprintaccountpolicy.FieldAccountKey, identityfingerprintaccountpolicy.FieldStrategy, identityfingerprintaccountpolicy.FieldActiveProfileKey, identityfingerprintaccountpolicy.FieldUpdatedAt:
+		case identityfingerprintaccountpolicy.FieldTenantID, identityfingerprintaccountpolicy.FieldProvider, identityfingerprintaccountpolicy.FieldAccountKey, identityfingerprintaccountpolicy.FieldStrategy, identityfingerprintaccountpolicy.FieldActiveProfileKey, identityfingerprintaccountpolicy.FieldUpdatedAt:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -61,6 +63,12 @@ func (_m *IdentityFingerprintAccountPolicy) assignValues(columns []string, value
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case identityfingerprintaccountpolicy.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case identityfingerprintaccountpolicy.FieldProvider:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field provider", values[i])
@@ -133,6 +141,9 @@ func (_m *IdentityFingerprintAccountPolicy) String() string {
 	var builder strings.Builder
 	builder.WriteString("IdentityFingerprintAccountPolicy(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("provider=")
 	builder.WriteString(_m.Provider)
 	builder.WriteString(", ")

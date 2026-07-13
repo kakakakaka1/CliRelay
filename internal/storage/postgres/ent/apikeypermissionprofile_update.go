@@ -27,6 +27,20 @@ func (_u *APIKeyPermissionProfileUpdate) Where(ps ...predicate.APIKeyPermissionP
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *APIKeyPermissionProfileUpdate) SetTenantID(v string) *APIKeyPermissionProfileUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *APIKeyPermissionProfileUpdate) SetNillableTenantID(v *string) *APIKeyPermissionProfileUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetName sets the "name" field.
 func (_u *APIKeyPermissionProfileUpdate) SetName(v string) *APIKeyPermissionProfileUpdate {
 	_u.mutation.SetName(v)
@@ -271,6 +285,9 @@ func (_u *APIKeyPermissionProfileUpdate) sqlSave(ctx context.Context) (_node int
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(apikeypermissionprofile.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikeypermissionprofile.FieldName, field.TypeString, value)
 	}
@@ -340,6 +357,20 @@ type APIKeyPermissionProfileUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *APIKeyPermissionProfileMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *APIKeyPermissionProfileUpdateOne) SetTenantID(v string) *APIKeyPermissionProfileUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *APIKeyPermissionProfileUpdateOne) SetNillableTenantID(v *string) *APIKeyPermissionProfileUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetName sets the "name" field.
@@ -615,6 +646,9 @@ func (_u *APIKeyPermissionProfileUpdateOne) sqlSave(ctx context.Context) (_node 
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(apikeypermissionprofile.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikeypermissionprofile.FieldName, field.TypeString, value)

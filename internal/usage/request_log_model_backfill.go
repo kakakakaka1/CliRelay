@@ -87,14 +87,15 @@ func backfillRequestLogModelNamesBatch(db *sql.DB, batchSize int, afterID int64)
 	// Prefer the compressed content row; fall back to the legacy uncompressed
 	// input_content column on request_logs for older rows.
 	rows, err := db.Query(
-		`SELECT logs.id,
+		`SELECT logs.id, logs.tenant_id,
 		        logs.input_tokens, logs.output_tokens, logs.reasoning_tokens,
 		        logs.cached_tokens, logs.total_tokens,
 		        coalesce(content.compression, '')   AS compression,
 		        coalesce(content.input_content, '') AS content_input,
 		        logs.input_content                  AS legacy_input
 		 FROM request_logs logs
-		 LEFT JOIN request_log_content content ON content.log_id = logs.id
+		 LEFT JOIN request_log_content content
+		   ON content.tenant_id = logs.tenant_id AND content.log_id = logs.id
 		 WHERE logs.model LIKE '`+providerEchoModelPattern+`'
 		   AND logs.id > ?
 		 ORDER BY logs.id
@@ -108,6 +109,7 @@ func backfillRequestLogModelNamesBatch(db *sql.DB, batchSize int, afterID int64)
 
 	type targetRow struct {
 		ID              int64
+		TenantID        string
 		InputTokens     int64
 		OutputTokens    int64
 		ReasoningTokens int64
@@ -117,12 +119,14 @@ func backfillRequestLogModelNamesBatch(db *sql.DB, batchSize int, afterID int64)
 		ContentInput    []byte
 		LegacyInput     string
 		RecoveredModel  string
+		RecoveredCost   float64
 	}
 	batch := make([]targetRow, 0, batchSize)
 	for rows.Next() {
 		var row targetRow
 		if err := rows.Scan(
 			&row.ID,
+			&row.TenantID,
 			&row.InputTokens, &row.OutputTokens, &row.ReasoningTokens,
 			&row.CachedTokens, &row.TotalTokens,
 			&row.Compression,
@@ -139,6 +143,9 @@ func backfillRequestLogModelNamesBatch(db *sql.DB, batchSize int, afterID int64)
 	if err := rows.Err(); err != nil {
 		return 0, 0, 0, fmt.Errorf("usage: iterate provider-echo model rows: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return 0, 0, 0, fmt.Errorf("usage: close provider-echo model rows: %w", err)
+	}
 	if len(batch) == 0 {
 		return 0, 0, 0, nil
 	}
@@ -151,6 +158,13 @@ func backfillRequestLogModelNamesBatch(db *sql.DB, batchSize int, afterID int64)
 			continue
 		}
 		row.RecoveredModel = model
+		row.RecoveredCost = CalculateCostV2ForTenant(row.TenantID, model, TokenStats{
+			InputTokens:     row.InputTokens,
+			OutputTokens:    row.OutputTokens,
+			ReasoningTokens: row.ReasoningTokens,
+			CachedTokens:    row.CachedTokens,
+			TotalTokens:     row.TotalTokens,
+		})
 	}
 
 	// Backfill is a DB maintenance task, not bound to any request lifecycle. Use the
@@ -165,16 +179,9 @@ func backfillRequestLogModelNamesBatch(db *sql.DB, batchSize int, afterID int64)
 		if row.RecoveredModel == "" {
 			continue
 		}
-		cost := CalculateCostV2(row.RecoveredModel, TokenStats{
-			InputTokens:     row.InputTokens,
-			OutputTokens:    row.OutputTokens,
-			ReasoningTokens: row.ReasoningTokens,
-			CachedTokens:    row.CachedTokens,
-			TotalTokens:     row.TotalTokens,
-		})
 		if _, errExec := tx.Exec(
-			`UPDATE request_logs SET model = ?, cost = ? WHERE id = ?`,
-			row.RecoveredModel, cost, row.ID,
+			`UPDATE request_logs SET model = ?, cost = ? WHERE tenant_id = ? AND id = ?`,
+			row.RecoveredModel, row.RecoveredCost, normalizeTenantID(row.TenantID), row.ID,
 		); errExec != nil {
 			_ = tx.Rollback()
 			return 0, unrecoverable, lastID, fmt.Errorf("usage: update request_logs model: %w", errExec)

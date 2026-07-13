@@ -54,6 +54,11 @@ func IDLTE(id int64) predicate.RequestLogContent {
 	return predicate.RequestLogContent(sql.FieldLTE(FieldID, id))
 }
 
+// TenantID applies equality check predicate on the "tenant_id" field. It's identical to TenantIDEQ.
+func TenantID(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldEQ(FieldTenantID, v))
+}
+
 // Timestamp applies equality check predicate on the "timestamp" field. It's identical to TimestampEQ.
 func Timestamp(v time.Time) predicate.RequestLogContent {
 	return predicate.RequestLogContent(sql.FieldEQ(FieldTimestamp, v))
@@ -82,6 +87,71 @@ func DetailContent(v []byte) predicate.RequestLogContent {
 // SessionID applies equality check predicate on the "session_id" field. It's identical to SessionIDEQ.
 func SessionID(v string) predicate.RequestLogContent {
 	return predicate.RequestLogContent(sql.FieldEQ(FieldSessionID, v))
+}
+
+// TenantIDEQ applies the EQ predicate on the "tenant_id" field.
+func TenantIDEQ(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldEQ(FieldTenantID, v))
+}
+
+// TenantIDNEQ applies the NEQ predicate on the "tenant_id" field.
+func TenantIDNEQ(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldNEQ(FieldTenantID, v))
+}
+
+// TenantIDIn applies the In predicate on the "tenant_id" field.
+func TenantIDIn(vs ...string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldIn(FieldTenantID, vs...))
+}
+
+// TenantIDNotIn applies the NotIn predicate on the "tenant_id" field.
+func TenantIDNotIn(vs ...string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldNotIn(FieldTenantID, vs...))
+}
+
+// TenantIDGT applies the GT predicate on the "tenant_id" field.
+func TenantIDGT(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldGT(FieldTenantID, v))
+}
+
+// TenantIDGTE applies the GTE predicate on the "tenant_id" field.
+func TenantIDGTE(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldGTE(FieldTenantID, v))
+}
+
+// TenantIDLT applies the LT predicate on the "tenant_id" field.
+func TenantIDLT(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldLT(FieldTenantID, v))
+}
+
+// TenantIDLTE applies the LTE predicate on the "tenant_id" field.
+func TenantIDLTE(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldLTE(FieldTenantID, v))
+}
+
+// TenantIDContains applies the Contains predicate on the "tenant_id" field.
+func TenantIDContains(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldContains(FieldTenantID, v))
+}
+
+// TenantIDHasPrefix applies the HasPrefix predicate on the "tenant_id" field.
+func TenantIDHasPrefix(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldHasPrefix(FieldTenantID, v))
+}
+
+// TenantIDHasSuffix applies the HasSuffix predicate on the "tenant_id" field.
+func TenantIDHasSuffix(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldHasSuffix(FieldTenantID, v))
+}
+
+// TenantIDEqualFold applies the EqualFold predicate on the "tenant_id" field.
+func TenantIDEqualFold(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldEqualFold(FieldTenantID, v))
+}
+
+// TenantIDContainsFold applies the ContainsFold predicate on the "tenant_id" field.
+func TenantIDContainsFold(v string) predicate.RequestLogContent {
+	return predicate.RequestLogContent(sql.FieldContainsFold(FieldTenantID, v))
 }
 
 // TimestampEQ applies the EQ predicate on the "timestamp" field.

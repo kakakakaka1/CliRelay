@@ -1833,3 +1833,126 @@ func TestDeleteUsageLogsSupportsSelectiveBodyCleanup(t *testing.T) {
 		t.Fatalf("HasContent = true, want false after selective cleanup")
 	}
 }
+
+func TestGetUsageLogsFiltersByOrphanAuthIndexWithoutLiveMeta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		usage.CloseDB()
+		_ = os.Remove(dbPath)
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+	})
+
+	// Live auth uses the file: seed index (current EnsureIndex behavior).
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	liveAuth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "xai-asherandersenloqv@outlook.com.json",
+		FileName: "xai-asherandersenloqv@outlook.com.json",
+		Provider: "xai",
+		Label:    "asherandersenloqv@outlook.com",
+		Metadata: map[string]any{
+			"email":     "asherandersenloqv@outlook.com",
+			"auth_kind": "oauth",
+		},
+	})
+	if err != nil {
+		t.Fatalf("register live auth: %v", err)
+	}
+
+	// Historical rows were written under the id: seed index before FileName was
+	// consistently set. That orphan index no longer exists in live auth meta.
+	orphanIndex := "69e8946f1ffc2d23"
+	now := time.Now().UTC()
+	usage.InsertLog(
+		"", "", "grok-4.5", "asherandersenloqv@outlook.com", "asherandersenloqv@outlook.com", orphanIndex,
+		false, now.Add(-time.Minute), 100, 10,
+		usage.TokenStats{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
+		"", "",
+	)
+	usage.InsertLog(
+		"", "", "grok-4.5", "asherandersenloqv@outlook.com", "asherandersenloqv@outlook.com", liveAuth.Index,
+		false, now, 100, 10,
+		usage.TokenStats{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
+		"", "",
+	)
+
+	h := &Handler{
+		cfg:         &config.Config{},
+		authManager: manager,
+	}
+
+	// Facet list should collapse the live and historical aliases into one option.
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/usage/logs?days=7&page=1&size=50", nil)
+	h.UsageLogs().GetUsageLogs(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var listPayload struct {
+		Filters struct {
+			ChannelOptions []struct {
+				Value     string `json:"value"`
+				Label     string `json:"label"`
+				Provider  string `json:"provider"`
+				AuthType  string `json:"auth_type"`
+				AuthIndex string `json:"auth_index"`
+			} `json:"channel_options"`
+		} `json:"filters"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("unmarshal list response: %v", err)
+	}
+	if len(listPayload.Filters.ChannelOptions) != 1 {
+		t.Fatalf("channel_options = %#v, want one merged option", listPayload.Filters.ChannelOptions)
+	}
+	option := listPayload.Filters.ChannelOptions[0]
+	if option.Value != liveAuth.Index || option.AuthIndex != liveAuth.Index {
+		t.Fatalf("merged option value/auth_index = %#v, want live index %q", option, liveAuth.Index)
+	}
+	if option.Label != "asherandersenloqv@outlook.com" || option.Provider != "xai" || option.AuthType != "oauth" {
+		t.Fatalf("merged option metadata = %#v", option)
+	}
+
+	// Old deep links using the orphan index expand to the complete alias group.
+	rec = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/usage/logs?days=7&page=1&size=50&channel="+orphanIndex, nil)
+	h.UsageLogs().GetUsageLogs(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("orphan filter expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var filtered struct {
+		Items []struct {
+			AuthIndex   string `json:"auth_index"`
+			ChannelName string `json:"channel_name"`
+			Model       string `json:"model"`
+		} `json:"items"`
+		Total int64 `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &filtered); err != nil {
+		t.Fatalf("unmarshal orphan filtered response: %v", err)
+	}
+	if filtered.Total != 2 || len(filtered.Items) != 2 {
+		t.Fatalf("orphan filtered total/items = %d/%d, want 2/2; body=%s", filtered.Total, len(filtered.Items), rec.Body.String())
+	}
+	found := map[string]bool{}
+	for _, item := range filtered.Items {
+		found[item.AuthIndex] = true
+		if item.ChannelName != "asherandersenloqv@outlook.com" {
+			t.Fatalf("orphan filtered channel_name = %q", item.ChannelName)
+		}
+	}
+	if !found[orphanIndex] || !found[liveAuth.Index] {
+		t.Fatalf("orphan filter missing alias rows: %#v", filtered.Items)
+	}
+}

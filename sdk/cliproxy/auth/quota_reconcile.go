@@ -99,7 +99,7 @@ func (m *Manager) shouldProbeQuota(auth *Auth, now time.Time) bool {
 	if !authHasActiveQuotaCooldown(auth, now) {
 		return false
 	}
-	exec := m.executorFor(auth.Provider)
+	exec := m.executorForTenant(auth.TenantID, auth.Provider)
 	if exec == nil {
 		return false
 	}
@@ -152,7 +152,7 @@ func (m *Manager) probeQuotaRecovery(ctx context.Context, id string, force bool)
 	}
 	m.quotaProbeAfter[id] = now.Add(quotaProbePendingBackoff)
 	cloned := auth.Clone()
-	exec := m.executors[auth.Provider]
+	exec := m.executorForTenantLocked(auth.TenantID, auth.Provider)
 	m.mu.Unlock()
 
 	prober, ok := exec.(QuotaRecoveryProber)

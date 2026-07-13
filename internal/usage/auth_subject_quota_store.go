@@ -19,6 +19,11 @@ type AuthSubjectQuotaCycle struct {
 }
 
 func RecordDailyQuotaSnapshotIdentity(authIndex, authSubjectID, provider string, quotas map[string]*float64) error {
+	return RecordDailyQuotaSnapshotIdentityForTenant(systemTenantID, authIndex, authSubjectID, provider, quotas)
+}
+
+func RecordDailyQuotaSnapshotIdentityForTenant(tenantID, authIndex, authSubjectID, provider string, quotas map[string]*float64) error {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
 		return nil
@@ -45,9 +50,9 @@ func RecordDailyQuotaSnapshotIdentity(authIndex, authSubjectID, provider string,
 	}()
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO auth_file_quota_snapshots (date_key, auth_index, auth_subject_id, provider, quota_key, percent, recorded_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(date_key, auth_index, quota_key) DO UPDATE SET
+		INSERT INTO auth_file_quota_snapshots (tenant_id, date_key, auth_index, auth_subject_id, provider, quota_key, percent, recorded_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant_id, date_key, auth_index, quota_key) DO UPDATE SET
 			auth_subject_id = excluded.auth_subject_id,
 			provider = excluded.provider,
 			percent = excluded.percent,
@@ -76,13 +81,13 @@ func RecordDailyQuotaSnapshotIdentity(authIndex, authSubjectID, provider string,
 			}
 			value = percent
 		}
-		if _, err = stmt.Exec(dateKey, authIndex, authSubjectID, provider, quotaKey, value, recordedAt); err != nil {
+		if _, err = stmt.Exec(tenantID, dateKey, authIndex, authSubjectID, provider, quotaKey, value, recordedAt); err != nil {
 			return fmt.Errorf("usage: quota snapshot upsert: %w", err)
 		}
 	}
 
 	retentionCutoff := cutoffDayKey(7)
-	if _, err = tx.Exec(`DELETE FROM auth_file_quota_snapshots WHERE date_key < ?`, retentionCutoff); err != nil {
+	if _, err = tx.Exec(`DELETE FROM auth_file_quota_snapshots WHERE tenant_id = ? AND date_key < ?`, tenantID, retentionCutoff); err != nil {
 		return fmt.Errorf("usage: quota snapshot prune: %w", err)
 	}
 
@@ -93,6 +98,11 @@ func RecordDailyQuotaSnapshotIdentity(authIndex, authSubjectID, provider string,
 }
 
 func RecordQuotaSnapshotPointsIdentity(authIndex, authSubjectID, provider string, points []QuotaSnapshotPoint) error {
+	return RecordQuotaSnapshotPointsIdentityForTenant(systemTenantID, authIndex, authSubjectID, provider, points)
+}
+
+func RecordQuotaSnapshotPointsIdentityForTenant(tenantID, authIndex, authSubjectID, provider string, points []QuotaSnapshotPoint) error {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
 		return nil
@@ -118,8 +128,8 @@ func RecordQuotaSnapshotPointsIdentity(authIndex, authSubjectID, provider string
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO auth_file_quota_snapshot_points
-			(recorded_at, auth_index, auth_subject_id, provider, quota_key, quota_label, percent, reset_at, window_seconds)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(tenant_id, recorded_at, auth_index, auth_subject_id, provider, quota_key, quota_label, percent, reset_at, window_seconds)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("usage: quota snapshot points prepare: %w", err)
@@ -161,6 +171,7 @@ func RecordQuotaSnapshotPointsIdentity(authIndex, authSubjectID, provider string
 			resetValue = point.ResetAt.UTC().Format(time.RFC3339Nano)
 		}
 		if _, err = stmt.Exec(
+			tenantID,
 			recordedAt.UTC().Format(time.RFC3339Nano),
 			authIndex,
 			authSubjectID,
@@ -173,13 +184,13 @@ func RecordQuotaSnapshotPointsIdentity(authIndex, authSubjectID, provider string
 		); err != nil {
 			return fmt.Errorf("usage: quota snapshot points insert: %w", err)
 		}
-		if err = upsertAuthSubjectQuotaCycleTx(tx, authSubjectID, authIndex, pointProvider, quotaKey, point.ResetAt, point.WindowSeconds, recordedAt); err != nil {
+		if err = upsertAuthSubjectQuotaCycleTx(tx, tenantID, authSubjectID, authIndex, pointProvider, quotaKey, point.ResetAt, point.WindowSeconds, recordedAt); err != nil {
 			return err
 		}
 	}
 
 	retentionCutoff := now.AddDate(0, 0, -8).UTC().Format(time.RFC3339Nano)
-	if _, err = tx.Exec(`DELETE FROM auth_file_quota_snapshot_points WHERE recorded_at < ?`, retentionCutoff); err != nil {
+	if _, err = tx.Exec(`DELETE FROM auth_file_quota_snapshot_points WHERE tenant_id = ? AND recorded_at < ?`, tenantID, retentionCutoff); err != nil {
 		return fmt.Errorf("usage: quota snapshot points prune: %w", err)
 	}
 
@@ -190,7 +201,11 @@ func RecordQuotaSnapshotPointsIdentity(authIndex, authSubjectID, provider string
 }
 
 func QueryQuotaSnapshotSeriesByAuthSubject(matcher AuthSubjectMatcher, start, end time.Time) ([]QuotaSnapshotSeries, error) {
-	points, err := QueryQuotaSnapshotPointsByAuthSubject(matcher, start, end)
+	return QueryQuotaSnapshotSeriesByAuthSubjectForTenant(systemTenantID, matcher, start, end)
+}
+
+func QueryQuotaSnapshotSeriesByAuthSubjectForTenant(tenantID string, matcher AuthSubjectMatcher, start, end time.Time) ([]QuotaSnapshotSeries, error) {
+	points, err := QueryQuotaSnapshotPointsByAuthSubjectForTenant(tenantID, matcher, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -219,6 +234,11 @@ func QueryQuotaSnapshotSeriesByAuthSubject(matcher AuthSubjectMatcher, start, en
 }
 
 func QueryQuotaSnapshotPointsByAuthSubject(matcher AuthSubjectMatcher, start, end time.Time) ([]QuotaSnapshotPoint, error) {
+	return QueryQuotaSnapshotPointsByAuthSubjectForTenant(systemTenantID, matcher, start, end)
+}
+
+func QueryQuotaSnapshotPointsByAuthSubjectForTenant(tenantID string, matcher AuthSubjectMatcher, start, end time.Time) ([]QuotaSnapshotPoint, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
 		return []QuotaSnapshotPoint{}, nil
@@ -235,14 +255,14 @@ func QueryQuotaSnapshotPointsByAuthSubject(matcher AuthSubjectMatcher, start, en
 		return []QuotaSnapshotPoint{}, nil
 	}
 
-	args := make([]interface{}, 0, len(matchArgs)+2)
-	args = append(args, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
+	args := make([]interface{}, 0, len(matchArgs)+3)
+	args = append(args, tenantID, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
 	args = append(args, matchArgs...)
 
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT recorded_at, auth_index, provider, quota_key, quota_label, percent, reset_at, window_seconds
 		FROM auth_file_quota_snapshot_points
-		WHERE recorded_at >= ? AND recorded_at <= ? AND (%s)
+		WHERE tenant_id = ? AND recorded_at >= ? AND recorded_at <= ? AND (%s)
 		ORDER BY recorded_at ASC, quota_key ASC
 	`, matchSQL), args...)
 	if err != nil {
@@ -285,6 +305,11 @@ func QueryQuotaSnapshotPointsByAuthSubject(matcher AuthSubjectMatcher, start, en
 }
 
 func QueryLatestWeeklyQuotaCycleByAuthSubject(subjectID string, quotaKeys ...string) (*AuthSubjectQuotaCycle, error) {
+	return QueryLatestWeeklyQuotaCycleByAuthSubjectForTenant(systemTenantID, subjectID, quotaKeys...)
+}
+
+func QueryLatestWeeklyQuotaCycleByAuthSubjectForTenant(tenantID, subjectID string, quotaKeys ...string) (*AuthSubjectQuotaCycle, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
 		return nil, nil
@@ -302,10 +327,10 @@ func QueryLatestWeeklyQuotaCycleByAuthSubject(subjectID string, quotaKeys ...str
 	query := `
 		SELECT subject_id, auth_index, provider, quota_key, cycle_start_at, reset_at, window_seconds, last_verified_at
 		FROM auth_subject_quota_cycles
-		WHERE subject_id = ? AND window_seconds >= 604800
+		WHERE tenant_id = ? AND subject_id = ? AND window_seconds >= 604800
 	`
-	args := make([]interface{}, 0, 1+len(normalizedKeys))
-	args = append(args, subjectID)
+	args := make([]interface{}, 0, 2+len(normalizedKeys))
+	args = append(args, tenantID, subjectID)
 	if len(normalizedKeys) > 0 {
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(normalizedKeys)), ",")
 		query += " AND quota_key IN (" + placeholders + ")"
@@ -368,7 +393,7 @@ func buildAuthSubjectQuotaMatchClause(matcher AuthSubjectMatcher) (string, []int
 	return strings.Join(clauses, " OR "), args
 }
 
-func upsertAuthSubjectQuotaCycleTx(tx *sql.Tx, authSubjectID, authIndex, provider, quotaKey string, resetAt *time.Time, windowSeconds int64, recordedAt time.Time) error {
+func upsertAuthSubjectQuotaCycleTx(tx *sql.Tx, tenantID, authSubjectID, authIndex, provider, quotaKey string, resetAt *time.Time, windowSeconds int64, recordedAt time.Time) error {
 	authSubjectID = strings.TrimSpace(authSubjectID)
 	quotaKey = strings.TrimSpace(quotaKey)
 	if authSubjectID == "" || quotaKey == "" || resetAt == nil || resetAt.IsZero() || windowSeconds <= 0 {
@@ -379,9 +404,9 @@ func upsertAuthSubjectQuotaCycleTx(tx *sql.Tx, authSubjectID, authIndex, provide
 	recordedAt = recordedAt.UTC()
 	_, err := tx.Exec(`
 		INSERT INTO auth_subject_quota_cycles
-			(subject_id, auth_index, provider, quota_key, cycle_start_at, reset_at, window_seconds, last_verified_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(subject_id, quota_key) DO UPDATE SET
+			(tenant_id, subject_id, auth_index, provider, quota_key, cycle_start_at, reset_at, window_seconds, last_verified_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant_id, subject_id, quota_key) DO UPDATE SET
 			auth_index = excluded.auth_index,
 			provider = excluded.provider,
 			cycle_start_at = excluded.cycle_start_at,
@@ -389,6 +414,7 @@ func upsertAuthSubjectQuotaCycleTx(tx *sql.Tx, authSubjectID, authIndex, provide
 			window_seconds = excluded.window_seconds,
 			last_verified_at = excluded.last_verified_at
 	`,
+		normalizeTenantID(tenantID),
 		authSubjectID,
 		strings.TrimSpace(authIndex),
 		strings.TrimSpace(provider),

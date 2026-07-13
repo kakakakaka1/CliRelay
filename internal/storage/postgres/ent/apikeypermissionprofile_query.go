@@ -262,12 +262,12 @@ func (_q *APIKeyPermissionProfileQuery) Clone() *APIKeyPermissionProfileQuery {
 // Example:
 //
 //	var v []struct {
-//		Name string `json:"name,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.APIKeyPermissionProfile.Query().
-//		GroupBy(apikeypermissionprofile.FieldName).
+//		GroupBy(apikeypermissionprofile.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *APIKeyPermissionProfileQuery) GroupBy(field string, fields ...string) *APIKeyPermissionProfileGroupBy {
@@ -285,11 +285,11 @@ func (_q *APIKeyPermissionProfileQuery) GroupBy(field string, fields ...string) 
 // Example:
 //
 //	var v []struct {
-//		Name string `json:"name,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.APIKeyPermissionProfile.Query().
-//		Select(apikeypermissionprofile.FieldName).
+//		Select(apikeypermissionprofile.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *APIKeyPermissionProfileQuery) Select(fields ...string) *APIKeyPermissionProfileSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

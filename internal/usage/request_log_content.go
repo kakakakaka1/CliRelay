@@ -37,6 +37,11 @@ func normalizeLogContentPart(part string) (string, error) {
 
 // QueryLogContent retrieves the stored request/response content for a single log entry.
 func QueryLogContent(id int64) (LogContentResult, error) {
+	return QueryLogContentForTenant(systemTenantID, id)
+}
+
+func QueryLogContentForTenant(tenantID string, id int64) (LogContentResult, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getReadDB()
 	if db == nil {
 		return LogContentResult{}, fmt.Errorf("usage: database not initialised")
@@ -46,9 +51,9 @@ func QueryLogContent(id int64) (LogContentResult, error) {
 		db,
 		`SELECT logs.id, logs.model, content.compression, content.input_content, content.output_content
 		 FROM request_logs logs
-		 JOIN request_log_content content ON content.log_id = logs.id
-		 WHERE logs.id = ?`,
-		id,
+		 JOIN request_log_content content ON content.tenant_id = logs.tenant_id AND content.log_id = logs.id
+		 WHERE logs.tenant_id = ? AND logs.id = ?`,
+		tenantID, id,
 	)
 	if err == nil {
 		return result, nil
@@ -56,7 +61,7 @@ func QueryLogContent(id int64) (LogContentResult, error) {
 
 	var fallback LogContentResult
 	err = db.QueryRow(
-		"SELECT id, model, input_content, output_content FROM request_logs WHERE id = ?", id,
+		"SELECT id, model, input_content, output_content FROM request_logs WHERE tenant_id = ? AND id = ?", tenantID, id,
 	).Scan(&fallback.ID, &fallback.Model, &fallback.InputContent, &fallback.OutputContent)
 	if err != nil {
 		return LogContentResult{}, fmt.Errorf("usage: query log content: %w", err)
@@ -67,6 +72,11 @@ func QueryLogContent(id int64) (LogContentResult, error) {
 // QueryLogContentPart retrieves only one side (input/output) of the stored request/response content
 // for a single log entry. This avoids decompressing/transferring both blobs for the UI.
 func QueryLogContentPart(id int64, part string) (LogContentPartResult, error) {
+	return QueryLogContentPartForTenant(systemTenantID, id, part)
+}
+
+func QueryLogContentPartForTenant(tenantID string, id int64, part string) (LogContentPartResult, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getReadDB()
 	if db == nil {
 		return LogContentPartResult{}, fmt.Errorf("usage: database not initialised")
@@ -90,11 +100,11 @@ func QueryLogContentPart(id int64, part string) (LogContentPartResult, error) {
 		fmt.Sprintf(
 			`SELECT logs.id, logs.model, content.compression, content.%s
 			 FROM request_logs logs
-			 JOIN request_log_content content ON content.log_id = logs.id
-			 WHERE logs.id = ?`,
+			 JOIN request_log_content content ON content.tenant_id = logs.tenant_id AND content.log_id = logs.id
+			 WHERE logs.tenant_id = ? AND logs.id = ?`,
 			column,
 		),
-		id,
+		tenantID, id,
 	)
 	if err == nil {
 		return result, nil
@@ -102,7 +112,7 @@ func QueryLogContentPart(id int64, part string) (LogContentPartResult, error) {
 	if part == "details" {
 		var fallback LogContentPartResult
 		fallback.Part = part
-		err = db.QueryRow("SELECT id, model FROM request_logs WHERE id = ?", id).Scan(&fallback.ID, &fallback.Model)
+		err = db.QueryRow("SELECT id, model FROM request_logs WHERE tenant_id = ? AND id = ?", tenantID, id).Scan(&fallback.ID, &fallback.Model)
 		if err != nil {
 			return LogContentPartResult{}, fmt.Errorf("usage: query log content part: %w", err)
 		}
@@ -112,8 +122,8 @@ func QueryLogContentPart(id int64, part string) (LogContentPartResult, error) {
 	var fallback LogContentPartResult
 	fallback.Part = part
 	err = db.QueryRow(
-		fmt.Sprintf("SELECT id, model, %s FROM request_logs WHERE id = ?", column),
-		id,
+		fmt.Sprintf("SELECT id, model, %s FROM request_logs WHERE tenant_id = ? AND id = ?", column),
+		tenantID, id,
 	).Scan(&fallback.ID, &fallback.Model, &fallback.Content)
 	if err != nil {
 		return LogContentPartResult{}, fmt.Errorf("usage: query log content part: %w", err)
@@ -124,20 +134,21 @@ func QueryLogContentPart(id int64, part string) (LogContentPartResult, error) {
 // QueryLogContentForKey retrieves log content for a single entry, but only if it belongs to the given API key.
 // This is used by the public endpoint to ensure users can only access their own logs.
 func QueryLogContentForKey(id int64, apiKey string) (LogContentResult, error) {
+	tenantID := normalizeTenantID(ResolveAPIKeyTenant(apiKey))
 	db := getReadDB()
 	if db == nil {
 		return LogContentResult{}, fmt.Errorf("usage: database not initialised")
 	}
-	clause, args := buildSingleAPIKeySelectorClause(apiKey)
+	clause, args := buildSingleAPIKeySelectorClauseForTenant(tenantID, apiKey)
 	predicate := strings.TrimPrefix(clause, " WHERE ")
-	queryArgs := append([]interface{}{id}, args...)
+	queryArgs := append([]interface{}{tenantID, id}, args...)
 
 	result, err := queryCompressedLogContent(
 		db,
 		`SELECT logs.id, logs.model, content.compression, content.input_content, content.output_content
 		 FROM request_logs logs
-		 JOIN request_log_content content ON content.log_id = logs.id
-		 WHERE logs.id = ? AND `+predicate,
+		 JOIN request_log_content content ON content.tenant_id = logs.tenant_id AND content.log_id = logs.id
+		 WHERE logs.tenant_id = ? AND logs.id = ? AND `+predicate,
 		queryArgs...,
 	)
 	if err == nil {
@@ -146,7 +157,7 @@ func QueryLogContentForKey(id int64, apiKey string) (LogContentResult, error) {
 
 	var fallback LogContentResult
 	err = db.QueryRow(
-		"SELECT id, model, input_content, output_content FROM request_logs WHERE id = ? AND "+predicate,
+		"SELECT id, model, input_content, output_content FROM request_logs WHERE tenant_id = ? AND id = ? AND "+predicate,
 		queryArgs...,
 	).Scan(&fallback.ID, &fallback.Model, &fallback.InputContent, &fallback.OutputContent)
 	if err != nil {
@@ -158,6 +169,7 @@ func QueryLogContentForKey(id int64, apiKey string) (LogContentResult, error) {
 // QueryLogContentPartForKey retrieves only one side (input/output) of the stored request/response content
 // for a single entry, but only if it belongs to the given API key.
 func QueryLogContentPartForKey(id int64, apiKey string, part string) (LogContentPartResult, error) {
+	tenantID := normalizeTenantID(ResolveAPIKeyTenant(apiKey))
 	db := getReadDB()
 	if db == nil {
 		return LogContentPartResult{}, fmt.Errorf("usage: database not initialised")
@@ -174,9 +186,9 @@ func QueryLogContentPartForKey(id int64, apiKey string, part string) (LogContent
 	} else if part == "details" {
 		column = "detail_content"
 	}
-	clause, args := buildSingleAPIKeySelectorClause(apiKey)
+	clause, args := buildSingleAPIKeySelectorClauseForTenant(tenantID, apiKey)
 	predicate := strings.TrimPrefix(clause, " WHERE ")
-	queryArgs := append([]interface{}{id}, args...)
+	queryArgs := append([]interface{}{tenantID, id}, args...)
 
 	result, err := queryCompressedLogContentPart(
 		db,
@@ -184,8 +196,8 @@ func QueryLogContentPartForKey(id int64, apiKey string, part string) (LogContent
 		fmt.Sprintf(
 			`SELECT logs.id, logs.model, content.compression, content.%s
 			 FROM request_logs logs
-			 JOIN request_log_content content ON content.log_id = logs.id
-			 WHERE logs.id = ? AND %s`,
+			 JOIN request_log_content content ON content.tenant_id = logs.tenant_id AND content.log_id = logs.id
+			 WHERE logs.tenant_id = ? AND logs.id = ? AND %s`,
 			column,
 			predicate,
 		),
@@ -197,7 +209,7 @@ func QueryLogContentPartForKey(id int64, apiKey string, part string) (LogContent
 	if part == "details" {
 		var fallback LogContentPartResult
 		fallback.Part = part
-		err = db.QueryRow("SELECT id, model FROM request_logs WHERE id = ? AND "+predicate, queryArgs...).Scan(&fallback.ID, &fallback.Model)
+		err = db.QueryRow("SELECT id, model FROM request_logs WHERE tenant_id = ? AND id = ? AND "+predicate, queryArgs...).Scan(&fallback.ID, &fallback.Model)
 		if err != nil {
 			return LogContentPartResult{}, fmt.Errorf("usage: query log content part: %w", err)
 		}
@@ -207,7 +219,7 @@ func QueryLogContentPartForKey(id int64, apiKey string, part string) (LogContent
 	var fallback LogContentPartResult
 	fallback.Part = part
 	err = db.QueryRow(
-		fmt.Sprintf("SELECT id, model, %s FROM request_logs WHERE id = ? AND %s", column, predicate),
+		fmt.Sprintf("SELECT id, model, %s FROM request_logs WHERE tenant_id = ? AND id = ? AND %s", column, predicate),
 		queryArgs...,
 	).Scan(&fallback.ID, &fallback.Model, &fallback.Content)
 	if err != nil {

@@ -11,6 +11,8 @@ const (
 	Label = "model_config"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldTenantID holds the string denoting the tenant_id field in the database.
+	FieldTenantID = "tenant_id"
 	// FieldModelID holds the string denoting the model_id field in the database.
 	FieldModelID = "model_id"
 	// FieldOwnedBy holds the string denoting the owned_by field in the database.
@@ -48,6 +50,7 @@ const (
 // Columns holds all SQL columns for modelconfig fields.
 var Columns = []string{
 	FieldID,
+	FieldTenantID,
 	FieldModelID,
 	FieldOwnedBy,
 	FieldDescription,
@@ -76,6 +79,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultTenantID holds the default value on creation for the "tenant_id" field.
+	DefaultTenantID string
 	// DefaultOwnedBy holds the default value on creation for the "owned_by" field.
 	DefaultOwnedBy string
 	// DefaultDescription holds the default value on creation for the "description" field.
@@ -110,6 +115,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByTenantID orders the results by the tenant_id field.
+func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
 }
 
 // ByModelID orders the results by the model_id field.

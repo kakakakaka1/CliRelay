@@ -877,3 +877,44 @@ func BenchmarkCodexIdentityFingerprintHotPathCached(b *testing.B) {
 		}
 	}
 }
+
+func TestTenantCredentialCanObserveLearnedIdentityFingerprints(t *testing.T) {
+	// After multi-tenant migrations, business-tenant OAuth accounts still share
+	// the system-tenant fingerprint catalog by account_key. Runtime must learn
+	// and apply those profiles for non-system tenants, not only the platform tenant.
+	resetIdentityFingerprintRuntimeStateForTest()
+	t.Cleanup(resetIdentityFingerprintRuntimeStateForTest)
+
+	auth := &cliproxyauth.Auth{
+		ID:       "tenant-codex-auth",
+		TenantID: "11111111-1111-1111-1111-111111111111",
+		Provider: "codex",
+		Metadata: map[string]any{
+			"access_token": "codex-token",
+			"account_id":   "tenant-account",
+		},
+	}
+	inbound := http.Header{
+		"User-Agent": {"codex_cli_rs/0.200.0 (Mac OS; arm64)"},
+		"Version":    {"0.200.0"},
+		"Originator": {"codex_cli_rs"},
+	}
+	ctx := contextWithInboundHeaders(http.MethodPost, "/v1/responses", inbound)
+	got := observeRuntimeIdentityFingerprint(identityfingerprint.ProviderCodex, auth, ctx)
+	if got == nil {
+		t.Fatal("observeRuntimeIdentityFingerprint() = nil, want learned record for tenant credential")
+	}
+	if got.Version != "0.200.0" {
+		t.Fatalf("learned version = %q, want 0.200.0", got.Version)
+	}
+	cfg := &config.Config{IdentityFingerprint: config.IdentityFingerprintConfig{
+		Codex: config.CodexIdentityFingerprintConfig{Enabled: true},
+	}}
+	resolved, enabled := codexIdentityFingerprint(cfg, auth, ctx)
+	if !enabled {
+		t.Fatal("codexIdentityFingerprint() disabled for tenant credential")
+	}
+	if resolved.UserAgent == "" && resolved.Version == "" {
+		t.Fatalf("codexIdentityFingerprint() returned empty resolved config: %#v", resolved)
+	}
+}

@@ -117,7 +117,7 @@ func DeleteIdentityFingerprintProfileAndRepairPolicy(provider identityfingerprin
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	res, err := tx.Exec(`DELETE FROM identity_fingerprints WHERE provider = ? AND account_key = ? AND profile_key = ?`, string(provider), accountKey, profileKey)
+	res, err := tx.Exec(`DELETE FROM identity_fingerprints WHERE tenant_id = ? AND provider = ? AND account_key = ? AND profile_key = ?`, systemTenantID, string(provider), accountKey, profileKey)
 	if err != nil {
 		return 0, identityfingerprint.AccountPolicy{}, err
 	}
@@ -163,14 +163,14 @@ type policyExecer interface {
 func getIdentityFingerprintAccountPolicyWith(queryer policyQueryer, provider identityfingerprint.Provider, accountKey string, forUpdate bool) (identityfingerprint.AccountPolicy, error) {
 	query := `SELECT provider, account_key, strategy, active_profile_key, revision, updated_at
 		FROM identity_fingerprint_account_policies
-		WHERE provider = ? AND account_key = ?`
+		WHERE tenant_id = ? AND provider = ? AND account_key = ?`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
 	var policy identityfingerprint.AccountPolicy
 	var providerText, strategy string
 	var updatedAt storedTime
-	if err := queryer.QueryRow(query, string(provider), accountKey).Scan(
+	if err := queryer.QueryRow(query, systemTenantID, string(provider), accountKey).Scan(
 		&providerText,
 		&policy.AccountKey,
 		&strategy,
@@ -189,26 +189,28 @@ func getIdentityFingerprintAccountPolicyWith(queryer policyQueryer, provider ide
 }
 
 func ensureIdentityFingerprintAccountPolicyWith(execer policyExecer, provider identityfingerprint.Provider, accountKey string) error {
+	conflictTarget := "(tenant_id, provider, account_key)"
 	_, err := execer.Exec(`
 		INSERT INTO identity_fingerprint_account_policies (
-			provider, account_key, strategy, active_profile_key, revision, updated_at
-		) VALUES (?, ?, 'cli_preferred', '', 0, ?)
-		ON CONFLICT(provider, account_key) DO NOTHING
-	`, string(provider), accountKey, formatFingerprintTime(time.Now().UTC()))
+			tenant_id, provider, account_key, strategy, active_profile_key, revision, updated_at
+		) VALUES (?, ?, ?, 'cli_preferred', '', 0, ?)
+		ON CONFLICT`+conflictTarget+` DO NOTHING
+	`, systemTenantID, string(provider), accountKey, formatFingerprintTime(time.Now().UTC()))
 	return err
 }
 
 func upsertIdentityFingerprintAccountPolicyWith(execer policyExecer, policy identityfingerprint.AccountPolicy) error {
 	policy = identityfingerprint.NormalizeAccountPolicy(policy.Provider, policy.AccountKey, policy)
+	conflictTarget := "(tenant_id, provider, account_key)"
 	_, err := execer.Exec(`
 		INSERT INTO identity_fingerprint_account_policies (
-			provider, account_key, strategy, active_profile_key, revision, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(provider, account_key) DO UPDATE SET
+			tenant_id, provider, account_key, strategy, active_profile_key, revision, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT`+conflictTarget+` DO UPDATE SET
 			strategy = excluded.strategy,
 			active_profile_key = excluded.active_profile_key,
 			revision = excluded.revision,
 			updated_at = excluded.updated_at
-	`, string(policy.Provider), policy.AccountKey, string(policy.Strategy), policy.ActiveProfileKey, policy.Revision, formatFingerprintTime(policy.UpdatedAt))
+	`, systemTenantID, string(policy.Provider), policy.AccountKey, string(policy.Strategy), policy.ActiveProfileKey, policy.Revision, formatFingerprintTime(policy.UpdatedAt))
 	return err
 }

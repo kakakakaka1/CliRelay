@@ -141,6 +141,29 @@ func (s *PostgresStore) EnsureSchema(ctx context.Context) error {
 	`, authTable)); err != nil {
 		return fmt.Errorf("postgres store: create auth table: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(
+		"ALTER TABLE %s ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'",
+		authTable,
+	)); err != nil {
+		return fmt.Errorf("postgres store: add auth tenant scope: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+		DELETE FROM %[1]s AS legacy
+		USING %[1]s AS scoped
+		WHERE position('/' in legacy.id) = 0
+		  AND scoped.id = legacy.tenant_id || '/' || legacy.id
+		  AND scoped.content = legacy.content;
+		UPDATE %[1]s AS legacy
+		SET id = legacy.tenant_id || '/' || legacy.id
+		WHERE position('/' in legacy.id) = 0
+		  AND NOT EXISTS (
+			SELECT 1 FROM %[1]s AS scoped
+			WHERE scoped.id = legacy.tenant_id || '/' || legacy.id
+		  );
+		CREATE INDEX IF NOT EXISTS %[2]s ON %[1]s (tenant_id);
+	`, authTable, quoteIdentifier("idx_"+s.cfg.AuthTable+"_tenant"))); err != nil {
+		return fmt.Errorf("postgres store: migrate auth tenant ids: %w", err)
+	}
 	return nil
 }
 
@@ -263,7 +286,7 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
 
 // List enumerates all auth records stored in PostgreSQL.
 func (s *PostgresStore) List(ctx context.Context) ([]*cliproxyauth.Auth, error) {
-	query := fmt.Sprintf("SELECT id, content, created_at, updated_at FROM %s ORDER BY id", s.fullTableName(s.cfg.AuthTable))
+	query := fmt.Sprintf("SELECT id, tenant_id, content, created_at, updated_at FROM %s ORDER BY tenant_id, id", s.fullTableName(s.cfg.AuthTable))
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("postgres store: list auth: %w", err)
@@ -274,11 +297,12 @@ func (s *PostgresStore) List(ctx context.Context) ([]*cliproxyauth.Auth, error) 
 	for rows.Next() {
 		var (
 			id        string
+			tenantID  string
 			payload   string
 			createdAt time.Time
 			updatedAt time.Time
 		)
-		if err = rows.Scan(&id, &payload, &createdAt, &updatedAt); err != nil {
+		if err = rows.Scan(&id, &tenantID, &payload, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("postgres store: scan auth row: %w", err)
 		}
 		path, errPath := s.absoluteAuthPath(id)
@@ -301,6 +325,7 @@ func (s *PostgresStore) List(ctx context.Context) ([]*cliproxyauth.Auth, error) 
 		}
 		auth := &cliproxyauth.Auth{
 			ID:               normalizeAuthID(id),
+			TenantID:         cliproxyauth.NormalizedTenantID(tenantID),
 			Provider:         provider,
 			FileName:         normalizeAuthID(id),
 			Label:            labelFor(metadata),
@@ -437,7 +462,7 @@ func (s *PostgresStore) syncConfigFromDatabase(ctx context.Context, exampleConfi
 
 // syncAuthFromDatabase populates the local auth directory from PostgreSQL data.
 func (s *PostgresStore) syncAuthFromDatabase(ctx context.Context) error {
-	query := fmt.Sprintf("SELECT id, content FROM %s", s.fullTableName(s.cfg.AuthTable))
+	query := fmt.Sprintf("SELECT id, content FROM %s ORDER BY tenant_id, id", s.fullTableName(s.cfg.AuthTable))
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("postgres store: load auth from database: %w", err)
@@ -504,21 +529,22 @@ func (s *PostgresStore) upsertAuthRecord(ctx context.Context, relID, path string
 
 func (s *PostgresStore) persistAuth(ctx context.Context, relID string, data []byte) error {
 	jsonPayload := json.RawMessage(data)
+	tenantID := cliproxyauth.TenantIDFromAuthID(relID)
 	query := fmt.Sprintf(`
-		INSERT INTO %s (id, content, created_at, updated_at)
-		VALUES ($1, $2, NOW(), NOW())
+		INSERT INTO %s (id, tenant_id, content, created_at, updated_at)
+		VALUES ($1, $2, $3, NOW(), NOW())
 		ON CONFLICT (id)
-		DO UPDATE SET content = EXCLUDED.content, updated_at = NOW()
+		DO UPDATE SET tenant_id = EXCLUDED.tenant_id, content = EXCLUDED.content, updated_at = NOW()
 	`, s.fullTableName(s.cfg.AuthTable))
-	if _, err := s.db.ExecContext(ctx, query, relID, jsonPayload); err != nil {
+	if _, err := s.db.ExecContext(ctx, query, relID, tenantID, jsonPayload); err != nil {
 		return fmt.Errorf("postgres store: upsert auth record: %w", err)
 	}
 	return nil
 }
 
 func (s *PostgresStore) deleteAuthRecord(ctx context.Context, relID string) error {
-	query := fmt.Sprintf("DELETE FROM %s WHERE id = $1", s.fullTableName(s.cfg.AuthTable))
-	if _, err := s.db.ExecContext(ctx, query, relID); err != nil {
+	query := fmt.Sprintf("DELETE FROM %s WHERE tenant_id = $1 AND id = $2", s.fullTableName(s.cfg.AuthTable))
+	if _, err := s.db.ExecContext(ctx, query, cliproxyauth.TenantIDFromAuthID(relID), relID); err != nil {
 		return fmt.Errorf("postgres store: delete auth record: %w", err)
 	}
 	return nil
@@ -571,10 +597,18 @@ func (s *PostgresStore) resolveAuthPath(auth *cliproxyauth.Auth) (string, error)
 }
 
 func (s *PostgresStore) resolveDeletePath(id string) (string, error) {
-	if strings.ContainsRune(id, os.PathSeparator) || filepath.IsAbs(id) {
-		return id, nil
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", fmt.Errorf("postgres store: auth identifier is empty")
 	}
-	return filepath.Join(s.authDir, filepath.FromSlash(id)), nil
+	if filepath.IsAbs(id) {
+		clean := filepath.Clean(id)
+		if _, err := s.relativeAuthID(clean); err != nil {
+			return "", err
+		}
+		return clean, nil
+	}
+	return s.absoluteAuthPath(id)
 }
 
 func (s *PostgresStore) relativeAuthID(path string) (string, error) {

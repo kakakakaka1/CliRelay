@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/management/modelcatalog"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 )
@@ -23,11 +24,12 @@ func (h *Handler) Models() *ModelsHandler {
 	return &ModelsHandler{Handler: h}
 }
 
-func (h *ModelsHandler) service() *modelcatalog.Service {
+func (h *ModelsHandler) service(c *gin.Context) *modelcatalog.Service {
+	tenantID := effectiveTenantID(c)
 	if h == nil {
-		return modelcatalog.New(nil, nil)
+		return modelcatalog.NewForTenant(tenantID, nil, nil)
 	}
-	return modelcatalog.New(h.cfg, h.authManager)
+	return modelcatalog.NewForTenant(tenantID, h.cfg, h.authManager)
 }
 
 func modelConfigScope(c *gin.Context) string {
@@ -55,7 +57,7 @@ func queryAlias(c *gin.Context, primary, fallback string) string {
 // GetConfiguredModelAvailability returns the currently configured and serviceable
 // model IDs with pricing/metadata and active_metadata for owner/source filtering.
 func (h *ModelsHandler) GetConfiguredModelAvailability(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service().ConfiguredAvailability(
+	c.JSON(http.StatusOK, h.service(c).ConfiguredAvailability(
 		queryAlias(c, "allowed_channels", "allowed-channels"),
 		queryAlias(c, "allowed_channel_groups", "allowed-channel-groups"),
 	))
@@ -64,7 +66,7 @@ func (h *ModelsHandler) GetConfiguredModelAvailability(c *gin.Context) {
 // GetModels returns the list of all available models from the global registry
 // along with their pricing information.
 func (h *ModelsHandler) GetModels(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service().Models(
+	c.JSON(http.StatusOK, h.service(c).Models(
 		queryAlias(c, "allowed_channels", "allowed-channels"),
 		queryAlias(c, "allowed_channel_groups", "allowed-channel-groups"),
 	))
@@ -73,12 +75,12 @@ func (h *ModelsHandler) GetModels(c *gin.Context) {
 // GetModelPathAvailability returns client-visible model IDs with the request paths
 // where those IDs can be discovered or called from the management UI.
 func (h *ModelsHandler) GetModelPathAvailability(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service().PathAvailability())
+	c.JSON(http.StatusOK, h.service(c).PathAvailability())
 }
 
 // GetModelConfigs returns database-backed model configuration rows.
 func (h *ModelsHandler) GetModelConfigs(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service().ListModelConfigs(modelConfigScope(c)))
+	c.JSON(http.StatusOK, h.service(c).ListModelConfigs(modelConfigScope(c)))
 }
 
 // PostModelConfig creates or updates a database-backed model configuration row.
@@ -88,7 +90,7 @@ func (h *ModelsHandler) PostModelConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	saved, err := h.service().UpsertModelConfig(payload, "", modelConfigScope(c))
+	saved, err := h.service(c).UpsertModelConfig(payload, "", modelConfigScope(c))
 	if err != nil {
 		if errors.Is(err, modelcatalog.ErrModelIDRequired) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -97,7 +99,7 @@ func (h *ModelsHandler) PostModelConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	h.notifyModelConfigMutated()
+	h.notifyModelConfigMutated(c)
 	c.JSON(http.StatusOK, saved)
 }
 
@@ -108,7 +110,7 @@ func (h *ModelsHandler) PutModelConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	saved, err := h.service().UpsertModelConfig(payload, modelConfigParamID(c), modelConfigScope(c))
+	saved, err := h.service(c).UpsertModelConfig(payload, modelConfigParamID(c), modelConfigScope(c))
 	if err != nil {
 		if errors.Is(err, modelcatalog.ErrModelIDRequired) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -117,13 +119,13 @@ func (h *ModelsHandler) PutModelConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	h.notifyModelConfigMutated()
+	h.notifyModelConfigMutated(c)
 	c.JSON(http.StatusOK, saved)
 }
 
 // DeleteModelConfig deletes a database-backed model configuration row.
 func (h *ModelsHandler) DeleteModelConfig(c *gin.Context) {
-	if err := h.service().DeleteModelConfig(modelConfigParamID(c)); err != nil {
+	if err := h.service(c).DeleteModelConfig(modelConfigParamID(c)); err != nil {
 		if errors.Is(err, modelcatalog.ErrModelIDRequired) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -131,13 +133,13 @@ func (h *ModelsHandler) DeleteModelConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	h.notifyModelConfigMutated()
+	h.notifyModelConfigMutated(c)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 // GetModelOwnerPresets returns editable model owner presets.
 func (h *ModelsHandler) GetModelOwnerPresets(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service().OwnerPresets())
+	c.JSON(http.StatusOK, h.service(c).OwnerPresets())
 }
 
 // PutModelOwnerPresets replaces editable model owner presets.
@@ -149,7 +151,7 @@ func (h *ModelsHandler) PutModelOwnerPresets(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	payload, err := h.service().ReplaceOwnerPresets(body.Items)
+	payload, err := h.service(c).ReplaceOwnerPresets(body.Items)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -159,7 +161,7 @@ func (h *ModelsHandler) PutModelOwnerPresets(c *gin.Context) {
 
 // GetAuthGroupModelOwnerMappings returns persisted auth-group to model-owner mappings.
 func (h *ModelsHandler) GetAuthGroupModelOwnerMappings(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service().AuthGroupOwnerMappings())
+	c.JSON(http.StatusOK, h.service(c).AuthGroupOwnerMappings())
 }
 
 // PatchAuthGroupModelOwnerMapping upserts or deletes a persisted auth-group to model-owner mapping.
@@ -172,7 +174,7 @@ func (h *ModelsHandler) PatchAuthGroupModelOwnerMapping(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	payload, err := h.service().PatchAuthGroupOwnerMapping(body.AuthGroup, body.Owner)
+	payload, err := h.service(c).PatchAuthGroupOwnerMapping(body.AuthGroup, body.Owner)
 	if err != nil {
 		if errors.Is(err, modelcatalog.ErrAuthGroupRequired) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -186,7 +188,7 @@ func (h *ModelsHandler) PatchAuthGroupModelOwnerMapping(c *gin.Context) {
 
 // GetModelPricing returns all model pricing entries.
 func (h *ModelsHandler) GetModelPricing(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service().Pricing())
+	c.JSON(http.StatusOK, h.service(c).Pricing())
 }
 
 // PutModelPricing updates or creates model pricing entries in bulk.
@@ -198,7 +200,7 @@ func (h *ModelsHandler) PutModelPricing(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	payload, err := h.service().UpdatePricing(body.Items)
+	payload, err := h.service(c).UpdatePricing(body.Items)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -208,7 +210,7 @@ func (h *ModelsHandler) PutModelPricing(c *gin.Context) {
 
 // GetOpenRouterModelSync returns OpenRouter model sync settings and last run status.
 func (h *ModelsHandler) GetOpenRouterModelSync(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service().OpenRouterModelSyncState())
+	c.JSON(http.StatusOK, h.service(c).OpenRouterModelSyncState())
 }
 
 // PutOpenRouterModelSync updates OpenRouter model sync settings.
@@ -221,7 +223,7 @@ func (h *ModelsHandler) PutOpenRouterModelSync(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	state, err := h.service().UpdateOpenRouterModelSyncSettings(body.Enabled, body.IntervalMinutes)
+	state, err := h.service(c).UpdateOpenRouterModelSyncSettings(body.Enabled, body.IntervalMinutes)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -238,16 +240,19 @@ func (h *ModelsHandler) PostOpenRouterModelSyncRun(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	result, state, err := h.service().RunOpenRouterModelSync(ctx)
+	result, state, err := h.service(c).RunOpenRouterModelSync(ctx)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "state": state})
 		return
 	}
-	h.notifyModelConfigMutated()
+	h.notifyModelConfigMutated(c)
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "result": result, "state": state})
 }
 
-func (h *ModelsHandler) notifyModelConfigMutated() {
+func (h *ModelsHandler) notifyModelConfigMutated(c *gin.Context) {
+	if effectiveTenantID(c) != identity.SystemTenantID {
+		return
+	}
 	if h == nil || h.Handler == nil || h.onModelConfigMutated == nil {
 		return
 	}

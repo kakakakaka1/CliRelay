@@ -52,6 +52,11 @@ func IDLTE(id int) predicate.IdentityFingerprint {
 	return predicate.IdentityFingerprint(sql.FieldLTE(FieldID, id))
 }
 
+// TenantID applies equality check predicate on the "tenant_id" field. It's identical to TenantIDEQ.
+func TenantID(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldEQ(FieldTenantID, v))
+}
+
 // Provider applies equality check predicate on the "provider" field. It's identical to ProviderEQ.
 func Provider(v string) predicate.IdentityFingerprint {
 	return predicate.IdentityFingerprint(sql.FieldEQ(FieldProvider, v))
@@ -110,6 +115,71 @@ func UpdatedAt(v string) predicate.IdentityFingerprint {
 // LastSeenAt applies equality check predicate on the "last_seen_at" field. It's identical to LastSeenAtEQ.
 func LastSeenAt(v string) predicate.IdentityFingerprint {
 	return predicate.IdentityFingerprint(sql.FieldEQ(FieldLastSeenAt, v))
+}
+
+// TenantIDEQ applies the EQ predicate on the "tenant_id" field.
+func TenantIDEQ(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldEQ(FieldTenantID, v))
+}
+
+// TenantIDNEQ applies the NEQ predicate on the "tenant_id" field.
+func TenantIDNEQ(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldNEQ(FieldTenantID, v))
+}
+
+// TenantIDIn applies the In predicate on the "tenant_id" field.
+func TenantIDIn(vs ...string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldIn(FieldTenantID, vs...))
+}
+
+// TenantIDNotIn applies the NotIn predicate on the "tenant_id" field.
+func TenantIDNotIn(vs ...string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldNotIn(FieldTenantID, vs...))
+}
+
+// TenantIDGT applies the GT predicate on the "tenant_id" field.
+func TenantIDGT(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldGT(FieldTenantID, v))
+}
+
+// TenantIDGTE applies the GTE predicate on the "tenant_id" field.
+func TenantIDGTE(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldGTE(FieldTenantID, v))
+}
+
+// TenantIDLT applies the LT predicate on the "tenant_id" field.
+func TenantIDLT(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldLT(FieldTenantID, v))
+}
+
+// TenantIDLTE applies the LTE predicate on the "tenant_id" field.
+func TenantIDLTE(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldLTE(FieldTenantID, v))
+}
+
+// TenantIDContains applies the Contains predicate on the "tenant_id" field.
+func TenantIDContains(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldContains(FieldTenantID, v))
+}
+
+// TenantIDHasPrefix applies the HasPrefix predicate on the "tenant_id" field.
+func TenantIDHasPrefix(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldHasPrefix(FieldTenantID, v))
+}
+
+// TenantIDHasSuffix applies the HasSuffix predicate on the "tenant_id" field.
+func TenantIDHasSuffix(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldHasSuffix(FieldTenantID, v))
+}
+
+// TenantIDEqualFold applies the EqualFold predicate on the "tenant_id" field.
+func TenantIDEqualFold(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldEqualFold(FieldTenantID, v))
+}
+
+// TenantIDContainsFold applies the ContainsFold predicate on the "tenant_id" field.
+func TenantIDContainsFold(v string) predicate.IdentityFingerprint {
+	return predicate.IdentityFingerprint(sql.FieldContainsFold(FieldTenantID, v))
 }
 
 // ProviderEQ applies the EQ predicate on the "provider" field.

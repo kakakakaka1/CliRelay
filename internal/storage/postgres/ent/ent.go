@@ -14,6 +14,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/apikey"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/apikeypermissionprofile"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/auditlog"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/authfilequotasnapshot"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/authfilequotasnapshotpoint"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/authgroupmodelownermapping"
@@ -25,11 +26,18 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/modelopenroutersyncstate"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/modelownerpreset"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/modelpricing"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/permission"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/proxypool"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/requestlog"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/requestlogcontent"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/role"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/rolepermission"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/routingconfig"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/runtimesetting"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/tenant"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/user"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/userrole"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/storage/postgres/ent/usersession"
 )
 
 // ent aliases to avoid import conflicts in user's code.
@@ -92,6 +100,7 @@ func checkColumn(t, c string) error {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			apikey.Table:                           apikey.ValidColumn,
 			apikeypermissionprofile.Table:          apikeypermissionprofile.ValidColumn,
+			auditlog.Table:                         auditlog.ValidColumn,
 			authfilequotasnapshot.Table:            authfilequotasnapshot.ValidColumn,
 			authfilequotasnapshotpoint.Table:       authfilequotasnapshotpoint.ValidColumn,
 			authgroupmodelownermapping.Table:       authgroupmodelownermapping.ValidColumn,
@@ -103,11 +112,18 @@ func checkColumn(t, c string) error {
 			modelopenroutersyncstate.Table:         modelopenroutersyncstate.ValidColumn,
 			modelownerpreset.Table:                 modelownerpreset.ValidColumn,
 			modelpricing.Table:                     modelpricing.ValidColumn,
+			permission.Table:                       permission.ValidColumn,
 			proxypool.Table:                        proxypool.ValidColumn,
 			requestlog.Table:                       requestlog.ValidColumn,
 			requestlogcontent.Table:                requestlogcontent.ValidColumn,
+			role.Table:                             role.ValidColumn,
+			rolepermission.Table:                   rolepermission.ValidColumn,
 			routingconfig.Table:                    routingconfig.ValidColumn,
 			runtimesetting.Table:                   runtimesetting.ValidColumn,
+			tenant.Table:                           tenant.ValidColumn,
+			user.Table:                             user.ValidColumn,
+			userrole.Table:                         userrole.ValidColumn,
+			usersession.Table:                      usersession.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

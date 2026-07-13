@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 )
 
@@ -81,7 +82,8 @@ func (h *Handler) QueryOpenCodeGoUsage(c *gin.Context) {
 		return
 	}
 
-	entry := h.findOpenCodeGoEntry(body)
+	runtimeHandler := h.providerUsageHandler(c)
+	entry := runtimeHandler.findOpenCodeGoEntry(body)
 	workspaceID, workspaceErr := normalizeOpenCodeGoWorkspaceID(body.WorkspaceID)
 	authCookie := strings.TrimSpace(body.AuthCookie)
 	proxyID := strings.TrimSpace(body.ProxyID)
@@ -125,7 +127,7 @@ func (h *Handler) QueryOpenCodeGoUsage(c *gin.Context) {
 		}
 	}
 
-	items, err := h.fetchOpenCodeGoUsage(c.Request.Context(), workspaceID, authCookie, proxyID, proxyURL, timeout)
+	items, err := runtimeHandler.fetchOpenCodeGoUsage(c.Request.Context(), workspaceID, authCookie, proxyID, proxyURL, timeout)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -144,7 +146,8 @@ func (h *Handler) QueryClineUsage(c *gin.Context) {
 		return
 	}
 
-	entry := h.findClineEntry(body)
+	runtimeHandler := h.providerUsageHandler(c)
+	entry := runtimeHandler.findClineEntry(body)
 	authCookie := strings.TrimSpace(body.AuthCookie)
 	proxyID := strings.TrimSpace(body.ProxyID)
 	proxyURL := strings.TrimSpace(body.ProxyURL)
@@ -165,7 +168,7 @@ func (h *Handler) QueryClineUsage(c *gin.Context) {
 		return
 	}
 
-	items, err := h.fetchClineUsage(c.Request.Context(), authCookie, proxyID, proxyURL, resolveUsageTimeout(body.TimeoutSec))
+	items, err := runtimeHandler.fetchClineUsage(c.Request.Context(), authCookie, proxyID, proxyURL, resolveUsageTimeout(body.TimeoutSec))
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -181,7 +184,8 @@ func (h *Handler) QueryOllamaCloudUsage(c *gin.Context) {
 		return
 	}
 
-	entry := h.findOllamaCloudEntry(body)
+	runtimeHandler := h.providerUsageHandler(c)
+	entry := runtimeHandler.findOllamaCloudEntry(body)
 	authCookie := strings.TrimSpace(body.AuthCookie)
 	proxyID := strings.TrimSpace(body.ProxyID)
 	proxyURL := strings.TrimSpace(body.ProxyURL)
@@ -202,12 +206,20 @@ func (h *Handler) QueryOllamaCloudUsage(c *gin.Context) {
 		return
 	}
 
-	items, err := h.fetchOllamaCloudUsage(c.Request.Context(), authCookie, proxyID, proxyURL, resolveUsageTimeout(body.TimeoutSec))
+	items, err := runtimeHandler.fetchOllamaCloudUsage(c.Request.Context(), authCookie, proxyID, proxyURL, resolveUsageTimeout(body.TimeoutSec))
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"usage": items})
+}
+
+func (h *Handler) providerUsageHandler(c *gin.Context) *Handler {
+	if h == nil {
+		return &Handler{}
+	}
+	cfg := usage.BuildTenantRuntimeConfig(h.cfg, effectiveTenantID(c))
+	return &Handler{cfg: &cfg}
 }
 
 func (h *Handler) findOpenCodeGoEntry(body openCodeGoUsageRequest) *config.OpenCodeGoKey {

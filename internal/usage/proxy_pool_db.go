@@ -20,6 +20,10 @@ func proxyPoolStore() sqlproxypool.Store {
 	return sqlproxypool.NewStore(getDB())
 }
 
+func proxyPoolStoreForTenant(tenantID string) sqlproxypool.Store {
+	return sqlproxypool.NewTenantStore(getDB(), tenantID)
+}
+
 // ProxyPoolStoreAvailable reports whether the SQLite store is ready for proxy-pool operations.
 func ProxyPoolStoreAvailable() bool {
 	return proxyPoolStore().Available()
@@ -69,4 +73,20 @@ func MigrateProxyPoolFromConfig(cfg *config.Config, configFilePath string) int {
 		}
 	}
 	return migrated
+}
+
+func ProxyPoolStoreAvailableForTenant(tenantID string) bool {
+	return proxyPoolStoreForTenant(tenantID).Available()
+}
+func ListProxyPoolForTenant(tenantID string) []config.ProxyPoolEntry {
+	return proxyPoolStoreForTenant(tenantID).List()
+}
+func GetProxyPoolEntryForTenant(tenantID, id string) *config.ProxyPoolEntry {
+	return proxyPoolStoreForTenant(tenantID).Get(id)
+}
+func ReplaceProxyPoolForTenant(tenantID string, entries []config.ProxyPoolEntry) error {
+	return proxyPoolStoreForTenant(tenantID).Replace(entries)
+}
+func UpdateProxyPoolEntryForTenant(tenantID, id string, entry config.ProxyPoolEntry) error {
+	return proxyPoolStoreForTenant(tenantID).Update(id, entry)
 }

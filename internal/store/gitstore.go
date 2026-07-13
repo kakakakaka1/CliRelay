@@ -434,6 +434,7 @@ func (s *GitTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth, 
 	id := s.idFor(path, baseDir)
 	auth := &cliproxyauth.Auth{
 		ID:               id,
+		TenantID:         cliproxyauth.TenantIDFromAuthID(id),
 		Provider:         provider,
 		FileName:         id,
 		Label:            s.labelFor(metadata),

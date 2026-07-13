@@ -249,3 +249,22 @@ func TestApplyOAuthModelAlias_BuiltInXAIGrokBuild(t *testing.T) {
 		t.Fatalf("applyOAuthModelAlias() with suffix = %q, want grok-build-0.1(high)", got)
 	}
 }
+
+func TestOAuthModelAliasIsTenantScoped(t *testing.T) {
+	manager := NewManager(nil, nil, nil)
+	const tenantA = "00000000-0000-0000-0000-00000000000a"
+	const tenantB = "00000000-0000-0000-0000-00000000000b"
+	manager.SetConfigForTenant(tenantA, &internalconfig.Config{OAuthModelAlias: map[string][]internalconfig.OAuthModelAlias{
+		"codex": {{Name: "upstream-a", Alias: "shared-alias"}},
+	}})
+	manager.SetConfigForTenant(tenantB, &internalconfig.Config{OAuthModelAlias: map[string][]internalconfig.OAuthModelAlias{
+		"codex": {{Name: "upstream-b", Alias: "shared-alias"}},
+	}})
+
+	if got := manager.applyOAuthModelAlias(&Auth{TenantID: tenantA, Provider: "codex"}, "shared-alias"); got != "upstream-a" {
+		t.Fatalf("tenant A alias = %q", got)
+	}
+	if got := manager.applyOAuthModelAlias(&Auth{TenantID: tenantB, Provider: "codex"}, "shared-alias"); got != "upstream-b" {
+		t.Fatalf("tenant B alias = %q", got)
+	}
+}

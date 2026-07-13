@@ -8,6 +8,7 @@ import (
 )
 
 type selectionScope struct {
+	tenantID        string
 	cfg             *runtimeConfigSnapshot
 	model           string
 	modelKey        string
@@ -20,6 +21,7 @@ type selectionScope struct {
 
 func newSelectionScope(cfg *runtimeConfigSnapshot, model string, meta map[string]any) selectionScope {
 	return selectionScope{
+		tenantID:        tenantIDFromMetadata(meta),
 		cfg:             cfg,
 		model:           model,
 		modelKey:        normalizeSelectionModelKey(model),
@@ -29,6 +31,33 @@ func newSelectionScope(cfg *runtimeConfigSnapshot, model string, meta map[string
 		routeGroup:      routeGroupFromMetadata(meta),
 		routeFallback:   routeFallbackFromMetadata(meta),
 	}
+}
+
+const defaultTenantID = "00000000-0000-0000-0000-000000000001"
+
+func normalizedTenantID(tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return defaultTenantID
+	}
+	return tenantID
+}
+
+// NormalizedTenantID returns the canonical tenant scope used by runtime
+// credential selection. Empty legacy records belong to the system tenant.
+func NormalizedTenantID(tenantID string) string {
+	return normalizedTenantID(tenantID)
+}
+
+func tenantIDFromMetadata(meta map[string]any) string {
+	if len(meta) == 0 {
+		return defaultTenantID
+	}
+	return normalizedTenantID(metadataStringValue(meta, cliproxyexecutor.TenantMetadataKey))
+}
+
+func tenantSelectionPrefix(meta map[string]any) string {
+	return tenantIDFromMetadata(meta) + ":"
 }
 
 func normalizeSelectionModelKey(model string) string {
@@ -65,6 +94,9 @@ func (s selectionScope) routeGroupsToTry() []string {
 
 func (s selectionScope) allowsCandidate(candidate *Auth, scopedRouteGroup string, tried map[string]struct{}, registryRef ModelRegistry) bool {
 	if candidate == nil || candidate.Disabled || candidate.Status == StatusDisabled {
+		return false
+	}
+	if normalizedTenantID(candidate.TenantID) != s.tenantID {
 		return false
 	}
 	if s.pinnedAuthID != "" && candidate.ID != s.pinnedAuthID {
@@ -120,10 +152,11 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 }
 
 func (s selectorService) pickProvider(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, error) {
-	scope := newSelectionScope(s.manager.currentRuntimeConfig(), model, opts.Metadata)
+	scope := newSelectionScope(s.manager.currentRuntimeConfigForTenant(tenantIDFromMetadata(opts.Metadata)), model, opts.Metadata)
 
 	s.manager.mu.RLock()
-	executor, okExecutor := s.manager.executors[provider]
+	executor := s.manager.executorForTenantLocked(scope.tenantID, provider)
+	okExecutor := executor != nil
 	if !okExecutor {
 		s.manager.mu.RUnlock()
 		return nil, nil, &Error{Code: "executor_not_found", Message: "executor not registered"}
@@ -142,7 +175,7 @@ func (s selectorService) pickProvider(ctx context.Context, provider, model strin
 }
 
 func (s selectorService) pickMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, string, error) {
-	scope := newSelectionScope(s.manager.currentRuntimeConfig(), model, opts.Metadata)
+	scope := newSelectionScope(s.manager.currentRuntimeConfigForTenant(tenantIDFromMetadata(opts.Metadata)), model, opts.Metadata)
 	providerSet := make(map[string]struct{}, len(providers))
 	for _, provider := range providers {
 		p := strings.TrimSpace(strings.ToLower(provider))
@@ -167,7 +200,7 @@ func (s selectorService) pickMixed(ctx context.Context, providers []string, mode
 		if _, ok := providerSet[providerKey]; !ok {
 			return false
 		}
-		if _, ok := s.manager.executors[providerKey]; !ok {
+		if s.manager.executorForTenantLocked(scope.tenantID, providerKey) == nil {
 			return false
 		}
 		return true
@@ -178,7 +211,8 @@ func (s selectorService) pickMixed(ctx context.Context, providers []string, mode
 	}
 
 	providerKey := strings.TrimSpace(strings.ToLower(selected.Provider))
-	executor, okExecutor := s.manager.executors[providerKey]
+	executor := s.manager.executorForTenantLocked(scope.tenantID, providerKey)
+	okExecutor := executor != nil
 	if !okExecutor {
 		s.manager.mu.RUnlock()
 		return nil, nil, "", &Error{Code: "executor_not_found", Message: "executor not registered"}

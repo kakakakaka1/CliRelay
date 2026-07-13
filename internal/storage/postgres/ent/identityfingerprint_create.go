@@ -19,6 +19,20 @@ type IdentityFingerprintCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *IdentityFingerprintCreate) SetTenantID(v string) *IdentityFingerprintCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *IdentityFingerprintCreate) SetNillableTenantID(v *string) *IdentityFingerprintCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetProvider sets the "provider" field.
 func (_c *IdentityFingerprintCreate) SetProvider(v string) *IdentityFingerprintCreate {
 	_c.mutation.SetProvider(v)
@@ -206,6 +220,10 @@ func (_c *IdentityFingerprintCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *IdentityFingerprintCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := identityfingerprint.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.ProfileKey(); !ok {
 		v := identityfingerprint.DefaultProfileKey
 		_c.mutation.SetProfileKey(v)
@@ -250,6 +268,9 @@ func (_c *IdentityFingerprintCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *IdentityFingerprintCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "IdentityFingerprint.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.Provider(); !ok {
 		return &ValidationError{Name: "provider", err: errors.New(`ent: missing required field "IdentityFingerprint.provider"`)}
 	}
@@ -312,6 +333,10 @@ func (_c *IdentityFingerprintCreate) createSpec() (*IdentityFingerprint, *sqlgra
 		_node = &IdentityFingerprint{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(identityfingerprint.Table, sqlgraph.NewFieldSpec(identityfingerprint.FieldID, field.TypeInt))
 	)
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(identityfingerprint.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
+	}
 	if value, ok := _c.mutation.Provider(); ok {
 		_spec.SetField(identityfingerprint.FieldProvider, field.TypeString, value)
 		_node.Provider = value

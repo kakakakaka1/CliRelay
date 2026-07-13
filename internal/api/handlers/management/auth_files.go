@@ -3,6 +3,7 @@ package management
 import (
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"os"
 	"strings"
@@ -26,7 +27,7 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		h.listAuthFilesFromDisk(c)
 		return
 	}
-	auths := h.authManager.List()
+	auths := h.authManager.ListForTenant(effectiveTenantID(c))
 	files := managementauthfiles.ListEntries(auths, managementauthfiles.EntryOptions{
 		OnStatError: func(path string, err error) {
 			log.WithError(err).Warnf("failed to stat auth file %s", path)
@@ -44,13 +45,13 @@ func (h *Handler) GetAuthFileModels(c *gin.Context) {
 		return
 	}
 
-	models := managementauthfiles.ListModelEntries(h.authManager, registry.GetGlobalRegistry(), name)
+	models := managementauthfiles.ListModelEntriesForTenant(h.authManager, registry.GetGlobalRegistry(), effectiveTenantID(c), name)
 	c.JSON(200, gin.H{"models": models})
 }
 
 // List auth files from disk when the auth manager is unavailable.
 func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
-	files, err := managementauthfiles.ListDiskEntries(h.cfg.AuthDir, time.Now())
+	files, err := managementauthfiles.ListTenantDiskEntries(h.cfg.AuthDir, effectiveTenantID(c), time.Now())
 	if err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("failed to read auth dir: %v", err)})
 		return
@@ -65,8 +66,7 @@ func (h *Handler) DownloadAuthFile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": errValidate.Error()})
 		return
 	}
-	full := managementauthfiles.FilePath(h.cfg.AuthDir, name)
-	_, err := os.Stat(full)
+	file, info, err := managementauthfiles.OpenTenantFile(h.cfg.AuthDir, effectiveTenantID(c), name)
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.JSON(404, gin.H{"error": "file not found"})
@@ -75,12 +75,14 @@ func (h *Handler) DownloadAuthFile(c *gin.Context) {
 		}
 		return
 	}
-	c.FileAttachment(full, name)
+	defer file.Close()
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+	http.ServeContent(c.Writer, c.Request, name, info.ModTime(), file)
 }
 
 // Upload auth file: multipart or raw JSON with ?name=
 func (h *Handler) UploadAuthFile(c *gin.Context) {
-	service := newAuthFileUploadService(h)
+	service := newAuthFileUploadService(h, c)
 	if !service.Available() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
@@ -163,10 +165,13 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	service := managementauthfiles.DeleteService{
-		AuthDir:        h.cfg.AuthDir,
-		Manager:        h.authManager,
-		Repository:     h.authFileRepository(),
-		RemoveChannels: h.removeChannelReferences,
+		AuthDir:    h.cfg.AuthDir,
+		TenantID:   effectiveTenantID(c),
+		Manager:    h.authManager,
+		Repository: h.authFileRepository(),
+		RemoveChannels: func(channels []string) error {
+			return h.removeChannelReferencesForTenant(effectiveTenantID(c), channels)
+		},
 	}
 	if managementauthfiles.IsDeleteAllValue(c.Query("all")) {
 		result, err := service.DeleteAll(ctx)
@@ -193,7 +198,7 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
-func newAuthFileUploadService(h *Handler) managementauthfiles.UploadService {
+func newAuthFileUploadService(h *Handler, c *gin.Context) managementauthfiles.UploadService {
 	authDir := ""
 	repository := managementauthfiles.Repository{}
 	if h != nil && h.cfg != nil {
@@ -206,6 +211,7 @@ func newAuthFileUploadService(h *Handler) managementauthfiles.UploadService {
 	}
 	return managementauthfiles.UploadService{
 		AuthDir:    authDir,
+		TenantID:   effectiveTenantID(c),
 		Manager:    manager,
 		Repository: repository,
 	}
@@ -224,7 +230,7 @@ func writeAuthFileUploadError(c *gin.Context, err error) {
 
 // PatchAuthFileStatus toggles the disabled state of an auth file
 func (h *Handler) PatchAuthFileStatus(c *gin.Context) {
-	service := newAuthFilePatchService(h)
+	service := newAuthFilePatchService(h, c)
 	if !service.Available() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
@@ -253,7 +259,7 @@ func (h *Handler) PatchAuthFileStatus(c *gin.Context) {
 
 // PatchAuthFileFields updates editable fields of an auth file.
 func (h *Handler) PatchAuthFileFields(c *gin.Context) {
-	service := newAuthFilePatchService(h)
+	service := newAuthFilePatchService(h, c)
 	if !service.Available() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
@@ -273,19 +279,25 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func newAuthFilePatchService(h *Handler) managementauthfiles.PatchService {
+func newAuthFilePatchService(h *Handler, c *gin.Context) managementauthfiles.PatchService {
 	var manager *coreauth.Manager
 	repository := managementauthfiles.Repository{}
 	var validateLabel func(label, excludeAuthID string) (string, error)
 	var renameChannels func(oldNames []string, newName string) error
 	if h != nil {
+		tenantID := effectiveTenantID(c)
 		manager = h.authManager
 		repository = h.authFileRepository()
-		validateLabel = h.validateAuthChannelName
-		renameChannels = h.renameChannelReferences
+		validateLabel = func(label, excludeAuthID string) (string, error) {
+			return h.validateAuthChannelNameForTenant(tenantID, label, excludeAuthID)
+		}
+		renameChannels = func(oldNames []string, newName string) error {
+			return h.renameChannelReferencesForTenant(tenantID, oldNames, newName)
+		}
 	}
 	return managementauthfiles.PatchService{
 		Manager:        manager,
+		TenantID:       effectiveTenantID(c),
 		Repository:     repository,
 		ValidateLabel:  validateLabel,
 		RenameChannels: renameChannels,

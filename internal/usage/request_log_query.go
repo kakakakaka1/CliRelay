@@ -53,7 +53,7 @@ func QueryLogs(params LogQueryParams) (LogQueryResult, error) {
 	querySQL := "SELECT id, timestamp, api_key, api_key_name, model, upstream_model, vision_fallback_model, source, channel_name, auth_index, " +
 		"failed, streaming, latency_ms, first_token_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, " +
 		"cost, " +
-		"(CASE WHEN EXISTS (SELECT 1 FROM request_log_content content WHERE content.log_id = request_logs.id) " +
+		"(CASE WHEN EXISTS (SELECT 1 FROM request_log_content content WHERE content.tenant_id = request_logs.tenant_id AND content.log_id = request_logs.id) " +
 		"OR length(input_content) > 0 OR length(output_content) > 0 THEN 1 ELSE 0 END) as has_content " +
 		"FROM request_logs" + where +
 		" ORDER BY timestamp DESC LIMIT ? OFFSET ?"
@@ -88,7 +88,7 @@ func QueryLogs(params LogQueryParams) (LogQueryResult, error) {
 		row.HasContent = hasContentInt != 0
 		items = append(items, row)
 	}
-	hydrateStreamingFromContent(db, items)
+	hydrateStreamingFromContent(db, params.TenantID, items)
 
 	return LogQueryResult{
 		Items: items,
@@ -98,7 +98,7 @@ func QueryLogs(params LogQueryParams) (LogQueryResult, error) {
 	}, nil
 }
 
-func hydrateStreamingFromContent(db *sql.DB, items []LogRow) {
+func hydrateStreamingFromContent(db *sql.DB, tenantID string, items []LogRow) {
 	if db == nil || len(items) == 0 {
 		return
 	}
@@ -117,15 +117,16 @@ func hydrateStreamingFromContent(db *sql.DB, items []LogRow) {
 	}
 
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, normalizeTenantID(tenantID))
+	for _, id := range ids {
+		args = append(args, id)
 	}
 	rows, err := db.Query(
 		`SELECT logs.id, logs.input_content, content.compression, content.input_content
 		FROM request_logs logs
-		LEFT JOIN request_log_content content ON content.log_id = logs.id
-		WHERE logs.id IN (`+placeholders+`) AND (length(logs.input_content) > 0 OR length(content.input_content) > 0)`,
+		LEFT JOIN request_log_content content ON content.tenant_id = logs.tenant_id AND content.log_id = logs.id
+		WHERE logs.tenant_id = ? AND logs.id IN (`+placeholders+`) AND (length(logs.input_content) > 0 OR length(content.input_content) > 0)`,
 		args...,
 	)
 	if err != nil {
@@ -301,6 +302,10 @@ func QueryStats(params LogQueryParams) (LogStats, error) {
 // DeleteLogsByAPIKey removes all request_logs and request_log_content entries
 // for the given API key. Returns the number of deleted log rows.
 func DeleteLogsByAPIKey(apiKey string) (int64, error) {
+	return DeleteLogsByAPIKeyForTenant(systemTenantID, apiKey)
+}
+
+func DeleteLogsByAPIKeyForTenant(tenantID, apiKey string) (int64, error) {
 	db := getDB()
 	if db == nil {
 		return 0, fmt.Errorf("usage: database not initialised")
@@ -311,10 +316,14 @@ func DeleteLogsByAPIKey(apiKey string) (int64, error) {
 
 	// Delete associated content rows first (FK cascade may handle this,
 	// but be explicit to ensure cleanup even without FK enforcement).
-	clause, args := buildSingleAPIKeySelectorClause(apiKey)
+	tenantID = normalizeTenantID(tenantID)
+	clause, args := buildSingleAPIKeySelectorClauseForTenant(tenantID, apiKey)
+	predicate := strings.TrimPrefix(clause, " WHERE ")
+	args = append([]interface{}{tenantID}, args...)
+	clause = " WHERE tenant_id = ? AND " + predicate
 	_, _ = db.Exec(
-		`DELETE FROM request_log_content WHERE log_id IN
-		 (SELECT id FROM request_logs`+clause+`)`, args...)
+		`DELETE FROM request_log_content WHERE tenant_id = ? AND log_id IN
+		 (SELECT id FROM request_logs`+clause+`)`, append([]interface{}{tenantID}, args...)...)
 
 	result, err := db.Exec("DELETE FROM request_logs"+clause, args...)
 	if err != nil {
@@ -342,6 +351,7 @@ func rowsAffected(result sql.Result) (int64, error) {
 }
 
 func normalizeClearRequestLogsOptions(options ClearRequestLogsOptions) (ClearRequestLogsOptions, error) {
+	options.TenantID = normalizeTenantID(options.TenantID)
 	if options.ClearRequestRecords {
 		options.ClearBodyContent = true
 		options.ClearDetailContent = true
@@ -382,11 +392,11 @@ func clearRequestLogs(db *sql.DB, options ClearRequestLogsOptions) (ClearRequest
 	var result ClearRequestLogsResult
 
 	if options.ClearRequestRecords {
-		contentResult, err := tx.Exec("DELETE FROM request_log_content")
+		contentResult, err := tx.Exec("DELETE FROM request_log_content WHERE tenant_id = ?", options.TenantID)
 		if err != nil {
 			return ClearRequestLogsResult{}, fmt.Errorf("usage: clear request_log_content: %w", err)
 		}
-		logResult, err := tx.Exec("DELETE FROM request_logs")
+		logResult, err := tx.Exec("DELETE FROM request_logs WHERE tenant_id = ?", options.TenantID)
 		if err != nil {
 			return ClearRequestLogsResult{}, fmt.Errorf("usage: clear request_logs: %w", err)
 		}
@@ -401,8 +411,24 @@ func clearRequestLogs(db *sql.DB, options ClearRequestLogsOptions) (ClearRequest
 		}
 	} else {
 		if options.ClearBodyContent {
+			// Always drop request bodies. Preserve failed-request output_content so the
+			// error-detail modal can still show the compact upstream error when
+			// store-content is disabled (maintenance purge must not erase those).
 			contentResult, err := tx.Exec(
-				"UPDATE request_log_content SET input_content = X'', output_content = X'' WHERE length(input_content) > 0 OR length(output_content) > 0",
+				`UPDATE request_log_content
+				 SET input_content = X'',
+				     output_content = CASE
+				       WHEN EXISTS (
+				         SELECT 1 FROM request_logs logs
+				         WHERE logs.tenant_id = request_log_content.tenant_id
+				           AND logs.id = request_log_content.log_id
+				           AND logs.failed = 1
+				       ) THEN output_content
+				       ELSE X''
+				     END
+				 WHERE tenant_id = ?
+				   AND (length(input_content) > 0 OR length(output_content) > 0)`,
+				options.TenantID,
 			)
 			if err != nil {
 				return ClearRequestLogsResult{}, fmt.Errorf("usage: clear request_log_content bodies: %w", err)
@@ -413,7 +439,12 @@ func clearRequestLogs(db *sql.DB, options ClearRequestLogsOptions) (ClearRequest
 			}
 
 			legacyResult, err := tx.Exec(
-				"UPDATE request_logs SET input_content = '', output_content = '' WHERE length(input_content) > 0 OR length(output_content) > 0",
+				`UPDATE request_logs
+				 SET input_content = '',
+				     output_content = CASE WHEN failed = 1 THEN output_content ELSE '' END
+				 WHERE tenant_id = ?
+				   AND (length(input_content) > 0 OR length(output_content) > 0)`,
+				options.TenantID,
 			)
 			if err != nil {
 				return ClearRequestLogsResult{}, fmt.Errorf("usage: clear legacy request log bodies: %w", err)
@@ -426,7 +457,8 @@ func clearRequestLogs(db *sql.DB, options ClearRequestLogsOptions) (ClearRequest
 
 		if options.ClearDetailContent {
 			detailResult, err := tx.Exec(
-				"UPDATE request_log_content SET detail_content = X'', session_id = '' WHERE length(detail_content) > 0 OR session_id <> ''",
+				"UPDATE request_log_content SET detail_content = X'', session_id = '' WHERE tenant_id = ? AND (length(detail_content) > 0 OR session_id <> '')",
+				options.TenantID,
 			)
 			if err != nil {
 				return ClearRequestLogsResult{}, fmt.Errorf("usage: clear request_log_content details: %w", err)
@@ -438,7 +470,8 @@ func clearRequestLogs(db *sql.DB, options ClearRequestLogsOptions) (ClearRequest
 		}
 
 		deleteEmptyRowsResult, err := tx.Exec(
-			"DELETE FROM request_log_content WHERE length(input_content) = 0 AND length(output_content) = 0 AND length(detail_content) = 0 AND session_id = ''",
+			"DELETE FROM request_log_content WHERE tenant_id = ? AND length(input_content) = 0 AND length(output_content) = 0 AND length(detail_content) = 0 AND session_id = ''",
+			options.TenantID,
 		)
 		if err != nil {
 			return ClearRequestLogsResult{}, fmt.Errorf("usage: delete empty request_log_content rows: %w", err)
@@ -481,12 +514,17 @@ func clearRequestLogs(db *sql.DB, options ClearRequestLogsOptions) (ClearRequest
 // ClearAllRequestLogs removes all request_logs and request_log_content rows
 // while leaving other SQLite-backed management data untouched.
 func ClearAllRequestLogs() (ClearRequestLogsResult, error) {
-	return ClearRequestLogs(ClearRequestLogsOptions{ClearRequestRecords: true})
+	return ClearAllRequestLogsForTenant(systemTenantID)
+}
+
+func ClearAllRequestLogsForTenant(tenantID string) (ClearRequestLogsResult, error) {
+	return ClearRequestLogs(ClearRequestLogsOptions{TenantID: tenantID, ClearRequestRecords: true})
 }
 
 // normalizeLogQueryParams merges deprecated single-value fields into their
 // multi-value counterparts. It trims spaces, deduplicates, and removes empties.
 func normalizeLogQueryParams(params LogQueryParams) LogQueryParams {
+	params.TenantID = normalizeTenantID(params.TenantID)
 	if params.APIKey != "" {
 		params.APIKeys = append(params.APIKeys, params.APIKey)
 		params.APIKey = ""
@@ -531,8 +569,10 @@ func buildWhereClause(params LogQueryParams) (string, []interface{}) {
 	if params.MatchNoAPIKeys || params.MatchNoModels || params.MatchNoStatuses || params.MatchNoChannels {
 		return " WHERE 1 = 0", nil
 	}
-	conditions := make([]string, 0, 4)
-	args := make([]interface{}, 0, 4)
+	conditions := make([]string, 0, 5)
+	args := make([]interface{}, 0, 5)
+	conditions = append(conditions, "tenant_id = ?")
+	args = append(args, params.TenantID)
 
 	// Time range: days=1 means "today", days=7 means "last 7 days", etc.
 	conditions = append(conditions, "timestamp >= ?")
@@ -565,7 +605,7 @@ func buildWhereClause(params LogQueryParams) (string, []interface{}) {
 		}
 		if len(normalKeys) > 0 {
 			for _, k := range normalKeys {
-				clause, clauseArgs := buildSingleAPIKeySelectorClause(k)
+				clause, clauseArgs := buildSingleAPIKeySelectorClauseForTenant(params.TenantID, k)
 				apiKeyConds = append(apiKeyConds, strings.TrimPrefix(clause, " WHERE "))
 				args = append(args, clauseArgs...)
 			}
@@ -869,12 +909,16 @@ func trimNullString(value sql.NullString) string {
 }
 
 func buildSingleAPIKeySelectorClause(selector string) (string, []interface{}) {
+	return buildSingleAPIKeySelectorClauseForTenant(systemTenantID, selector)
+}
+
+func buildSingleAPIKeySelectorClauseForTenant(tenantID, selector string) (string, []interface{}) {
 	trimmed := strings.TrimSpace(selector)
 	if trimmed == "" {
 		return "", nil
 	}
-	if identity := ResolveAPIKeyIdentity(trimmed); identity != nil {
-		return " WHERE (api_key_id = ? OR (api_key_id = '' AND api_key = ?))", []interface{}{identity.ID, identity.Key}
+	if row := GetAPIKeyForTenant(normalizeTenantID(tenantID), trimmed); row != nil && strings.TrimSpace(row.ID) != "" {
+		return " WHERE (api_key_id = ? OR (api_key_id = '' AND api_key = ?))", []interface{}{strings.TrimSpace(row.ID), strings.TrimSpace(row.Key)}
 	}
 	return " WHERE api_key = ?", []interface{}{trimmed}
 }
@@ -888,7 +932,7 @@ func QueryModelsForKey(apiKey string, days int) ([]string, error) {
 	if days < 1 {
 		days = 7
 	}
-	params := LogQueryParams{APIKey: apiKey, Days: days}
+	params := LogQueryParams{TenantID: ResolveAPIKeyTenant(apiKey), APIKey: apiKey, Days: days}
 	where, args := buildWhereClause(params)
 	rows, err := db.Query(
 		"SELECT DISTINCT model FROM request_logs"+where+" AND model != '' ORDER BY model",

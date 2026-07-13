@@ -227,3 +227,26 @@ func TestRuntimeSettingsSQLiteWinsOverStaleYAML(t *testing.T) {
 		t.Fatalf("ordinary config should remain in YAML:\n%s", string(data))
 	}
 }
+
+func TestBuildTenantRuntimeConfigDoesNotInheritSystemCredentials(t *testing.T) {
+	cleanup := setupConfigMigrationTestDB(t)
+	defer cleanup()
+
+	base := &config.Config{
+		GeminiKey: []config.GeminiKey{{APIKey: "system-gemini"}},
+		CodexKey:  []config.CodexKey{{APIKey: "system-codex"}},
+	}
+	const tenantID = "00000000-0000-0000-0000-00000000000a"
+	got := BuildTenantRuntimeConfig(base, tenantID)
+	if len(got.GeminiKey) != 0 || len(got.CodexKey) != 0 {
+		t.Fatalf("tenant inherited system credentials: gemini=%v codex=%v", got.GeminiKey, got.CodexKey)
+	}
+
+	if err := UpsertRuntimeSettingForTenant(tenantID, RuntimeSettingGeminiKeys, []config.GeminiKey{{APIKey: "tenant-gemini"}}); err != nil {
+		t.Fatalf("UpsertRuntimeSettingForTenant: %v", err)
+	}
+	got = BuildTenantRuntimeConfig(base, tenantID)
+	if len(got.GeminiKey) != 1 || got.GeminiKey[0].APIKey != "tenant-gemini" || len(got.CodexKey) != 0 {
+		t.Fatalf("tenant runtime config = %+v", got)
+	}
+}

@@ -27,6 +27,20 @@ func (_u *IdentityFingerprintUpdate) Where(ps ...predicate.IdentityFingerprint) 
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *IdentityFingerprintUpdate) SetTenantID(v string) *IdentityFingerprintUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *IdentityFingerprintUpdate) SetNillableTenantID(v *string) *IdentityFingerprintUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetProvider sets the "provider" field.
 func (_u *IdentityFingerprintUpdate) SetProvider(v string) *IdentityFingerprintUpdate {
 	_u.mutation.SetProvider(v)
@@ -236,6 +250,9 @@ func (_u *IdentityFingerprintUpdate) sqlSave(ctx context.Context) (_node int, er
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(identityfingerprint.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Provider(); ok {
 		_spec.SetField(identityfingerprint.FieldProvider, field.TypeString, value)
 	}
@@ -290,6 +307,20 @@ type IdentityFingerprintUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *IdentityFingerprintMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *IdentityFingerprintUpdateOne) SetTenantID(v string) *IdentityFingerprintUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *IdentityFingerprintUpdateOne) SetNillableTenantID(v *string) *IdentityFingerprintUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetProvider sets the "provider" field.
@@ -530,6 +561,9 @@ func (_u *IdentityFingerprintUpdateOne) sqlSave(ctx context.Context) (_node *Ide
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(identityfingerprint.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Provider(); ok {
 		_spec.SetField(identityfingerprint.FieldProvider, field.TypeString, value)

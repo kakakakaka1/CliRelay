@@ -23,19 +23,21 @@ type ModelPricingRow struct {
 
 const createPricingTableSQL = `
 CREATE TABLE IF NOT EXISTS model_pricing (
-  model_id                      TEXT PRIMARY KEY,
+  tenant_id                     TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+  model_id                      TEXT NOT NULL,
   input_price_per_million        REAL NOT NULL DEFAULT 0,
   output_price_per_million       REAL NOT NULL DEFAULT 0,
   cached_price_per_million       REAL NOT NULL DEFAULT 0,
   cache_read_price_per_million   REAL NOT NULL DEFAULT 0,
   cache_write_price_per_million  REAL NOT NULL DEFAULT 0,
-  updated_at                    DATETIME NOT NULL
+  updated_at                    DATETIME NOT NULL,
+  PRIMARY KEY (tenant_id, model_id)
 );
 `
 
 // In-memory pricing cache for fast cost calculation.
 var (
-	pricingCache   map[string]ModelPricingRow
+	pricingCache   map[string]map[string]ModelPricingRow
 	pricingCacheMu sync.RWMutex
 )
 
@@ -50,7 +52,59 @@ func initPricingTable(db *sql.DB) {
 		return
 	}
 	migrateModelPricingCacheColumns(db)
+	migrateModelPricingTenantSchema(db)
 	reloadPricingCache(db)
+}
+
+func usageSQLiteCompositeTenantPrimaryKey(db *sql.DB, table string) bool {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return true
+	}
+	defer rows.Close()
+	tenantPK, otherPK := false, false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, typ string
+		var def sql.NullString
+		if rows.Scan(&cid, &name, &typ, &notNull, &def, &pk) != nil {
+			return true
+		}
+		tenantPK = tenantPK || (name == "tenant_id" && pk > 0)
+		otherPK = otherPK || (name != "tenant_id" && pk > 0)
+	}
+	return tenantPK && otherPK
+}
+
+func migrateModelPricingTenantSchema(db *sql.DB) {
+	if db == nil || !sqliteColumnExists(db, "model_pricing", "model_id") || usageSQLiteCompositeTenantPrimaryKey(db, "model_pricing") {
+		return
+	}
+	hasTenant := sqliteColumnExists(db, "model_pricing", "tenant_id")
+	tx, err := db.Begin()
+	if err != nil {
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if !hasTenant {
+		if _, err = tx.Exec("ALTER TABLE model_pricing ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'"); err != nil {
+			return
+		}
+	}
+	if _, err = tx.Exec("ALTER TABLE model_pricing RENAME TO model_pricing_legacy"); err != nil {
+		return
+	}
+	if _, err = tx.Exec(createPricingTableSQL); err != nil {
+		return
+	}
+	_, err = tx.Exec("INSERT INTO model_pricing(tenant_id,model_id,input_price_per_million,output_price_per_million,cached_price_per_million,cache_read_price_per_million,cache_write_price_per_million,updated_at) SELECT tenant_id,model_id,input_price_per_million,output_price_per_million,cached_price_per_million,cache_read_price_per_million,cache_write_price_per_million,updated_at FROM model_pricing_legacy")
+	if err != nil {
+		return
+	}
+	if _, err = tx.Exec("DROP TABLE model_pricing_legacy"); err != nil {
+		return
+	}
+	_ = tx.Commit()
 }
 
 // migrateModelPricingCacheColumns adds cache_read_price_per_million and
@@ -72,21 +126,26 @@ func reloadPricingCache(db *sql.DB) {
 	if db == nil {
 		return
 	}
-	rows, err := db.Query("SELECT model_id, input_price_per_million, output_price_per_million, cached_price_per_million, cache_read_price_per_million, cache_write_price_per_million, updated_at FROM model_pricing")
+	rows, err := db.Query("SELECT tenant_id, model_id, input_price_per_million, output_price_per_million, cached_price_per_million, cache_read_price_per_million, cache_write_price_per_million, updated_at FROM model_pricing")
 	if err != nil {
 		log.Errorf("usage: load pricing cache: %v", err)
 		return
 	}
 	defer rows.Close()
 
-	cache := make(map[string]ModelPricingRow)
+	cache := make(map[string]map[string]ModelPricingRow)
 	for rows.Next() {
+		var tenantID string
 		var row ModelPricingRow
-		if err := rows.Scan(&row.ModelID, &row.InputPricePerMillion, &row.OutputPricePerMillion, &row.CachedPricePerMillion, &row.CacheReadPricePerMillion, &row.CacheWritePricePerMillion, &row.UpdatedAt); err != nil {
+		if err := rows.Scan(&tenantID, &row.ModelID, &row.InputPricePerMillion, &row.OutputPricePerMillion, &row.CachedPricePerMillion, &row.CacheReadPricePerMillion, &row.CacheWritePricePerMillion, &row.UpdatedAt); err != nil {
 			log.Errorf("usage: scan pricing row: %v", err)
 			continue
 		}
-		cache[row.ModelID] = row
+		tenantID = normalizeTenantID(tenantID)
+		if cache[tenantID] == nil {
+			cache[tenantID] = make(map[string]ModelPricingRow)
+		}
+		cache[tenantID][row.ModelID] = row
 	}
 
 	pricingCacheMu.Lock()
@@ -98,27 +157,36 @@ func reloadPricingCache(db *sql.DB) {
 // UpsertModelPricing inserts or updates a model's pricing and refreshes the cache.
 // cached is the legacy/compat cache price; cacheRead and cacheWrite are the new semantic fields.
 func UpsertModelPricing(modelID string, input, output, cached float64) error {
-	return UpsertModelPricingV2(modelID, input, output, cached, 0, 0)
+	return UpsertModelPricingForTenant(systemTenantID, modelID, input, output, cached)
+}
+
+func UpsertModelPricingForTenant(tenantID, modelID string, input, output, cached float64) error {
+	return UpsertModelPricingV2ForTenant(tenantID, modelID, input, output, cached, 0, 0)
 }
 
 // UpsertModelPricingV2 inserts or updates a model's pricing with full cache read/write granularity.
 func UpsertModelPricingV2(modelID string, input, output, cached, cacheRead, cacheWrite float64) error {
+	return UpsertModelPricingV2ForTenant(systemTenantID, modelID, input, output, cached, cacheRead, cacheWrite)
+}
+
+func UpsertModelPricingV2ForTenant(tenantID, modelID string, input, output, cached, cacheRead, cacheWrite float64) error {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
 		return fmt.Errorf("usage: database not initialised")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := db.Exec(
-		`INSERT INTO model_pricing (model_id, input_price_per_million, output_price_per_million, cached_price_per_million, cache_read_price_per_million, cache_write_price_per_million, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(model_id) DO UPDATE SET
+		`INSERT INTO model_pricing (tenant_id, model_id, input_price_per_million, output_price_per_million, cached_price_per_million, cache_read_price_per_million, cache_write_price_per_million, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(tenant_id, model_id) DO UPDATE SET
 		   input_price_per_million = excluded.input_price_per_million,
 		   output_price_per_million = excluded.output_price_per_million,
 		   cached_price_per_million = excluded.cached_price_per_million,
 		   cache_read_price_per_million = excluded.cache_read_price_per_million,
 		   cache_write_price_per_million = excluded.cache_write_price_per_million,
 		   updated_at = excluded.updated_at`,
-		modelID, input, output, cached, cacheRead, cacheWrite, now,
+		tenantID, modelID, input, output, cached, cacheRead, cacheWrite, now,
 	)
 	if err != nil {
 		return fmt.Errorf("usage: upsert pricing: %w", err)
@@ -127,9 +195,12 @@ func UpsertModelPricingV2(modelID string, input, output, cached, cacheRead, cach
 	// Update in-memory cache
 	pricingCacheMu.Lock()
 	if pricingCache == nil {
-		pricingCache = make(map[string]ModelPricingRow)
+		pricingCache = make(map[string]map[string]ModelPricingRow)
 	}
-	pricingCache[modelID] = ModelPricingRow{
+	if pricingCache[tenantID] == nil {
+		pricingCache[tenantID] = make(map[string]ModelPricingRow)
+	}
+	pricingCache[tenantID][modelID] = ModelPricingRow{
 		ModelID:                   modelID,
 		InputPricePerMillion:      input,
 		OutputPricePerMillion:     output,
@@ -139,24 +210,62 @@ func UpsertModelPricingV2(modelID string, input, output, cached, cacheRead, cach
 		UpdatedAt:                 now,
 	}
 	pricingCacheMu.Unlock()
-	upsertLegacyPricingIntoModelConfig(db, modelID, input, output, cached, now)
+	upsertLegacyPricingIntoModelConfigForTenant(db, tenantID, modelID, input, output, cached, now)
 	return nil
 }
 
 // GetModelPricing returns the pricing for a single model.
 func GetModelPricing(modelID string) (ModelPricingRow, bool) {
+	return GetModelPricingForTenant(systemTenantID, modelID)
+}
+
+// GetModelPricingForTenant returns tenant pricing, falling back to the system catalog when absent.
+// OpenRouter sync writes prices to the system tenant; business tenants inherit them unless overridden.
+func GetModelPricingForTenant(tenantID, modelID string) (ModelPricingRow, bool) {
+	tenantID = normalizeTenantID(tenantID)
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return ModelPricingRow{}, false
+	}
 	pricingCacheMu.RLock()
 	defer pricingCacheMu.RUnlock()
-	row, ok := pricingCache[modelID]
+	if row, ok := pricingCache[tenantID][modelID]; ok {
+		return row, true
+	}
+	if isSystemTenant(tenantID) {
+		return ModelPricingRow{}, false
+	}
+	row, ok := pricingCache[systemTenantID][modelID]
 	return row, ok
 }
 
 // GetAllModelPricing returns all model pricing entries.
 func GetAllModelPricing() map[string]ModelPricingRow {
+	return GetAllModelPricingForTenant(systemTenantID)
+}
+
+// GetAllModelPricingForTenant returns tenant pricing merged with system-catalog inheritance.
+// Tenant-owned rows override system rows for the same model_id.
+func GetAllModelPricingForTenant(tenantID string) map[string]ModelPricingRow {
+	tenantID = normalizeTenantID(tenantID)
 	pricingCacheMu.RLock()
 	defer pricingCacheMu.RUnlock()
-	result := make(map[string]ModelPricingRow, len(pricingCache))
-	for k, v := range pricingCache {
+
+	tenantCache := pricingCache[tenantID]
+	if isSystemTenant(tenantID) {
+		result := make(map[string]ModelPricingRow, len(tenantCache))
+		for k, v := range tenantCache {
+			result[k] = v
+		}
+		return result
+	}
+
+	systemCache := pricingCache[systemTenantID]
+	result := make(map[string]ModelPricingRow, len(systemCache)+len(tenantCache))
+	for k, v := range systemCache {
+		result[k] = v
+	}
+	for k, v := range tenantCache {
 		result[k] = v
 	}
 	return result
@@ -164,16 +273,20 @@ func GetAllModelPricing() map[string]ModelPricingRow {
 
 // DeleteModelPricing removes a model's pricing.
 func DeleteModelPricing(modelID string) error {
+	return DeleteModelPricingForTenant(systemTenantID, modelID)
+}
+func DeleteModelPricingForTenant(tenantID, modelID string) error {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
 		return fmt.Errorf("usage: database not initialised")
 	}
-	_, err := db.Exec("DELETE FROM model_pricing WHERE model_id = ?", modelID)
+	_, err := db.Exec("DELETE FROM model_pricing WHERE tenant_id = ? AND model_id = ?", tenantID, modelID)
 	if err != nil {
 		return fmt.Errorf("usage: delete pricing: %w", err)
 	}
 	pricingCacheMu.Lock()
-	delete(pricingCache, modelID)
+	delete(pricingCache[tenantID], modelID)
 	pricingCacheMu.Unlock()
 	return nil
 }
@@ -242,15 +355,14 @@ func calculateTokenCostV2(inputTokens, outputTokens, cacheReadTokens, cacheWrite
 // resolveModelPricing returns the effective pricing for a model from either
 // ModelConfigRow cache or ModelPricingRow cache, along with a boolean indicating
 // whether the model is enabled (or found at all).
-func resolveModelPricing(modelID string) (inputPrice, outputPrice, cachedPrice, cacheReadPrice, cacheWritePrice float64, enabled bool) {
-	if row, ok := GetModelConfig(modelID); ok {
+// Both lookups inherit system-tenant catalog prices when the business tenant has no override.
+func resolveModelPricingForTenant(tenantID, modelID string) (inputPrice, outputPrice, cachedPrice, cacheReadPrice, cacheWritePrice float64, enabled bool) {
+	if row, ok := GetModelConfigForTenant(tenantID, modelID); ok {
 		enabled = row.Enabled
 		return row.InputPricePerMillion, row.OutputPricePerMillion, row.CachedPricePerMillion, row.CacheReadPricePerMillion, row.CacheWritePricePerMillion, enabled
 	}
 
-	pricingCacheMu.RLock()
-	row, ok := pricingCache[modelID]
-	pricingCacheMu.RUnlock()
+	row, ok := GetModelPricingForTenant(tenantID, modelID)
 	if !ok {
 		return 0, 0, 0, 0, 0, false
 	}
@@ -261,7 +373,10 @@ func resolveModelPricing(modelID string) (inputPrice, outputPrice, cachedPrice, 
 // It uses the legacy cached_tokens field and OpenAI-compatible heuristic.
 // Returns 0 if no pricing is configured for the model.
 func CalculateCost(modelID string, inputTokens, outputTokens, cachedTokens int64) float64 {
-	if row, ok := GetModelConfig(modelID); ok {
+	return CalculateCostForTenant(systemTenantID, modelID, inputTokens, outputTokens, cachedTokens)
+}
+func CalculateCostForTenant(tenantID, modelID string, inputTokens, outputTokens, cachedTokens int64) float64 {
+	if row, ok := GetModelConfigForTenant(tenantID, modelID); ok {
 		if !row.Enabled {
 			return 0
 		}
@@ -271,9 +386,7 @@ func CalculateCost(modelID string, inputTokens, outputTokens, cachedTokens int64
 		return calculateTokenCost(inputTokens, outputTokens, cachedTokens, row.InputPricePerMillion, row.OutputPricePerMillion, row.CachedPricePerMillion)
 	}
 
-	pricingCacheMu.RLock()
-	row, ok := pricingCache[modelID]
-	pricingCacheMu.RUnlock()
+	row, ok := GetModelPricingForTenant(tenantID, modelID)
 	if !ok {
 		return 0
 	}
@@ -283,8 +396,8 @@ func CalculateCost(modelID string, inputTokens, outputTokens, cachedTokens int64
 // resolveCallPricing checks whether a model uses "call" pricing mode and returns
 // the per-call price if so, along with a boolean. This avoids re-checking the
 // model config cache directly in CalculateCostV2.
-func resolveCallPricing(modelID string) (pricePerCall float64, isCall bool) {
-	if row, ok := GetModelConfig(modelID); ok && row.Enabled && normalizePricingMode(row.PricingMode) == "call" {
+func resolveCallPricingForTenant(tenantID, modelID string) (pricePerCall float64, isCall bool) {
+	if row, ok := GetModelConfigForTenant(tenantID, modelID); ok && row.Enabled && normalizePricingMode(row.PricingMode) == "call" {
 		return row.PricePerCall, true
 	}
 	return 0, false
@@ -294,12 +407,15 @@ func resolveCallPricing(modelID string) (pricePerCall float64, isCall bool) {
 // It uses cache_read_tokens, cache_write_tokens, and cache_read_included_in_input
 // from TokenStats for accurate cost calculation.
 func CalculateCostV2(modelID string, tokens TokenStats) float64 {
+	return CalculateCostV2ForTenant(systemTenantID, modelID, tokens)
+}
+func CalculateCostV2ForTenant(tenantID, modelID string, tokens TokenStats) float64 {
 	// Check for per-call pricing first
-	if pricePerCall, isCall := resolveCallPricing(modelID); isCall {
+	if pricePerCall, isCall := resolveCallPricingForTenant(tenantID, modelID); isCall {
 		return pricePerCall
 	}
 
-	inputPrice, outputPrice, cachedPrice, cacheReadPrice, cacheWritePrice, enabled := resolveModelPricing(modelID)
+	inputPrice, outputPrice, cachedPrice, cacheReadPrice, cacheWritePrice, enabled := resolveModelPricingForTenant(tenantID, modelID)
 	if !enabled {
 		return 0
 	}

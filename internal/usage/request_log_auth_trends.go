@@ -36,6 +36,11 @@ type HourlyUsagePoint struct {
 }
 
 func QueryDailyCallsByAuthIndexes(authIndexes []string, days int) ([]DailyCountPoint, error) {
+	return QueryDailyCallsByAuthIndexesForTenant(systemTenantID, authIndexes, days)
+}
+
+func QueryDailyCallsByAuthIndexesForTenant(tenantID string, authIndexes []string, days int) ([]DailyCountPoint, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getReadDB()
 	if db == nil {
 		return []DailyCountPoint{}, nil
@@ -65,8 +70,8 @@ func QueryDailyCallsByAuthIndexes(authIndexes []string, days int) ([]DailyCountP
 	}
 
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(normalized)), ",")
-	args := make([]interface{}, 0, len(normalized)+1)
-	args = append(args, CutoffStartUTC(days).Format(time.RFC3339))
+	args := make([]interface{}, 0, len(normalized)+2)
+	args = append(args, tenantID, CutoffStartUTC(days).Format(time.RFC3339))
 	for _, idx := range normalized {
 		args = append(args, idx)
 	}
@@ -74,7 +79,7 @@ func QueryDailyCallsByAuthIndexes(authIndexes []string, days int) ([]DailyCountP
 	q := fmt.Sprintf(`
 		SELECT timestamp
 		FROM request_logs
-		WHERE timestamp >= ? AND auth_index IN (%s)
+		WHERE tenant_id = ? AND timestamp >= ? AND auth_index IN (%s)
 		ORDER BY timestamp ASC
 	`, placeholders)
 

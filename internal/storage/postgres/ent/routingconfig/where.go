@@ -52,6 +52,11 @@ func IDLTE(id int) predicate.RoutingConfig {
 	return predicate.RoutingConfig(sql.FieldLTE(FieldID, id))
 }
 
+// TenantID applies equality check predicate on the "tenant_id" field. It's identical to TenantIDEQ.
+func TenantID(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldEQ(FieldTenantID, v))
+}
+
 // Payload applies equality check predicate on the "payload" field. It's identical to PayloadEQ.
 func Payload(v string) predicate.RoutingConfig {
 	return predicate.RoutingConfig(sql.FieldEQ(FieldPayload, v))
@@ -60,6 +65,71 @@ func Payload(v string) predicate.RoutingConfig {
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v string) predicate.RoutingConfig {
 	return predicate.RoutingConfig(sql.FieldEQ(FieldUpdatedAt, v))
+}
+
+// TenantIDEQ applies the EQ predicate on the "tenant_id" field.
+func TenantIDEQ(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldEQ(FieldTenantID, v))
+}
+
+// TenantIDNEQ applies the NEQ predicate on the "tenant_id" field.
+func TenantIDNEQ(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldNEQ(FieldTenantID, v))
+}
+
+// TenantIDIn applies the In predicate on the "tenant_id" field.
+func TenantIDIn(vs ...string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldIn(FieldTenantID, vs...))
+}
+
+// TenantIDNotIn applies the NotIn predicate on the "tenant_id" field.
+func TenantIDNotIn(vs ...string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldNotIn(FieldTenantID, vs...))
+}
+
+// TenantIDGT applies the GT predicate on the "tenant_id" field.
+func TenantIDGT(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldGT(FieldTenantID, v))
+}
+
+// TenantIDGTE applies the GTE predicate on the "tenant_id" field.
+func TenantIDGTE(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldGTE(FieldTenantID, v))
+}
+
+// TenantIDLT applies the LT predicate on the "tenant_id" field.
+func TenantIDLT(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldLT(FieldTenantID, v))
+}
+
+// TenantIDLTE applies the LTE predicate on the "tenant_id" field.
+func TenantIDLTE(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldLTE(FieldTenantID, v))
+}
+
+// TenantIDContains applies the Contains predicate on the "tenant_id" field.
+func TenantIDContains(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldContains(FieldTenantID, v))
+}
+
+// TenantIDHasPrefix applies the HasPrefix predicate on the "tenant_id" field.
+func TenantIDHasPrefix(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldHasPrefix(FieldTenantID, v))
+}
+
+// TenantIDHasSuffix applies the HasSuffix predicate on the "tenant_id" field.
+func TenantIDHasSuffix(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldHasSuffix(FieldTenantID, v))
+}
+
+// TenantIDEqualFold applies the EqualFold predicate on the "tenant_id" field.
+func TenantIDEqualFold(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldEqualFold(FieldTenantID, v))
+}
+
+// TenantIDContainsFold applies the ContainsFold predicate on the "tenant_id" field.
+func TenantIDContainsFold(v string) predicate.RoutingConfig {
+	return predicate.RoutingConfig(sql.FieldContainsFold(FieldTenantID, v))
 }
 
 // PayloadEQ applies the EQ predicate on the "payload" field.

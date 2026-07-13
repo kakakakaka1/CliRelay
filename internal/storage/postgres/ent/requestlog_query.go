@@ -262,12 +262,12 @@ func (_q *RequestLogQuery) Clone() *RequestLogQuery {
 // Example:
 //
 //	var v []struct {
-//		Timestamp time.Time `json:"timestamp,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.RequestLog.Query().
-//		GroupBy(requestlog.FieldTimestamp).
+//		GroupBy(requestlog.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *RequestLogQuery) GroupBy(field string, fields ...string) *RequestLogGroupBy {
@@ -285,11 +285,11 @@ func (_q *RequestLogQuery) GroupBy(field string, fields ...string) *RequestLogGr
 // Example:
 //
 //	var v []struct {
-//		Timestamp time.Time `json:"timestamp,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.RequestLog.Query().
-//		Select(requestlog.FieldTimestamp).
+//		Select(requestlog.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *RequestLogQuery) Select(fields ...string) *RequestLogSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

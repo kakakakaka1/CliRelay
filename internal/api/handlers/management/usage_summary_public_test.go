@@ -236,3 +236,73 @@ func TestGetPublicUsageSummary(t *testing.T) {
 		}
 	})
 }
+
+// Regression: multi-tenant keys must not be looked up under the system tenant.
+// CC Switch polls this endpoint with the raw API key only; without ResolveAPIKeyTenant
+// the card always shows 0 calls / $0 even when request_logs has real usage.
+func TestGetPublicUsageSummary_ResolvesBusinessTenant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupUsageSummaryTestDB(t)
+
+	const (
+		tenantID = "00000000-0000-0000-0000-0000000000aa"
+		apiKey   = "sk-business-tenant-usage"
+	)
+
+	if err := usage.UpsertAPIKeyForTenant(tenantID, usage.APIKeyRow{
+		Key:      apiKey,
+		Name:     "business-user",
+		Disabled: false,
+	}); err != nil {
+		t.Fatalf("UpsertAPIKeyForTenant: %v", err)
+	}
+
+	// InsertLog derives tenant from the API key row, so this lands in the business tenant.
+	usage.InsertLog(apiKey, "business-user", "gpt-5.4", "test", "chan", "idx", false, time.Now(), 100, 50,
+		usage.TokenStats{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+		"", "",
+	)
+	usage.InsertLog(apiKey, "business-user", "gpt-5.4", "test", "chan", "idx", false, time.Now(), 100, 50,
+		usage.TokenStats{InputTokens: 5, OutputTokens: 5, TotalTokens: 10},
+		"", "",
+	)
+
+	// Sanity: system-tenant lookup must not see this key (precondition of the bug).
+	if row := usage.GetAPIKey(apiKey); row != nil {
+		t.Fatalf("precondition failed: GetAPIKey (system tenant) unexpectedly found business key")
+	}
+	if row := usage.GetAPIKeyForTenant(tenantID, apiKey); row == nil {
+		t.Fatalf("precondition failed: business tenant key missing")
+	}
+
+	body := []byte(`{"api_key":"` + apiKey + `"}`)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/public/usage/summary", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	h := NewHandler(&config.Config{}, "", nil)
+	h.GetPublicUsageSummary(ctx)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var got struct {
+		Found bool   `json:"found"`
+		Range string `json:"range"`
+		Stats struct {
+			TotalCalls int64   `json:"total_calls"`
+			QuotaCost  float64 `json:"quota_cost"`
+		} `json:"stats"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !got.Found {
+		t.Errorf("found = false, want true for business-tenant key")
+	}
+	if got.Stats.TotalCalls != 2 {
+		t.Errorf("total_calls = %d, want 2", got.Stats.TotalCalls)
+	}
+}

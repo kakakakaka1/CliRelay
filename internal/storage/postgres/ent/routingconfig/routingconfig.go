@@ -11,6 +11,8 @@ const (
 	Label = "routing_config"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldTenantID holds the string denoting the tenant_id field in the database.
+	FieldTenantID = "tenant_id"
 	// FieldPayload holds the string denoting the payload field in the database.
 	FieldPayload = "payload"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -22,6 +24,7 @@ const (
 // Columns holds all SQL columns for routingconfig fields.
 var Columns = []string{
 	FieldID,
+	FieldTenantID,
 	FieldPayload,
 	FieldUpdatedAt,
 }
@@ -37,6 +40,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultTenantID holds the default value on creation for the "tenant_id" field.
+	DefaultTenantID string
 	// DefaultPayload holds the default value on creation for the "payload" field.
 	DefaultPayload string
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
@@ -51,6 +56,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByTenantID orders the results by the tenant_id field.
+func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
 }
 
 // ByPayload orders the results by the payload field.

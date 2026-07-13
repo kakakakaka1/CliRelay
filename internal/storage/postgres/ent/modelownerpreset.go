@@ -17,6 +17,8 @@ type ModelOwnerPreset struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Value holds the value of the "value" field.
 	Value string `json:"value,omitempty"`
 	// Label holds the value of the "label" field.
@@ -37,7 +39,7 @@ func (*ModelOwnerPreset) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case modelownerpreset.FieldID, modelownerpreset.FieldEnabled:
 			values[i] = new(sql.NullInt64)
-		case modelownerpreset.FieldValue, modelownerpreset.FieldLabel, modelownerpreset.FieldDescription:
+		case modelownerpreset.FieldTenantID, modelownerpreset.FieldValue, modelownerpreset.FieldLabel, modelownerpreset.FieldDescription:
 			values[i] = new(sql.NullString)
 		case modelownerpreset.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -62,6 +64,12 @@ func (_m *ModelOwnerPreset) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case modelownerpreset.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case modelownerpreset.FieldValue:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field value", values[i])
@@ -128,6 +136,9 @@ func (_m *ModelOwnerPreset) String() string {
 	var builder strings.Builder
 	builder.WriteString("ModelOwnerPreset(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("value=")
 	builder.WriteString(_m.Value)
 	builder.WriteString(", ")

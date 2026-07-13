@@ -26,6 +26,7 @@ var (
 
 type Session struct {
 	Provider  string
+	TenantID  string
 	Status    string
 	CreatedAt time.Time
 	ExpiresAt time.Time
@@ -56,6 +57,10 @@ func (s *Store) purgeExpiredLocked(now time.Time) {
 }
 
 func (s *Store) Register(state, provider string) {
+	s.RegisterTenant(state, provider, "")
+}
+
+func (s *Store) RegisterTenant(state, provider, tenantID string) {
 	if s == nil {
 		return
 	}
@@ -72,6 +77,7 @@ func (s *Store) Register(state, provider string) {
 	s.purgeExpiredLocked(now)
 	s.sessions[state] = Session{
 		Provider:  provider,
+		TenantID:  strings.TrimSpace(tenantID),
 		Status:    "",
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.ttl),
@@ -129,10 +135,15 @@ func (s *Store) Complete(state string) {
 }
 
 func (s *Store) CompleteProvider(provider string) int {
+	return s.CompleteProviderTenant(provider, "")
+}
+
+func (s *Store) CompleteProviderTenant(provider, tenantID string) int {
 	if s == nil {
 		return 0
 	}
 	provider = strings.ToLower(strings.TrimSpace(provider))
+	tenantID = strings.TrimSpace(tenantID)
 	if provider == "" {
 		return 0
 	}
@@ -144,7 +155,7 @@ func (s *Store) CompleteProvider(provider string) int {
 	s.purgeExpiredLocked(now)
 	removed := 0
 	for state, session := range s.sessions {
-		if strings.EqualFold(session.Provider, provider) {
+		if strings.EqualFold(session.Provider, provider) && (tenantID == "" || session.TenantID == tenantID) {
 			if session.Status == StatusCompleted {
 				continue
 			}
@@ -262,6 +273,9 @@ func WriteCallbackFile(authDir, provider, state, code, errorMessage string) (str
 	}
 
 	fileName := fmt.Sprintf(".oauth-%s-%s.oauth", canonicalProvider, state)
+	if err := os.MkdirAll(authDir, 0o700); err != nil {
+		return "", fmt.Errorf("prepare oauth callback directory: %w", err)
+	}
 	filePath := filepath.Join(authDir, fileName)
 	payload := callbackFilePayload{
 		Code:  strings.TrimSpace(code),

@@ -27,6 +27,20 @@ func (_u *RuntimeSettingUpdate) Where(ps ...predicate.RuntimeSetting) *RuntimeSe
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *RuntimeSettingUpdate) SetTenantID(v string) *RuntimeSettingUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *RuntimeSettingUpdate) SetNillableTenantID(v *string) *RuntimeSettingUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetSettingKey sets the "setting_key" field.
 func (_u *RuntimeSettingUpdate) SetSettingKey(v string) *RuntimeSettingUpdate {
 	_u.mutation.SetSettingKey(v)
@@ -110,6 +124,9 @@ func (_u *RuntimeSettingUpdate) sqlSave(ctx context.Context) (_node int, err err
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(runtimesetting.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.SettingKey(); ok {
 		_spec.SetField(runtimesetting.FieldSettingKey, field.TypeString, value)
 	}
@@ -137,6 +154,20 @@ type RuntimeSettingUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *RuntimeSettingMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *RuntimeSettingUpdateOne) SetTenantID(v string) *RuntimeSettingUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *RuntimeSettingUpdateOne) SetNillableTenantID(v *string) *RuntimeSettingUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetSettingKey sets the "setting_key" field.
@@ -251,6 +282,9 @@ func (_u *RuntimeSettingUpdateOne) sqlSave(ctx context.Context) (_node *RuntimeS
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(runtimesetting.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.SettingKey(); ok {
 		_spec.SetField(runtimesetting.FieldSettingKey, field.TypeString, value)

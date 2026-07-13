@@ -27,6 +27,20 @@ func (_u *ProxyPoolUpdate) Where(ps ...predicate.ProxyPool) *ProxyPoolUpdate {
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *ProxyPoolUpdate) SetTenantID(v string) *ProxyPoolUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *ProxyPoolUpdate) SetNillableTenantID(v *string) *ProxyPoolUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetName sets the "name" field.
 func (_u *ProxyPoolUpdate) SetName(v string) *ProxyPoolUpdate {
 	_u.mutation.SetName(v)
@@ -159,6 +173,9 @@ func (_u *ProxyPoolUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(proxypool.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(proxypool.FieldName, field.TypeString, value)
 	}
@@ -198,6 +215,20 @@ type ProxyPoolUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *ProxyPoolMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *ProxyPoolUpdateOne) SetTenantID(v string) *ProxyPoolUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *ProxyPoolUpdateOne) SetNillableTenantID(v *string) *ProxyPoolUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetName sets the "name" field.
@@ -361,6 +392,9 @@ func (_u *ProxyPoolUpdateOne) sqlSave(ctx context.Context) (_node *ProxyPool, er
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(proxypool.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(proxypool.FieldName, field.TypeString, value)

@@ -22,20 +22,36 @@ func (m *Manager) SetRoundTripperProvider(p RoundTripperProvider) {
 	m.mu.Unlock()
 }
 
-// RegisterExecutor registers a provider executor with the manager.
+// RegisterExecutor registers a provider executor for the system tenant.
 func (m *Manager) RegisterExecutor(executor ProviderExecutor) {
-	if executor == nil {
+	m.RegisterExecutorForTenant(defaultTenantID, executor)
+}
+
+// RegisterExecutorForTenant registers a provider executor for one tenant runtime config.
+func (m *Manager) RegisterExecutorForTenant(tenantID string, executor ProviderExecutor) {
+	if m == nil || executor == nil {
 		return
 	}
-	provider := strings.TrimSpace(executor.Identifier())
+	provider := strings.ToLower(strings.TrimSpace(executor.Identifier()))
 	if provider == "" {
 		return
 	}
+	tenantID = normalizedTenantID(tenantID)
 
 	var replaced ProviderExecutor
 	m.mu.Lock()
-	replaced = m.executors[provider]
-	m.executors[provider] = executor
+	if tenantID == defaultTenantID {
+		replaced = m.executors[provider]
+		m.executors[provider] = executor
+	} else {
+		byProvider := m.tenantExecutors[tenantID]
+		if byProvider == nil {
+			byProvider = make(map[string]ProviderExecutor)
+			m.tenantExecutors[tenantID] = byProvider
+		}
+		replaced = byProvider[provider]
+		byProvider[provider] = executor
+	}
 	m.mu.Unlock()
 
 	if replaced == nil || replaced == executor {
@@ -46,15 +62,43 @@ func (m *Manager) RegisterExecutor(executor ProviderExecutor) {
 	}
 }
 
-// UnregisterExecutor removes the executor associated with the provider key.
+// UnregisterExecutor removes the system-tenant executor associated with the provider key.
 func (m *Manager) UnregisterExecutor(provider string) {
+	m.UnregisterExecutorForTenant(defaultTenantID, provider)
+}
+
+// UnregisterExecutorForTenant removes one tenant's executor association.
+func (m *Manager) UnregisterExecutorForTenant(tenantID, provider string) {
+	if m == nil {
+		return
+	}
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		return
 	}
+	tenantID = normalizedTenantID(tenantID)
 	m.mu.Lock()
-	delete(m.executors, provider)
+	if tenantID == defaultTenantID {
+		delete(m.executors, provider)
+	} else if byProvider := m.tenantExecutors[tenantID]; byProvider != nil {
+		delete(byProvider, provider)
+		if len(byProvider) == 0 {
+			delete(m.tenantExecutors, tenantID)
+		}
+	}
 	m.mu.Unlock()
+}
+
+func (m *Manager) executorForTenantLocked(tenantID, provider string) ProviderExecutor {
+	if m == nil {
+		return nil
+	}
+	tenantID = normalizedTenantID(tenantID)
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if tenantID == defaultTenantID {
+		return m.executors[provider]
+	}
+	return m.tenantExecutors[tenantID][provider]
 }
 
 // Register inserts a new auth entry into the manager.
@@ -163,7 +207,6 @@ func (m *Manager) Load(ctx context.Context) error {
 		auth.EnsureIndex()
 		m.auths[auth.ID] = auth.Clone()
 	}
-	cfg := m.currentRuntimeConfig()
-	m.rebuildAPIKeyModelAliasLocked(cfg)
+	m.rebuildAPIKeyModelAliasLocked()
 	return nil
 }

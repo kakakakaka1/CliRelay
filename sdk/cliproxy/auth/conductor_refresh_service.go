@@ -110,7 +110,7 @@ func (s refreshService) checkRefreshes(ctx context.Context) {
 		}
 		log.Debugf("checking refresh for %s, %s, %s", auth.Provider, auth.ID, typ)
 
-		if exec := s.manager.executorFor(auth.Provider); exec == nil {
+		if exec := s.manager.executorForTenant(auth.TenantID, auth.Provider); exec == nil {
 			continue
 		}
 		if !s.markRefreshPending(auth.ID, now) {
@@ -265,7 +265,7 @@ func (s refreshService) currentAuthAndExecutor(id string) (*Auth, ProviderExecut
 	if auth == nil {
 		return nil, nil
 	}
-	return auth, s.manager.executors[auth.Provider]
+	return auth, s.manager.executorForTenantLocked(auth.TenantID, auth.Provider)
 }
 
 func (s refreshService) applyRefreshFailure(ctx context.Context, id string, auth *Auth, cloned *Auth, now time.Time, err error) {

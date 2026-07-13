@@ -27,6 +27,20 @@ func (_u *APIKeyUpdate) Where(ps ...predicate.APIKey) *APIKeyUpdate {
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *APIKeyUpdate) SetTenantID(v string) *APIKeyUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableTenantID(v *string) *APIKeyUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetKey sets the "key" field.
 func (_u *APIKeyUpdate) SetKey(v string) *APIKeyUpdate {
 	_u.mutation.SetKey(v)
@@ -362,6 +376,9 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(apikey.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Key(); ok {
 		_spec.SetField(apikey.FieldKey, field.TypeString, value)
 	}
@@ -455,6 +472,20 @@ type APIKeyUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *APIKeyMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *APIKeyUpdateOne) SetTenantID(v string) *APIKeyUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableTenantID(v *string) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetKey sets the "key" field.
@@ -821,6 +852,9 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(apikey.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Key(); ok {
 		_spec.SetField(apikey.FieldKey, field.TypeString, value)

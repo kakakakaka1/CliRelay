@@ -26,7 +26,7 @@ func (m *Manager) applyAPIKeyModelAlias(auth *Auth, requestedModel string) strin
 
 	// Slow path: scan config for the matching credential entry and resolve alias.
 	// This acts as a safety net if mappings are stale or auth.ID is missing.
-	cfg := m.currentRuntimeConfig()
+	cfg := m.currentRuntimeConfigForTenant(auth.TenantID)
 
 	provider := strings.ToLower(strings.TrimSpace(auth.Provider))
 	upstreamModel := ""

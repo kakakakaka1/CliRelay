@@ -11,6 +11,8 @@ import (
 const RequestedModelMetadataKey = "requested_model"
 
 const (
+	// TenantMetadataKey carries the trusted tenant selected during API key authentication.
+	TenantMetadataKey = "tenant_id"
 	// PinnedAuthMetadataKey locks execution to a specific auth ID.
 	PinnedAuthMetadataKey = "pinned_auth_id"
 	// SinglePickMetadataKey forces the auth manager to use exactly one picked auth

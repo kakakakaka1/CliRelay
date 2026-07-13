@@ -103,7 +103,7 @@ func openRouterStripAnthropicReleaseDate(modelID string) string {
 	return openRouterStripDateSuffix(modelID)
 }
 
-func openRouterLegacyLocalModelIDs(remoteModelID, owner, modelID string) []string {
+func openRouterLegacyLocalModelIDs(tenantID, remoteModelID, owner, modelID string) []string {
 	var ids []string
 	seen := map[string]struct{}{}
 	add := func(id string) {
@@ -124,20 +124,20 @@ func openRouterLegacyLocalModelIDs(remoteModelID, owner, modelID string) []strin
 	if normalizeModelOwnerValue(owner) == "anthropic" {
 		add(strings.ReplaceAll(providerless, ".", "-"))
 	}
-	for _, aliasID := range openRouterExistingDateSuffixAliasIDs(modelID) {
+	for _, aliasID := range openRouterExistingDateSuffixAliasIDs(tenantID, modelID) {
 		add(aliasID)
 	}
 	return ids
 }
 
-func openRouterExistingDateSuffixAliasIDs(modelID string) []string {
+func openRouterExistingDateSuffixAliasIDs(tenantID, modelID string) []string {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
 		return nil
 	}
 	prefix := modelID + "-"
 	var aliases []string
-	for _, row := range ListModelConfigs() {
+	for _, row := range ListModelConfigsForTenant(tenantID) {
 		aliasID := strings.TrimSpace(row.ModelID)
 		if aliasID == modelID || !strings.HasPrefix(aliasID, prefix) {
 			continue
@@ -152,7 +152,7 @@ func openRouterExistingDateSuffixAliasIDs(modelID string) []string {
 // openRouterExistingAnthropicReleaseDateAliasIDs is retained for backward compat.
 // New code should use openRouterExistingDateSuffixAliasIDs instead.
 func openRouterExistingAnthropicReleaseDateAliasIDs(modelID string) []string {
-	return openRouterExistingDateSuffixAliasIDs(modelID)
+	return openRouterExistingDateSuffixAliasIDs(systemTenantID, modelID)
 }
 
 func openRouterIsDateSuffixAlias(modelID, baseModelID string) bool {

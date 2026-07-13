@@ -62,6 +62,11 @@ func IDContainsFold(id string) predicate.ProxyPool {
 	return predicate.ProxyPool(sql.FieldContainsFold(FieldID, id))
 }
 
+// TenantID applies equality check predicate on the "tenant_id" field. It's identical to TenantIDEQ.
+func TenantID(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldEQ(FieldTenantID, v))
+}
+
 // Name applies equality check predicate on the "name" field. It's identical to NameEQ.
 func Name(v string) predicate.ProxyPool {
 	return predicate.ProxyPool(sql.FieldEQ(FieldName, v))
@@ -90,6 +95,71 @@ func CreatedAt(v string) predicate.ProxyPool {
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v string) predicate.ProxyPool {
 	return predicate.ProxyPool(sql.FieldEQ(FieldUpdatedAt, v))
+}
+
+// TenantIDEQ applies the EQ predicate on the "tenant_id" field.
+func TenantIDEQ(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldEQ(FieldTenantID, v))
+}
+
+// TenantIDNEQ applies the NEQ predicate on the "tenant_id" field.
+func TenantIDNEQ(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldNEQ(FieldTenantID, v))
+}
+
+// TenantIDIn applies the In predicate on the "tenant_id" field.
+func TenantIDIn(vs ...string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldIn(FieldTenantID, vs...))
+}
+
+// TenantIDNotIn applies the NotIn predicate on the "tenant_id" field.
+func TenantIDNotIn(vs ...string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldNotIn(FieldTenantID, vs...))
+}
+
+// TenantIDGT applies the GT predicate on the "tenant_id" field.
+func TenantIDGT(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldGT(FieldTenantID, v))
+}
+
+// TenantIDGTE applies the GTE predicate on the "tenant_id" field.
+func TenantIDGTE(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldGTE(FieldTenantID, v))
+}
+
+// TenantIDLT applies the LT predicate on the "tenant_id" field.
+func TenantIDLT(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldLT(FieldTenantID, v))
+}
+
+// TenantIDLTE applies the LTE predicate on the "tenant_id" field.
+func TenantIDLTE(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldLTE(FieldTenantID, v))
+}
+
+// TenantIDContains applies the Contains predicate on the "tenant_id" field.
+func TenantIDContains(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldContains(FieldTenantID, v))
+}
+
+// TenantIDHasPrefix applies the HasPrefix predicate on the "tenant_id" field.
+func TenantIDHasPrefix(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldHasPrefix(FieldTenantID, v))
+}
+
+// TenantIDHasSuffix applies the HasSuffix predicate on the "tenant_id" field.
+func TenantIDHasSuffix(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldHasSuffix(FieldTenantID, v))
+}
+
+// TenantIDEqualFold applies the EqualFold predicate on the "tenant_id" field.
+func TenantIDEqualFold(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldEqualFold(FieldTenantID, v))
+}
+
+// TenantIDContainsFold applies the ContainsFold predicate on the "tenant_id" field.
+func TenantIDContainsFold(v string) predicate.ProxyPool {
+	return predicate.ProxyPool(sql.FieldContainsFold(FieldTenantID, v))
 }
 
 // NameEQ applies the EQ predicate on the "name" field.

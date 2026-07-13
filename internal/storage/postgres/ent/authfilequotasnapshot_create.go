@@ -20,6 +20,20 @@ type AuthFileQuotaSnapshotCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *AuthFileQuotaSnapshotCreate) SetTenantID(v string) *AuthFileQuotaSnapshotCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *AuthFileQuotaSnapshotCreate) SetNillableTenantID(v *string) *AuthFileQuotaSnapshotCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetDateKey sets the "date_key" field.
 func (_c *AuthFileQuotaSnapshotCreate) SetDateKey(v string) *AuthFileQuotaSnapshotCreate {
 	_c.mutation.SetDateKey(v)
@@ -121,6 +135,10 @@ func (_c *AuthFileQuotaSnapshotCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *AuthFileQuotaSnapshotCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := authfilequotasnapshot.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.AuthSubjectID(); !ok {
 		v := authfilequotasnapshot.DefaultAuthSubjectID
 		_c.mutation.SetAuthSubjectID(v)
@@ -133,6 +151,9 @@ func (_c *AuthFileQuotaSnapshotCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *AuthFileQuotaSnapshotCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "AuthFileQuotaSnapshot.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.DateKey(); !ok {
 		return &ValidationError{Name: "date_key", err: errors.New(`ent: missing required field "AuthFileQuotaSnapshot.date_key"`)}
 	}
@@ -177,6 +198,10 @@ func (_c *AuthFileQuotaSnapshotCreate) createSpec() (*AuthFileQuotaSnapshot, *sq
 		_node = &AuthFileQuotaSnapshot{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(authfilequotasnapshot.Table, sqlgraph.NewFieldSpec(authfilequotasnapshot.FieldID, field.TypeInt))
 	)
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(authfilequotasnapshot.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
+	}
 	if value, ok := _c.mutation.DateKey(); ok {
 		_spec.SetField(authfilequotasnapshot.FieldDateKey, field.TypeString, value)
 		_node.DateKey = value

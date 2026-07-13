@@ -262,12 +262,12 @@ func (_q *RoutingConfigQuery) Clone() *RoutingConfigQuery {
 // Example:
 //
 //	var v []struct {
-//		Payload string `json:"payload,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.RoutingConfig.Query().
-//		GroupBy(routingconfig.FieldPayload).
+//		GroupBy(routingconfig.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *RoutingConfigQuery) GroupBy(field string, fields ...string) *RoutingConfigGroupBy {
@@ -285,11 +285,11 @@ func (_q *RoutingConfigQuery) GroupBy(field string, fields ...string) *RoutingCo
 // Example:
 //
 //	var v []struct {
-//		Payload string `json:"payload,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.RoutingConfig.Query().
-//		Select(routingconfig.FieldPayload).
+//		Select(routingconfig.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *RoutingConfigQuery) Select(fields ...string) *RoutingConfigSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

@@ -54,6 +54,11 @@ func IDLTE(id int) predicate.ModelOpenrouterSyncState {
 	return predicate.ModelOpenrouterSyncState(sql.FieldLTE(FieldID, id))
 }
 
+// TenantID applies equality check predicate on the "tenant_id" field. It's identical to TenantIDEQ.
+func TenantID(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldEQ(FieldTenantID, v))
+}
+
 // Enabled applies equality check predicate on the "enabled" field. It's identical to EnabledEQ.
 func Enabled(v int) predicate.ModelOpenrouterSyncState {
 	return predicate.ModelOpenrouterSyncState(sql.FieldEQ(FieldEnabled, v))
@@ -102,6 +107,71 @@ func LastSkipped(v int) predicate.ModelOpenrouterSyncState {
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v time.Time) predicate.ModelOpenrouterSyncState {
 	return predicate.ModelOpenrouterSyncState(sql.FieldEQ(FieldUpdatedAt, v))
+}
+
+// TenantIDEQ applies the EQ predicate on the "tenant_id" field.
+func TenantIDEQ(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldEQ(FieldTenantID, v))
+}
+
+// TenantIDNEQ applies the NEQ predicate on the "tenant_id" field.
+func TenantIDNEQ(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldNEQ(FieldTenantID, v))
+}
+
+// TenantIDIn applies the In predicate on the "tenant_id" field.
+func TenantIDIn(vs ...string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldIn(FieldTenantID, vs...))
+}
+
+// TenantIDNotIn applies the NotIn predicate on the "tenant_id" field.
+func TenantIDNotIn(vs ...string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldNotIn(FieldTenantID, vs...))
+}
+
+// TenantIDGT applies the GT predicate on the "tenant_id" field.
+func TenantIDGT(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldGT(FieldTenantID, v))
+}
+
+// TenantIDGTE applies the GTE predicate on the "tenant_id" field.
+func TenantIDGTE(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldGTE(FieldTenantID, v))
+}
+
+// TenantIDLT applies the LT predicate on the "tenant_id" field.
+func TenantIDLT(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldLT(FieldTenantID, v))
+}
+
+// TenantIDLTE applies the LTE predicate on the "tenant_id" field.
+func TenantIDLTE(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldLTE(FieldTenantID, v))
+}
+
+// TenantIDContains applies the Contains predicate on the "tenant_id" field.
+func TenantIDContains(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldContains(FieldTenantID, v))
+}
+
+// TenantIDHasPrefix applies the HasPrefix predicate on the "tenant_id" field.
+func TenantIDHasPrefix(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldHasPrefix(FieldTenantID, v))
+}
+
+// TenantIDHasSuffix applies the HasSuffix predicate on the "tenant_id" field.
+func TenantIDHasSuffix(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldHasSuffix(FieldTenantID, v))
+}
+
+// TenantIDEqualFold applies the EqualFold predicate on the "tenant_id" field.
+func TenantIDEqualFold(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldEqualFold(FieldTenantID, v))
+}
+
+// TenantIDContainsFold applies the ContainsFold predicate on the "tenant_id" field.
+func TenantIDContainsFold(v string) predicate.ModelOpenrouterSyncState {
+	return predicate.ModelOpenrouterSyncState(sql.FieldContainsFold(FieldTenantID, v))
 }
 
 // EnabledEQ applies the EQ predicate on the "enabled" field.

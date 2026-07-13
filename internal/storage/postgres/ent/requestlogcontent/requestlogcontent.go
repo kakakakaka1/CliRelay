@@ -13,6 +13,8 @@ const (
 	Label = "request_log_content"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "log_id"
+	// FieldTenantID holds the string denoting the tenant_id field in the database.
+	FieldTenantID = "tenant_id"
 	// FieldTimestamp holds the string denoting the timestamp field in the database.
 	FieldTimestamp = "timestamp"
 	// FieldCompression holds the string denoting the compression field in the database.
@@ -32,6 +34,7 @@ const (
 // Columns holds all SQL columns for requestlogcontent fields.
 var Columns = []string{
 	FieldID,
+	FieldTenantID,
 	FieldTimestamp,
 	FieldCompression,
 	FieldInputContent,
@@ -51,6 +54,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultTenantID holds the default value on creation for the "tenant_id" field.
+	DefaultTenantID string
 	// DefaultTimestamp holds the default value on creation for the "timestamp" field.
 	DefaultTimestamp func() time.Time
 	// DefaultCompression holds the default value on creation for the "compression" field.
@@ -65,6 +70,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByTenantID orders the results by the tenant_id field.
+func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
 }
 
 // ByTimestamp orders the results by the timestamp field.

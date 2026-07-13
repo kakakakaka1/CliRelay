@@ -16,6 +16,8 @@ type RoutingConfig struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Payload holds the value of the "payload" field.
 	Payload string `json:"payload,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -30,7 +32,7 @@ func (*RoutingConfig) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case routingconfig.FieldID:
 			values[i] = new(sql.NullInt64)
-		case routingconfig.FieldPayload, routingconfig.FieldUpdatedAt:
+		case routingconfig.FieldTenantID, routingconfig.FieldPayload, routingconfig.FieldUpdatedAt:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -53,6 +55,12 @@ func (_m *RoutingConfig) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case routingconfig.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case routingconfig.FieldPayload:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field payload", values[i])
@@ -101,6 +109,9 @@ func (_m *RoutingConfig) String() string {
 	var builder strings.Builder
 	builder.WriteString("RoutingConfig(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("payload=")
 	builder.WriteString(_m.Payload)
 	builder.WriteString(", ")

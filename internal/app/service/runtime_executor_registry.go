@@ -5,7 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor"
+	internalusage "github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/watcher/synthesizer"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/wsrelay"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
@@ -14,21 +16,51 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func SyncConfigDerivedAuths(cfg *config.Config, coreManager *coreauth.Manager) {
-	if cfg == nil || coreManager == nil {
+func SyncConfigDerivedAuths(base *config.Config, coreManager *coreauth.Manager) {
+	if base == nil || coreManager == nil {
 		return
 	}
+	SyncConfigDerivedAuthsForTenant(base, coreManager, identity.SystemTenantID)
+	service := identity.Default()
+	if service == nil {
+		return
+	}
+	tenants, err := service.ListTenants(context.Background())
+	if err != nil {
+		log.WithError(err).Warn("failed to list tenants during config auth sync")
+		return
+	}
+	for _, tenant := range tenants {
+		if tenant.ID == "" || tenant.ID == identity.SystemTenantID {
+			continue
+		}
+		SyncConfigDerivedAuthsForTenant(base, coreManager, tenant.ID)
+	}
+}
+
+// SyncConfigDerivedAuthsForTenant reconciles config-backed credentials inside one tenant namespace.
+func SyncConfigDerivedAuthsForTenant(base *config.Config, coreManager *coreauth.Manager, tenantID string) {
+	if base == nil || coreManager == nil {
+		return
+	}
+	tenantID = coreauth.NormalizedTenantID(tenantID)
+	tenantCfg := base
+	if tenantID != identity.SystemTenantID {
+		resolved := internalusage.BuildTenantRuntimeConfig(base, tenantID)
+		tenantCfg = &resolved
+	}
+	coreManager.SetConfigForTenant(tenantID, tenantCfg)
 
 	ctx := coreauth.WithSkipPersist(context.Background())
 	synth := synthesizer.NewConfigSynthesizer()
 	auths, err := synth.Synthesize(&synthesizer.SynthesisContext{
-		Config:      cfg,
-		AuthDir:     cfg.AuthDir,
+		Config:      tenantCfg,
+		AuthDir:     tenantCfg.AuthDir,
 		Now:         time.Now(),
 		IDGenerator: synthesizer.NewStableIDGenerator(),
 	})
 	if err != nil {
-		log.WithError(err).Warn("failed to synthesize config auths during service config reload")
+		log.WithError(err).Warnf("failed to synthesize config auths for tenant %s", tenantID)
 		return
 	}
 
@@ -36,6 +68,10 @@ func SyncConfigDerivedAuths(cfg *config.Config, coreManager *coreauth.Manager) {
 	for _, next := range auths {
 		if next == nil || strings.TrimSpace(next.ID) == "" {
 			continue
+		}
+		next.TenantID = tenantID
+		if tenantID != identity.SystemTenantID {
+			next.ID = tenantID + "/" + next.ID
 		}
 		desiredIDs[next.ID] = struct{}{}
 		if existing, ok := coreManager.GetByID(next.ID); ok && existing != nil {
@@ -50,14 +86,11 @@ func SyncConfigDerivedAuths(cfg *config.Config, coreManager *coreauth.Manager) {
 			log.WithError(err).Warnf("failed to apply config auth %s", next.ID)
 			continue
 		}
-		syncConfigDerivedAuthModels(cfg, next)
+		syncConfigDerivedAuthModels(tenantCfg, next)
 	}
 
-	for _, existing := range coreManager.List() {
-		if existing == nil || strings.TrimSpace(existing.ID) == "" {
-			continue
-		}
-		if !isConfigDerivedAuth(existing) {
+	for _, existing := range coreManager.ListForTenant(tenantID) {
+		if existing == nil || strings.TrimSpace(existing.ID) == "" || !isConfigDerivedAuth(existing) {
 			continue
 		}
 		if _, stillConfigured := desiredIDs[existing.ID]; stillConfigured {
@@ -75,8 +108,9 @@ func SyncConfigDerivedAuths(cfg *config.Config, coreManager *coreauth.Manager) {
 			log.WithError(err).Warnf("failed to disable removed config auth %s", disabled.ID)
 			continue
 		}
-		syncConfigDerivedAuthModels(cfg, disabled)
+		syncConfigDerivedAuthModels(tenantCfg, disabled)
 	}
+	RebindTenantExecutors(base, coreManager, tenantID, nil)
 }
 
 func syncConfigDerivedAuthModels(cfg *config.Config, auth *coreauth.Auth) {
@@ -407,20 +441,57 @@ func FetchXAIModels(ctx context.Context, auth *coreauth.Auth, cfg *config.Config
 	return executor.FetchXAIModels(ctx, auth, cfg)
 }
 
-func RegisterExecutorForAuth(coreManager *coreauth.Manager, cfg *config.Config, auth *coreauth.Auth, forceReplace bool, gateway WebsocketGateway) {
-	if coreManager == nil || auth == nil {
+func RebindTenantExecutors(base *config.Config, coreManager *coreauth.Manager, tenantID string, gateway WebsocketGateway) {
+	if base == nil || coreManager == nil {
 		return
+	}
+	tenantID = coreauth.NormalizedTenantID(tenantID)
+	rebound := make(map[string]struct{})
+	for _, auth := range coreManager.ListForTenant(tenantID) {
+		key := executorBindingKey(auth)
+		if key != "" && !strings.EqualFold(key, "aistudio") {
+			if _, exists := rebound[key]; exists {
+				continue
+			}
+			rebound[key] = struct{}{}
+		}
+		RegisterExecutorForAuth(coreManager, base, auth, true, gateway)
+	}
+}
+
+func executorBindingKey(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	if providerKey, _, ok := openAICompatInfoFromAuth(auth); ok && providerKey != "" {
+		return strings.ToLower(strings.TrimSpace(providerKey))
+	}
+	return strings.ToLower(strings.TrimSpace(auth.Provider))
+}
+
+func RegisterExecutorForAuth(coreManager *coreauth.Manager, base *config.Config, auth *coreauth.Auth, forceReplace bool, gateway WebsocketGateway) {
+	if coreManager == nil || auth == nil || base == nil {
+		return
+	}
+	tenantID := coreauth.NormalizedTenantID(auth.TenantID)
+	cfg := base
+	if tenantID != identity.SystemTenantID {
+		resolved := internalusage.BuildTenantRuntimeConfig(base, tenantID)
+		cfg = &resolved
+	}
+	register := func(exec coreauth.ProviderExecutor) {
+		coreManager.RegisterExecutorForTenant(tenantID, exec)
 	}
 	if strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
 		if !forceReplace {
-			existingExecutor, hasExecutor := coreManager.Executor("codex")
+			existingExecutor, hasExecutor := coreManager.ExecutorForTenant(tenantID, "codex")
 			if hasExecutor {
 				if _, isCodexAutoExecutor := existingExecutor.(*executor.CodexAutoExecutor); isCodexAutoExecutor {
 					return
 				}
 			}
 		}
-		coreManager.RegisterExecutor(executor.NewCodexAutoExecutor(cfg))
+		register(executor.NewCodexAutoExecutor(cfg))
 		return
 	}
 	if auth.Disabled {
@@ -433,48 +504,48 @@ func RegisterExecutorForAuth(coreManager *coreauth.Manager, cfg *config.Config, 
 		if compatProviderKey == "" {
 			compatProviderKey = "openai-compatibility"
 		}
-		coreManager.RegisterExecutor(executor.NewOpenAICompatExecutor(compatProviderKey, cfg))
+		register(executor.NewOpenAICompatExecutor(compatProviderKey, cfg))
 		return
 	}
 	switch strings.ToLower(auth.Provider) {
 	case "gemini":
-		coreManager.RegisterExecutor(executor.NewGeminiExecutor(cfg))
+		register(executor.NewGeminiExecutor(cfg))
 	case "vertex":
-		coreManager.RegisterExecutor(executor.NewGeminiVertexExecutor(cfg))
+		register(executor.NewGeminiVertexExecutor(cfg))
 	case "gemini-cli":
-		coreManager.RegisterExecutor(executor.NewGeminiCLIExecutor(cfg))
+		register(executor.NewGeminiCLIExecutor(cfg))
 	case "aistudio":
 		if gateway != nil {
 			relay, _ := gateway.RelayValue().(*wsrelay.Manager)
 			if relay != nil {
-				coreManager.RegisterExecutor(executor.NewAIStudioExecutor(cfg, auth.ID, relay))
+				register(executor.NewAIStudioExecutor(cfg, auth.ID, relay))
 			}
 		}
 		return
 	case "antigravity":
-		coreManager.RegisterExecutor(executor.NewAntigravityExecutor(cfg))
+		register(executor.NewAntigravityExecutor(cfg))
 	case "claude":
-		coreManager.RegisterExecutor(executor.NewClaudeExecutor(cfg))
+		register(executor.NewClaudeExecutor(cfg))
 	case "bedrock":
-		coreManager.RegisterExecutor(executor.NewBedrockExecutor(cfg))
+		register(executor.NewBedrockExecutor(cfg))
 	case "opencode-go":
-		coreManager.RegisterExecutor(executor.NewOpenCodeGoExecutor(cfg))
+		register(executor.NewOpenCodeGoExecutor(cfg))
 	case "ollama-cloud":
-		coreManager.RegisterExecutor(executor.NewOllamaCloudExecutor(cfg))
+		register(executor.NewOllamaCloudExecutor(cfg))
 	case "qwen":
-		coreManager.RegisterExecutor(executor.NewQwenExecutor(cfg))
+		register(executor.NewQwenExecutor(cfg))
 	case "iflow":
-		coreManager.RegisterExecutor(executor.NewIFlowExecutor(cfg))
+		register(executor.NewIFlowExecutor(cfg))
 	case "kimi":
-		coreManager.RegisterExecutor(executor.NewKimiExecutor(cfg))
+		register(executor.NewKimiExecutor(cfg))
 	case "xai":
-		coreManager.RegisterExecutor(executor.NewXAIExecutor(cfg))
+		register(executor.NewXAIExecutor(cfg))
 	default:
 		providerKey := strings.ToLower(strings.TrimSpace(auth.Provider))
 		if providerKey == "" {
 			providerKey = "openai-compatibility"
 		}
-		coreManager.RegisterExecutor(executor.NewOpenAICompatExecutor(providerKey, cfg))
+		register(executor.NewOpenAICompatExecutor(providerKey, cfg))
 	}
 }
 

@@ -28,6 +28,20 @@ func (_u *RequestLogContentUpdate) Where(ps ...predicate.RequestLogContent) *Req
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *RequestLogContentUpdate) SetTenantID(v string) *RequestLogContentUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *RequestLogContentUpdate) SetNillableTenantID(v *string) *RequestLogContentUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetTimestamp sets the "timestamp" field.
 func (_u *RequestLogContentUpdate) SetTimestamp(v time.Time) *RequestLogContentUpdate {
 	_u.mutation.SetTimestamp(v)
@@ -147,6 +161,9 @@ func (_u *RequestLogContentUpdate) sqlSave(ctx context.Context) (_node int, err 
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(requestlogcontent.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Timestamp(); ok {
 		_spec.SetField(requestlogcontent.FieldTimestamp, field.TypeTime, value)
 	}
@@ -192,6 +209,20 @@ type RequestLogContentUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *RequestLogContentMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *RequestLogContentUpdateOne) SetTenantID(v string) *RequestLogContentUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *RequestLogContentUpdateOne) SetNillableTenantID(v *string) *RequestLogContentUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetTimestamp sets the "timestamp" field.
@@ -342,6 +373,9 @@ func (_u *RequestLogContentUpdateOne) sqlSave(ctx context.Context) (_node *Reque
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(requestlogcontent.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Timestamp(); ok {
 		_spec.SetField(requestlogcontent.FieldTimestamp, field.TypeTime, value)

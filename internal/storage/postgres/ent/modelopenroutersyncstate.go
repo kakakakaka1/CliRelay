@@ -17,6 +17,8 @@ type ModelOpenrouterSyncState struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Enabled holds the value of the "enabled" field.
 	Enabled int `json:"enabled,omitempty"`
 	// IntervalMinutes holds the value of the "interval_minutes" field.
@@ -47,7 +49,7 @@ func (*ModelOpenrouterSyncState) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case modelopenroutersyncstate.FieldID, modelopenroutersyncstate.FieldEnabled, modelopenroutersyncstate.FieldIntervalMinutes, modelopenroutersyncstate.FieldLastSeen, modelopenroutersyncstate.FieldLastAdded, modelopenroutersyncstate.FieldLastUpdated, modelopenroutersyncstate.FieldLastSkipped:
 			values[i] = new(sql.NullInt64)
-		case modelopenroutersyncstate.FieldLastSyncAt, modelopenroutersyncstate.FieldLastSuccessAt, modelopenroutersyncstate.FieldLastError:
+		case modelopenroutersyncstate.FieldTenantID, modelopenroutersyncstate.FieldLastSyncAt, modelopenroutersyncstate.FieldLastSuccessAt, modelopenroutersyncstate.FieldLastError:
 			values[i] = new(sql.NullString)
 		case modelopenroutersyncstate.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -72,6 +74,12 @@ func (_m *ModelOpenrouterSyncState) assignValues(columns []string, values []any)
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case modelopenroutersyncstate.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case modelopenroutersyncstate.FieldEnabled:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field enabled", values[i])
@@ -168,6 +176,9 @@ func (_m *ModelOpenrouterSyncState) String() string {
 	var builder strings.Builder
 	builder.WriteString("ModelOpenrouterSyncState(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("enabled=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Enabled))
 	builder.WriteString(", ")

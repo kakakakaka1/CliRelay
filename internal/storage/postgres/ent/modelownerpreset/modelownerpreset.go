@@ -11,6 +11,8 @@ const (
 	Label = "model_owner_preset"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldTenantID holds the string denoting the tenant_id field in the database.
+	FieldTenantID = "tenant_id"
 	// FieldValue holds the string denoting the value field in the database.
 	FieldValue = "value"
 	// FieldLabel holds the string denoting the label field in the database.
@@ -28,6 +30,7 @@ const (
 // Columns holds all SQL columns for modelownerpreset fields.
 var Columns = []string{
 	FieldID,
+	FieldTenantID,
 	FieldValue,
 	FieldLabel,
 	FieldDescription,
@@ -46,6 +49,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultTenantID holds the default value on creation for the "tenant_id" field.
+	DefaultTenantID string
 	// DefaultLabel holds the default value on creation for the "label" field.
 	DefaultLabel string
 	// DefaultDescription holds the default value on creation for the "description" field.
@@ -60,6 +65,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByTenantID orders the results by the tenant_id field.
+func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
 }
 
 // ByValue orders the results by the value field.

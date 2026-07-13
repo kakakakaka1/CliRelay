@@ -28,6 +28,20 @@ func (_u *ModelOwnerPresetUpdate) Where(ps ...predicate.ModelOwnerPreset) *Model
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *ModelOwnerPresetUpdate) SetTenantID(v string) *ModelOwnerPresetUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *ModelOwnerPresetUpdate) SetNillableTenantID(v *string) *ModelOwnerPresetUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetValue sets the "value" field.
 func (_u *ModelOwnerPresetUpdate) SetValue(v string) *ModelOwnerPresetUpdate {
 	_u.mutation.SetValue(v)
@@ -146,6 +160,9 @@ func (_u *ModelOwnerPresetUpdate) sqlSave(ctx context.Context) (_node int, err e
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(modelownerpreset.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Value(); ok {
 		_spec.SetField(modelownerpreset.FieldValue, field.TypeString, value)
 	}
@@ -182,6 +199,20 @@ type ModelOwnerPresetUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *ModelOwnerPresetMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *ModelOwnerPresetUpdateOne) SetTenantID(v string) *ModelOwnerPresetUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *ModelOwnerPresetUpdateOne) SetNillableTenantID(v *string) *ModelOwnerPresetUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetValue sets the "value" field.
@@ -331,6 +362,9 @@ func (_u *ModelOwnerPresetUpdateOne) sqlSave(ctx context.Context) (_node *ModelO
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(modelownerpreset.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Value(); ok {
 		_spec.SetField(modelownerpreset.FieldValue, field.TypeString, value)

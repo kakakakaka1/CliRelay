@@ -35,11 +35,15 @@ func (m *Manager) resumeRecoveredQuotaModels(authID string, models []string) {
 
 // KnownChannelGroups returns the currently known explicit and implicit channel groups.
 func (m *Manager) KnownChannelGroups() map[string]struct{} {
+	return m.KnownChannelGroupsForTenant(defaultTenantID)
+}
+func (m *Manager) KnownChannelGroupsForTenant(tenantID string) map[string]struct{} {
+	tenantID = normalizedTenantID(tenantID)
 	out := make(map[string]struct{})
 	if m == nil {
 		return out
 	}
-	cfg := m.currentRuntimeConfig()
+	cfg := m.currentRuntimeConfigForTenant(tenantID)
 	if cfg != nil {
 		for i := range cfg.Routing.ChannelGroups {
 			if name := normalizeGroupName(cfg.Routing.ChannelGroups[i].Name); name != "" {
@@ -50,6 +54,9 @@ func (m *Manager) KnownChannelGroups() map[string]struct{} {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, auth := range m.auths {
+		if auth == nil || normalizedTenantID(auth.TenantID) != tenantID {
+			continue
+		}
 		for group := range authGroups(cfg, auth) {
 			out[group] = struct{}{}
 		}
@@ -59,18 +66,22 @@ func (m *Manager) KnownChannelGroups() map[string]struct{} {
 
 // CanServeModelWithScopes reports whether at least one active auth can serve the model under the given restrictions.
 func (m *Manager) CanServeModelWithScopes(modelID string, allowedChannels, allowedGroups map[string]struct{}, routeGroup string) bool {
+	return m.CanServeModelWithScopesForTenant(defaultTenantID, modelID, allowedChannels, allowedGroups, routeGroup)
+}
+func (m *Manager) CanServeModelWithScopesForTenant(tenantID, modelID string, allowedChannels, allowedGroups map[string]struct{}, routeGroup string) bool {
+	tenantID = normalizedTenantID(tenantID)
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" || m == nil {
 		return false
 	}
 	registryRef := m.modelRegistry
-	cfg := m.currentRuntimeConfig()
+	cfg := m.currentRuntimeConfigForTenant(tenantID)
 	selectionRouteGroup := effectiveRouteGroupForSelection(cfg, routeGroup, allowedGroups, modelID)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, candidate := range m.auths {
-		if candidate == nil || candidate.Disabled || candidate.Status == StatusDisabled {
+		if candidate == nil || normalizedTenantID(candidate.TenantID) != tenantID || candidate.Disabled || candidate.Status == StatusDisabled {
 			continue
 		}
 		if !authAllowedByChannels(candidate, allowedChannels) {

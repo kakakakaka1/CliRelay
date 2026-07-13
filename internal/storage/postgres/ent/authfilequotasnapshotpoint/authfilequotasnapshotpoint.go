@@ -11,6 +11,8 @@ const (
 	Label = "auth_file_quota_snapshot_point"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldTenantID holds the string denoting the tenant_id field in the database.
+	FieldTenantID = "tenant_id"
 	// FieldRecordedAt holds the string denoting the recorded_at field in the database.
 	FieldRecordedAt = "recorded_at"
 	// FieldAuthIndex holds the string denoting the auth_index field in the database.
@@ -36,6 +38,7 @@ const (
 // Columns holds all SQL columns for authfilequotasnapshotpoint fields.
 var Columns = []string{
 	FieldID,
+	FieldTenantID,
 	FieldRecordedAt,
 	FieldAuthIndex,
 	FieldAuthSubjectID,
@@ -58,6 +61,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultTenantID holds the default value on creation for the "tenant_id" field.
+	DefaultTenantID string
 	// DefaultAuthSubjectID holds the default value on creation for the "auth_subject_id" field.
 	DefaultAuthSubjectID string
 	// DefaultProvider holds the default value on creation for the "provider" field.
@@ -74,6 +79,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByTenantID orders the results by the tenant_id field.
+func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
 }
 
 // ByRecordedAt orders the results by the recorded_at field.

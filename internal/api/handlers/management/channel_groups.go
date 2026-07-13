@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
 	internalrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
@@ -364,11 +365,16 @@ func uniqueSortedStrings(values []string, normalizer func(string) string) []stri
 }
 
 func (h *Handler) GetChannelGroups(c *gin.Context) {
+	tenantID := effectiveTenantID(c)
 	var auths []*coreauth.Auth
 	if h != nil && h.authManager != nil {
-		auths = h.authManager.List()
+		auths = h.authManager.ListForTenant(tenantID)
 	}
-	c.JSON(http.StatusOK, gin.H{"items": buildChannelGroupItems(h.cfg, auths)})
+	cfg := h.cfg
+	if tenantID != identity.SystemTenantID {
+		cfg = &config.Config{Routing: currentRoutingConfigForTenant(h.cfg, tenantID)}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": buildChannelGroupItems(cfg, auths)})
 }
 
 func reservedPathRoutePrefixes() []string {

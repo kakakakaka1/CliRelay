@@ -18,7 +18,7 @@ func (s *Service) PublicChartData(apiKey string, days int) (map[string]any, erro
 }
 
 func (s *Service) UsageChartData(apiKey string, days int) (map[string]any, error) {
-	daily, err := usage.QueryDailySeries(apiKey, days)
+	daily, err := usage.QueryDailySeriesForTenant(s.tenantID, apiKey, days)
 	if err != nil {
 		return nil, err
 	}
@@ -26,7 +26,7 @@ func (s *Service) UsageChartData(apiKey string, days int) (map[string]any, error
 		daily = []usage.DailySeriesPoint{}
 	}
 
-	models, err := usage.QueryModelDistribution(apiKey, days)
+	models, err := usage.QueryModelDistributionForTenant(s.tenantID, apiKey, days)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +34,7 @@ func (s *Service) UsageChartData(apiKey string, days int) (map[string]any, error
 		models = []usage.ModelDistributionPoint{}
 	}
 
-	hourlyTokens, hourlyModels, err := usage.QueryHourlySeries(apiKey, 24)
+	hourlyTokens, hourlyModels, err := usage.QueryHourlySeriesForTenant(s.tenantID, apiKey, 24)
 	if err != nil {
 		return nil, err
 	}
@@ -47,11 +47,11 @@ func (s *Service) UsageChartData(apiKey string, days int) (map[string]any, error
 
 	var apikeyDist []usage.APIKeyDistributionPoint
 	if apiKey == "" {
-		apikeyDist, err = usage.QueryAPIKeyDistribution(days)
+		apikeyDist, err = usage.QueryAPIKeyDistributionForTenant(s.tenantID, days)
 		if err != nil {
 			return nil, err
 		}
-		keyNameMap, _, _, _, _ := s.buildNameMaps()
+		keyNameMap, _, _, _, _, _ := s.buildNameMaps()
 
 		for i := range apikeyDist {
 			if apikeyDist[i].Name == "" {
@@ -75,7 +75,7 @@ func (s *Service) UsageChartData(apiKey string, days int) (map[string]any, error
 }
 
 func (s *Service) EntityUsageStats(apiKey string, days int, authIndexes, sources []string) (map[string]any, error) {
-	sourceStats, err := usage.QueryEntityStats(apiKey, days, "source", sources)
+	sourceStats, err := usage.QueryEntityStatsForTenant(s.tenantID, apiKey, days, "source", sources)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (s *Service) EntityUsageStats(apiKey string, days int, authIndexes, sources
 		sourceStats = []usage.EntityStatPoint{}
 	}
 
-	authIndexStats, err := usage.QueryEntityStats(apiKey, days, "auth_index", authIndexes)
+	authIndexStats, err := usage.QueryEntityStatsForTenant(s.tenantID, apiKey, days, "auth_index", authIndexes)
 	if err != nil {
 		return nil, err
 	}

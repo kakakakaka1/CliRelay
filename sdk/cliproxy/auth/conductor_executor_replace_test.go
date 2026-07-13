@@ -102,3 +102,30 @@ func TestManagerExecutorReturnsRegisteredExecutor(t *testing.T) {
 		t.Fatal("expected unknown provider lookup to fail")
 	}
 }
+
+func TestManagerKeepsTenantExecutorsIsolated(t *testing.T) {
+	manager := NewManager(nil, nil, nil)
+	const tenantA = "00000000-0000-0000-0000-00000000000a"
+	const tenantB = "00000000-0000-0000-0000-00000000000b"
+	systemExecutor := &replaceAwareExecutor{id: "gemini"}
+	tenantAExecutor := &replaceAwareExecutor{id: "gemini"}
+	tenantBExecutor := &replaceAwareExecutor{id: "gemini"}
+
+	manager.RegisterExecutor(systemExecutor)
+	manager.RegisterExecutorForTenant(tenantA, tenantAExecutor)
+	manager.RegisterExecutorForTenant(tenantB, tenantBExecutor)
+
+	for tenantID, want := range map[string]ProviderExecutor{
+		defaultTenantID: systemExecutor,
+		tenantA:         tenantAExecutor,
+		tenantB:         tenantBExecutor,
+	} {
+		got, ok := manager.ExecutorForTenant(tenantID, "GEMINI")
+		if !ok || got != want {
+			t.Fatalf("ExecutorForTenant(%s) = %#v, %v; want %#v, true", tenantID, got, ok, want)
+		}
+	}
+	if got, ok := manager.ExecutorForTenant("00000000-0000-0000-0000-00000000000c", "gemini"); ok || got != nil {
+		t.Fatalf("unregistered tenant inherited system executor: %#v, %v", got, ok)
+	}
+}

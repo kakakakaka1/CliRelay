@@ -16,6 +16,8 @@ type IdentityFingerprint struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Provider holds the value of the "provider" field.
 	Provider string `json:"provider,omitempty"`
 	// AccountKey holds the value of the "account_key" field.
@@ -50,7 +52,7 @@ func (*IdentityFingerprint) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case identityfingerprint.FieldID:
 			values[i] = new(sql.NullInt64)
-		case identityfingerprint.FieldProvider, identityfingerprint.FieldAccountKey, identityfingerprint.FieldProfileKey, identityfingerprint.FieldAuthSubjectID, identityfingerprint.FieldClientProduct, identityfingerprint.FieldClientVariant, identityfingerprint.FieldVersion, identityfingerprint.FieldFieldsJSON, identityfingerprint.FieldObservedHeadersJSON, identityfingerprint.FieldCreatedAt, identityfingerprint.FieldUpdatedAt, identityfingerprint.FieldLastSeenAt:
+		case identityfingerprint.FieldTenantID, identityfingerprint.FieldProvider, identityfingerprint.FieldAccountKey, identityfingerprint.FieldProfileKey, identityfingerprint.FieldAuthSubjectID, identityfingerprint.FieldClientProduct, identityfingerprint.FieldClientVariant, identityfingerprint.FieldVersion, identityfingerprint.FieldFieldsJSON, identityfingerprint.FieldObservedHeadersJSON, identityfingerprint.FieldCreatedAt, identityfingerprint.FieldUpdatedAt, identityfingerprint.FieldLastSeenAt:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -73,6 +75,12 @@ func (_m *IdentityFingerprint) assignValues(columns []string, values []any) erro
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case identityfingerprint.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case identityfingerprint.FieldProvider:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field provider", values[i])
@@ -181,6 +189,9 @@ func (_m *IdentityFingerprint) String() string {
 	var builder strings.Builder
 	builder.WriteString("IdentityFingerprint(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("provider=")
 	builder.WriteString(_m.Provider)
 	builder.WriteString(", ")

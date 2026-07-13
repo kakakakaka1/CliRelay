@@ -16,6 +16,8 @@ type APIKeyPermissionProfile struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID string `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
 	// DailyLimit holds the value of the "daily_limit" field.
@@ -50,7 +52,7 @@ func (*APIKeyPermissionProfile) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case apikeypermissionprofile.FieldDailyLimit, apikeypermissionprofile.FieldTotalQuota, apikeypermissionprofile.FieldConcurrencyLimit, apikeypermissionprofile.FieldRpmLimit, apikeypermissionprofile.FieldTpmLimit:
 			values[i] = new(sql.NullInt64)
-		case apikeypermissionprofile.FieldID, apikeypermissionprofile.FieldName, apikeypermissionprofile.FieldAllowedModels, apikeypermissionprofile.FieldAllowedChannels, apikeypermissionprofile.FieldAllowedChannelGroups, apikeypermissionprofile.FieldSystemPrompt, apikeypermissionprofile.FieldCreatedAt, apikeypermissionprofile.FieldUpdatedAt:
+		case apikeypermissionprofile.FieldID, apikeypermissionprofile.FieldTenantID, apikeypermissionprofile.FieldName, apikeypermissionprofile.FieldAllowedModels, apikeypermissionprofile.FieldAllowedChannels, apikeypermissionprofile.FieldAllowedChannelGroups, apikeypermissionprofile.FieldSystemPrompt, apikeypermissionprofile.FieldCreatedAt, apikeypermissionprofile.FieldUpdatedAt:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -72,6 +74,12 @@ func (_m *APIKeyPermissionProfile) assignValues(columns []string, values []any) 
 				return fmt.Errorf("unexpected type %T for field id", values[i])
 			} else if value.Valid {
 				_m.ID = value.String
+			}
+		case apikeypermissionprofile.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
 			}
 		case apikeypermissionprofile.FieldName:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -181,6 +189,9 @@ func (_m *APIKeyPermissionProfile) String() string {
 	var builder strings.Builder
 	builder.WriteString("APIKeyPermissionProfile(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("name=")
 	builder.WriteString(_m.Name)
 	builder.WriteString(", ")

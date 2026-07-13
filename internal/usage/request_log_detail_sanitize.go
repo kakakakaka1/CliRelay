@@ -3,7 +3,13 @@ package usage
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 )
+
+// Max compact error payload retained for failed requests when body storage is off.
+// Large enough for typical upstream JSON errors, small enough to avoid reintroducing
+// full conversation/response bodies through the failure path.
+const maxFailedOutputContentBytes = 8 * 1024
 
 // stripStoredRequestDetailBodies preserves diagnostic metadata while ensuring
 // request/response bodies cannot be retained indirectly in detail_content when
@@ -11,6 +17,40 @@ import (
 func stripStoredRequestDetailBodies(raw string) string {
 	sanitized, _ := sanitizeStoredRequestDetailBodies(raw)
 	return sanitized
+}
+
+// compactFailedOutputContent keeps a short upstream error payload for the
+// management UI when full body storage is disabled. Successful request/response
+// bodies must not pass through this path.
+func compactFailedOutputContent(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if len(raw) <= maxFailedOutputContentBytes {
+		return raw
+	}
+	// Prefer keeping valid JSON when possible; otherwise hard-truncate.
+	if json.Valid([]byte(raw)) {
+		// Truncate with a clear marker while remaining valid-ish text for the modal.
+		// Keep the leading portion which usually contains error.message/type.
+		cut := maxFailedOutputContentBytes
+		for cut > 0 && !utf8.ValidString(raw[:cut]) {
+			cut--
+		}
+		if cut <= 0 {
+			return raw[:maxFailedOutputContentBytes]
+		}
+		return raw[:cut] + "…[truncated]"
+	}
+	cut := maxFailedOutputContentBytes
+	for cut > 0 && !utf8.ValidString(raw[:cut]) {
+		cut--
+	}
+	if cut <= 0 {
+		return raw[:maxFailedOutputContentBytes]
+	}
+	return raw[:cut] + "…[truncated]"
 }
 
 func sanitizeStoredRequestDetailBodies(raw string) (string, bool) {

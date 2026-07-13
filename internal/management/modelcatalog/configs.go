@@ -17,7 +17,7 @@ var ErrAuthGroupRequired = errors.New("auth group is required")
 // - Owner: model config / owner preset / pricing management boundary.
 // - Responsibility: CRUD and response shaping for stored model catalog settings.
 func (s *Service) ListModelConfigs(scope string) map[string]any {
-	rows := modelconfigsettings.ListConfigs(scope)
+	rows := modelconfigsettings.ListConfigsForTenant(s.tenantID, scope)
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, modelConfigResponse(row))
@@ -26,7 +26,7 @@ func (s *Service) ListModelConfigs(scope string) map[string]any {
 }
 
 func (s *Service) UpsertModelConfig(payload ModelConfigPayload, originalID, scope string) (map[string]any, error) {
-	saved, err := modelconfigsettings.UpsertConfig(modelconfigsettings.UpsertConfigInput{
+	saved, err := modelconfigsettings.UpsertConfigForTenant(s.tenantID, modelconfigsettings.UpsertConfigInput{
 		OriginalID:                originalID,
 		Scope:                     scope,
 		ModelID:                   payload.ID,
@@ -53,7 +53,7 @@ func (s *Service) UpsertModelConfig(payload ModelConfigPayload, originalID, scop
 }
 
 func (s *Service) DeleteModelConfig(modelID string) error {
-	if err := modelconfigsettings.DeleteConfig(modelID); err != nil {
+	if err := modelconfigsettings.DeleteConfigForTenant(s.tenantID, modelID); err != nil {
 		if errors.Is(err, modelconfigsettings.ErrModelIDRequired) {
 			return ErrModelIDRequired
 		}
@@ -63,7 +63,7 @@ func (s *Service) DeleteModelConfig(modelID string) error {
 }
 
 func (s *Service) OwnerPresets() map[string]any {
-	rows := modelconfigsettings.ListOwnerPresetsWithCounts()
+	rows := modelconfigsettings.ListOwnerPresetsWithCountsForTenant(s.tenantID)
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, map[string]any{
@@ -79,14 +79,14 @@ func (s *Service) OwnerPresets() map[string]any {
 }
 
 func (s *Service) ReplaceOwnerPresets(rows []usage.ModelOwnerPresetRow) (map[string]any, error) {
-	if err := modelconfigsettings.ReplaceOwnerPresets(rows); err != nil {
+	if err := modelconfigsettings.ReplaceOwnerPresetsForTenant(s.tenantID, rows); err != nil {
 		return nil, err
 	}
 	return map[string]any{"status": "ok", "updated": len(rows)}, nil
 }
 
 func (s *Service) AuthGroupOwnerMappings() map[string]any {
-	rows := modelconfigsettings.ListAuthGroupOwnerMappings()
+	rows := modelconfigsettings.ListAuthGroupOwnerMappingsForTenant(s.tenantID)
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, map[string]any{
@@ -105,7 +105,7 @@ func (s *Service) PatchAuthGroupOwnerMapping(authGroup, owner string) (map[strin
 		return nil, ErrAuthGroupRequired
 	}
 	if owner == "" {
-		if err := modelconfigsettings.DeleteAuthGroupOwnerMapping(authGroup); err != nil {
+		if err := modelconfigsettings.DeleteAuthGroupOwnerMappingForTenant(s.tenantID, authGroup); err != nil {
 			if errors.Is(err, modelconfigsettings.ErrAuthGroupRequired) {
 				return nil, ErrAuthGroupRequired
 			}
@@ -118,7 +118,7 @@ func (s *Service) PatchAuthGroupOwnerMapping(authGroup, owner string) (map[strin
 		}, nil
 	}
 
-	saved, err := modelconfigsettings.UpsertAuthGroupOwnerMapping(authGroup, owner)
+	saved, err := modelconfigsettings.UpsertAuthGroupOwnerMappingForTenant(s.tenantID, authGroup, owner)
 	if err != nil {
 		if errors.Is(err, modelconfigsettings.ErrAuthGroupRequired) {
 			return nil, ErrAuthGroupRequired
@@ -134,7 +134,7 @@ func (s *Service) PatchAuthGroupOwnerMapping(authGroup, owner string) (map[strin
 }
 
 func (s *Service) Pricing() map[string]any {
-	rows := modelconfigsettings.ListPricing()
+	rows := modelconfigsettings.ListPricingForTenant(s.tenantID)
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, map[string]any{
@@ -162,7 +162,7 @@ func (s *Service) UpdatePricing(items []ModelPricingUpdateItem) (map[string]any,
 			CacheWritePricePerMillion: item.CacheWritePricePerMillion,
 		})
 	}
-	updated, err := modelconfigsettings.UpsertPricing(upserts)
+	updated, err := modelconfigsettings.UpsertPricingForTenant(s.tenantID, upserts)
 	if err != nil {
 		return nil, err
 	}

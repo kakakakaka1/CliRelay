@@ -42,7 +42,7 @@ var defaultImageGenerationSizePresets = []string{
 }
 
 func (h *Handler) GetImageGenerationSizePresets(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"sizes": imageGenerationSizePresets()})
+	c.JSON(http.StatusOK, gin.H{"sizes": imageGenerationSizePresetsForTenant(effectiveTenantID(c))})
 }
 
 func (h *Handler) PutImageGenerationSizePresets(c *gin.Context) {
@@ -57,7 +57,7 @@ func (h *Handler) PutImageGenerationSizePresets(c *gin.Context) {
 		return
 	}
 	customSizes := customImageGenerationSizePresets(sizes)
-	if err := settingsstore.StoreImageSizePresetsSetting(customSizes); err != nil {
+	if err := settingsstore.StoreImageSizePresetsSettingForTenant(effectiveTenantID(c), customSizes); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to save size presets: %v", err)})
 		return
 	}
@@ -65,12 +65,20 @@ func (h *Handler) PutImageGenerationSizePresets(c *gin.Context) {
 }
 
 func imageGenerationSizePresets() []string {
-	customSizes := loadImageGenerationCustomSizePresets()
+	return imageGenerationSizePresetsForTenant("")
+}
+
+func imageGenerationSizePresetsForTenant(tenantID string) []string {
+	customSizes := loadImageGenerationCustomSizePresetsForTenant(tenantID)
 	return mergeImageGenerationSizePresets(defaultImageGenerationSizePresets, customSizes)
 }
 
 func loadImageGenerationCustomSizePresets() []string {
-	return filterValidImageGenerationSizePresets(settingsstore.LoadImageSizePresetsSetting())
+	return loadImageGenerationCustomSizePresetsForTenant("")
+}
+
+func loadImageGenerationCustomSizePresetsForTenant(tenantID string) []string {
+	return filterValidImageGenerationSizePresets(settingsstore.LoadImageSizePresetsSettingForTenant(tenantID))
 }
 
 func filterValidImageGenerationSizePresets(values []string) []string {
@@ -207,7 +215,7 @@ func (h *Handler) PostImageGenerationTest(c *gin.Context) {
 		return
 	}
 
-	task := service.Start(payload, alt)
+	task := service.Start(effectiveTenantID(c), payload, alt)
 	c.JSON(http.StatusAccepted, imageGenerationTaskSnapshot(task))
 }
 
@@ -222,7 +230,7 @@ func (h *Handler) GetImageGenerationTestTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "image generation service unavailable"})
 		return
 	}
-	task, ok := service.Get(taskID)
+	task, ok := service.Get(effectiveTenantID(c), taskID)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "image generation task not found"})
 		return
@@ -231,6 +239,10 @@ func (h *Handler) GetImageGenerationTestTask(c *gin.Context) {
 }
 
 func (h *Handler) executeImageGenerationTest(ctx context.Context, payload []byte, alt string) ([]byte, error) {
+	return h.executeImageGenerationTestForTenant(ctx, "", payload, alt)
+}
+
+func (h *Handler) executeImageGenerationTestForTenant(ctx context.Context, tenantID string, payload []byte, alt string) ([]byte, error) {
 	modelName := strings.TrimSpace(gjson.GetBytes(payload, "model").String())
 	if modelName == "" {
 		modelName = imageGenerationModel
@@ -258,6 +270,7 @@ func (h *Handler) executeImageGenerationTest(ctx context.Context, payload []byte
 			SourceFormat: sdktranslator.FromString("openai"),
 			Metadata: map[string]any{
 				coreexecutor.SinglePickMetadataKey: true,
+				coreexecutor.TenantMetadataKey:     coreauth.NormalizedTenantID(tenantID),
 			},
 		})
 		if execErr != nil {
@@ -566,7 +579,7 @@ func (h *Handler) ListImageGenerationChannels(c *gin.Context) {
 	channels := make([]string, 0)
 	seen := make(map[string]struct{})
 	if h != nil && h.authManager != nil {
-		for _, auth := range h.authManager.List() {
+		for _, auth := range h.authManager.ListForTenant(effectiveTenantID(c)) {
 			if auth == nil || auth.Disabled {
 				continue
 			}

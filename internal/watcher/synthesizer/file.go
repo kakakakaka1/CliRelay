@@ -46,35 +46,34 @@ func (s *FileSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth, e
 		return out, nil
 	}
 
-	entries, err := os.ReadDir(ctx.AuthDir)
-	if err != nil {
-		// Not an error if directory doesn't exist
-		return out, nil
-	}
-
 	now := ctx.Now
 	cfg := ctx.Config
 
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
+	err := filepath.WalkDir(ctx.AuthDir, func(full string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
 		}
-		name := e.Name()
+		if entry.IsDir() {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		name := entry.Name()
 		if !strings.HasSuffix(strings.ToLower(name), ".json") {
-			continue
+			return nil
 		}
-		full := filepath.Join(ctx.AuthDir, name)
 		data, errRead := os.ReadFile(full)
 		if errRead != nil || len(data) == 0 {
-			continue
+			return nil
 		}
 		var metadata map[string]any
 		if errUnmarshal := json.Unmarshal(data, &metadata); errUnmarshal != nil {
-			continue
+			return nil
 		}
 		t, _ := metadata["type"].(string)
 		if t == "" {
-			continue
+			return nil
 		}
 		provider := strings.ToLower(t)
 		if provider == "gemini" {
@@ -119,7 +118,9 @@ func (s *FileSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth, e
 
 		a := &coreauth.Auth{
 			ID:       id,
+			TenantID: coreauth.TenantIDFromAuthID(id),
 			Provider: provider,
+			FileName: name,
 			Label:    label,
 			Prefix:   prefix,
 			Status:   status,
@@ -154,10 +155,14 @@ func (s *FileSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth, e
 				}
 				out = append(out, a)
 				out = append(out, virtuals...)
-				continue
+				return nil
 			}
 		}
 		out = append(out, a)
+		return nil
+	})
+	if err != nil {
+		return out, nil
 	}
 	return out, nil
 }
@@ -259,6 +264,7 @@ func SynthesizeGeminiVirtualAuths(primary *coreauth.Auth, metadata map[string]an
 		}
 		virtual := &coreauth.Auth{
 			ID:         buildGeminiVirtualID(primary.ID, projectID),
+			TenantID:   primary.TenantID,
 			Provider:   originalProvider,
 			Label:      fmt.Sprintf("%s [%s]", label, projectID),
 			Status:     coreauth.StatusActive,

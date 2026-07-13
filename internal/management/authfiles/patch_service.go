@@ -26,6 +26,7 @@ type StatusPatchResult struct {
 
 type PatchService struct {
 	Manager        *coreauth.Manager
+	TenantID       string
 	Repository     Repository
 	Now            time.Time
 	ValidateLabel  func(label, excludeAuthID string) (string, error)
@@ -67,7 +68,7 @@ func (s PatchService) PatchStatus(ctx context.Context, patch StatusPatch) (Statu
 	if patch.Disabled == nil {
 		return StatusPatchResult{}, ErrDisabledRequired
 	}
-	targetAuth := FindByNameOrID(s.Manager, name)
+	targetAuth := FindByNameOrIDForTenant(s.Manager, s.TenantID, name)
 	if targetAuth == nil {
 		return StatusPatchResult{}, ErrAuthFileNotFound
 	}
@@ -88,7 +89,7 @@ func (s PatchService) PatchFields(ctx context.Context, patch FieldPatch) error {
 	if name == "" {
 		return ErrNameRequired
 	}
-	targetAuth := FindByNameOrID(s.Manager, name)
+	targetAuth := FindByNameOrIDForTenant(s.Manager, s.TenantID, name)
 	if targetAuth == nil {
 		return ErrAuthFileNotFound
 	}

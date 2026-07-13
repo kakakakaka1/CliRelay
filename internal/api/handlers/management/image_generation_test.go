@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
@@ -691,5 +692,33 @@ func TestListImageGenerationChannelsUsesCurrentChannelLabels(t *testing.T) {
 	}
 	if strings.Contains(body, "Gemini") {
 		t.Fatalf("body = %s, should not include non-codex channel", body)
+	}
+}
+
+func TestImageGenerationSizePresetsAreTenantScoped(t *testing.T) {
+	initManagementModelsTestDB(t)
+	h := &Handler{}
+
+	request := func(tenantID, method string, body []byte, handler gin.HandlerFunc) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Set(managementPrincipalKey, identity.Principal{EffectiveTenant: identity.Tenant{ID: tenantID}})
+		c.Request = httptest.NewRequest(method, "/image-generation/size-presets", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		handler(c)
+		return rec
+	}
+
+	const tenantA = "00000000-0000-0000-0000-00000000000a"
+	const tenantB = "00000000-0000-0000-0000-00000000000b"
+	if rec := request(tenantA, http.MethodPut, []byte(`{"sizes":["4096x2304"]}`), h.PutImageGenerationSizePresets); rec.Code != http.StatusOK {
+		t.Fatalf("tenant A PUT status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec := request(tenantB, http.MethodGet, nil, h.GetImageGenerationSizePresets)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tenant B GET status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "4096x2304") {
+		t.Fatalf("tenant B inherited tenant A presets: %s", rec.Body.String())
 	}
 }

@@ -262,12 +262,12 @@ func (_q *AuthSubjectQuotaCycleQuery) Clone() *AuthSubjectQuotaCycleQuery {
 // Example:
 //
 //	var v []struct {
-//		SubjectID string `json:"subject_id,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.AuthSubjectQuotaCycle.Query().
-//		GroupBy(authsubjectquotacycle.FieldSubjectID).
+//		GroupBy(authsubjectquotacycle.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *AuthSubjectQuotaCycleQuery) GroupBy(field string, fields ...string) *AuthSubjectQuotaCycleGroupBy {
@@ -285,11 +285,11 @@ func (_q *AuthSubjectQuotaCycleQuery) GroupBy(field string, fields ...string) *A
 // Example:
 //
 //	var v []struct {
-//		SubjectID string `json:"subject_id,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.AuthSubjectQuotaCycle.Query().
-//		Select(authsubjectquotacycle.FieldSubjectID).
+//		Select(authsubjectquotacycle.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *AuthSubjectQuotaCycleQuery) Select(fields ...string) *AuthSubjectQuotaCycleSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

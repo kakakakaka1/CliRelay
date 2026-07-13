@@ -12,6 +12,7 @@ var (
 	// APIKeysColumns holds the columns for the "api_keys" table.
 	APIKeysColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "key", Type: field.TypeString, Unique: true},
 		{Name: "name", Type: field.TypeString, Default: ""},
 		{Name: "disabled", Type: field.TypeInt, Default: 0},
@@ -38,7 +39,8 @@ var (
 	}
 	// APIKeyPermissionProfilesColumns holds the columns for the "api_key_permission_profiles" table.
 	APIKeyPermissionProfilesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "id", Type: field.TypeString},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "name", Type: field.TypeString, Default: ""},
 		{Name: "daily_limit", Type: field.TypeInt, Default: 0},
 		{Name: "total_quota", Type: field.TypeInt, Default: 0},
@@ -57,10 +59,56 @@ var (
 		Name:       "api_key_permission_profiles",
 		Columns:    APIKeyPermissionProfilesColumns,
 		PrimaryKey: []*schema.Column{APIKeyPermissionProfilesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "apikeypermissionprofile_tenant_id_id",
+				Unique:  true,
+				Columns: []*schema.Column{APIKeyPermissionProfilesColumns[1], APIKeyPermissionProfilesColumns[0]},
+			},
+		},
+	}
+	// AuditLogsColumns holds the columns for the "audit_logs" table.
+	AuditLogsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Nullable: true},
+		{Name: "actor_kind", Type: field.TypeString},
+		{Name: "actor_user_id", Type: field.TypeString, Nullable: true},
+		{Name: "actor_session_id", Type: field.TypeString, Nullable: true},
+		{Name: "action", Type: field.TypeString},
+		{Name: "resource_type", Type: field.TypeString},
+		{Name: "resource_id", Type: field.TypeString, Default: ""},
+		{Name: "result", Type: field.TypeString},
+		{Name: "request_id", Type: field.TypeString, Default: ""},
+		{Name: "changes", Type: field.TypeJSON, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// AuditLogsTable holds the schema information for the "audit_logs" table.
+	AuditLogsTable = &schema.Table{
+		Name:       "audit_logs",
+		Columns:    AuditLogsColumns,
+		PrimaryKey: []*schema.Column{AuditLogsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "auditlog_tenant_id_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{AuditLogsColumns[1], AuditLogsColumns[11]},
+			},
+			{
+				Name:    "auditlog_actor_user_id_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{AuditLogsColumns[3], AuditLogsColumns[11]},
+			},
+			{
+				Name:    "auditlog_action_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{AuditLogsColumns[5], AuditLogsColumns[11]},
+			},
+		},
 	}
 	// AuthFileQuotaSnapshotsColumns holds the columns for the "auth_file_quota_snapshots" table.
 	AuthFileQuotaSnapshotsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "date_key", Type: field.TypeString},
 		{Name: "auth_index", Type: field.TypeString},
 		{Name: "auth_subject_id", Type: field.TypeString, Default: ""},
@@ -76,25 +124,26 @@ var (
 		PrimaryKey: []*schema.Column{AuthFileQuotaSnapshotsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "authfilequotasnapshot_date_key_auth_index_quota_key",
+				Name:    "authfilequotasnapshot_tenant_id_date_key_auth_index_quota_key",
 				Unique:  true,
-				Columns: []*schema.Column{AuthFileQuotaSnapshotsColumns[1], AuthFileQuotaSnapshotsColumns[2], AuthFileQuotaSnapshotsColumns[5]},
+				Columns: []*schema.Column{AuthFileQuotaSnapshotsColumns[1], AuthFileQuotaSnapshotsColumns[2], AuthFileQuotaSnapshotsColumns[3], AuthFileQuotaSnapshotsColumns[6]},
 			},
 			{
-				Name:    "authfilequotasnapshot_auth_index",
+				Name:    "authfilequotasnapshot_tenant_id_auth_index",
 				Unique:  false,
-				Columns: []*schema.Column{AuthFileQuotaSnapshotsColumns[2]},
+				Columns: []*schema.Column{AuthFileQuotaSnapshotsColumns[1], AuthFileQuotaSnapshotsColumns[3]},
 			},
 			{
-				Name:    "authfilequotasnapshot_auth_subject_id",
+				Name:    "authfilequotasnapshot_tenant_id_auth_subject_id",
 				Unique:  false,
-				Columns: []*schema.Column{AuthFileQuotaSnapshotsColumns[3]},
+				Columns: []*schema.Column{AuthFileQuotaSnapshotsColumns[1], AuthFileQuotaSnapshotsColumns[4]},
 			},
 		},
 	}
 	// AuthFileQuotaSnapshotPointsColumns holds the columns for the "auth_file_quota_snapshot_points" table.
 	AuthFileQuotaSnapshotPointsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "recorded_at", Type: field.TypeTime},
 		{Name: "auth_index", Type: field.TypeString},
 		{Name: "auth_subject_id", Type: field.TypeString, Default: ""},
@@ -112,26 +161,27 @@ var (
 		PrimaryKey: []*schema.Column{AuthFileQuotaSnapshotPointsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "authfilequotasnapshotpoint_auth_index_recorded_at",
+				Name:    "authfilequotasnapshotpoint_tenant_id_auth_index_recorded_at",
 				Unique:  false,
-				Columns: []*schema.Column{AuthFileQuotaSnapshotPointsColumns[2], AuthFileQuotaSnapshotPointsColumns[1]},
+				Columns: []*schema.Column{AuthFileQuotaSnapshotPointsColumns[1], AuthFileQuotaSnapshotPointsColumns[3], AuthFileQuotaSnapshotPointsColumns[2]},
 			},
 			{
-				Name:    "authfilequotasnapshotpoint_auth_index_quota_key_recorded_at",
+				Name:    "authfilequotasnapshotpoint_tenant_id_auth_index_quota_key_recorded_at",
 				Unique:  false,
-				Columns: []*schema.Column{AuthFileQuotaSnapshotPointsColumns[2], AuthFileQuotaSnapshotPointsColumns[5], AuthFileQuotaSnapshotPointsColumns[1]},
+				Columns: []*schema.Column{AuthFileQuotaSnapshotPointsColumns[1], AuthFileQuotaSnapshotPointsColumns[3], AuthFileQuotaSnapshotPointsColumns[6], AuthFileQuotaSnapshotPointsColumns[2]},
 			},
 			{
-				Name:    "authfilequotasnapshotpoint_auth_subject_id_recorded_at",
+				Name:    "authfilequotasnapshotpoint_tenant_id_auth_subject_id_recorded_at",
 				Unique:  false,
-				Columns: []*schema.Column{AuthFileQuotaSnapshotPointsColumns[3], AuthFileQuotaSnapshotPointsColumns[1]},
+				Columns: []*schema.Column{AuthFileQuotaSnapshotPointsColumns[1], AuthFileQuotaSnapshotPointsColumns[4], AuthFileQuotaSnapshotPointsColumns[2]},
 			},
 		},
 	}
 	// AuthGroupModelOwnerMappingsColumns holds the columns for the "auth_group_model_owner_mappings" table.
 	AuthGroupModelOwnerMappingsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
-		{Name: "auth_group", Type: field.TypeString, Unique: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
+		{Name: "auth_group", Type: field.TypeString},
 		{Name: "owner", Type: field.TypeString, Default: ""},
 		{Name: "updated_at", Type: field.TypeTime},
 	}
@@ -142,15 +192,21 @@ var (
 		PrimaryKey: []*schema.Column{AuthGroupModelOwnerMappingsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "authgroupmodelownermapping_owner",
+				Name:    "authgroupmodelownermapping_tenant_id_auth_group",
+				Unique:  true,
+				Columns: []*schema.Column{AuthGroupModelOwnerMappingsColumns[1], AuthGroupModelOwnerMappingsColumns[2]},
+			},
+			{
+				Name:    "authgroupmodelownermapping_tenant_id_owner",
 				Unique:  false,
-				Columns: []*schema.Column{AuthGroupModelOwnerMappingsColumns[2]},
+				Columns: []*schema.Column{AuthGroupModelOwnerMappingsColumns[1], AuthGroupModelOwnerMappingsColumns[3]},
 			},
 		},
 	}
 	// AuthSubjectQuotaCyclesColumns holds the columns for the "auth_subject_quota_cycles" table.
 	AuthSubjectQuotaCyclesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "subject_id", Type: field.TypeString},
 		{Name: "auth_index", Type: field.TypeString, Default: ""},
 		{Name: "provider", Type: field.TypeString, Default: ""},
@@ -167,20 +223,21 @@ var (
 		PrimaryKey: []*schema.Column{AuthSubjectQuotaCyclesColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "authsubjectquotacycle_subject_id_quota_key",
+				Name:    "authsubjectquotacycle_tenant_id_subject_id_quota_key",
 				Unique:  true,
-				Columns: []*schema.Column{AuthSubjectQuotaCyclesColumns[1], AuthSubjectQuotaCyclesColumns[4]},
+				Columns: []*schema.Column{AuthSubjectQuotaCyclesColumns[1], AuthSubjectQuotaCyclesColumns[2], AuthSubjectQuotaCyclesColumns[5]},
 			},
 			{
-				Name:    "authsubjectquotacycle_subject_id_window_seconds_last_verified_at",
+				Name:    "authsubjectquotacycle_tenant_id_subject_id_window_seconds_last_verified_at",
 				Unique:  false,
-				Columns: []*schema.Column{AuthSubjectQuotaCyclesColumns[1], AuthSubjectQuotaCyclesColumns[7], AuthSubjectQuotaCyclesColumns[8]},
+				Columns: []*schema.Column{AuthSubjectQuotaCyclesColumns[1], AuthSubjectQuotaCyclesColumns[2], AuthSubjectQuotaCyclesColumns[8], AuthSubjectQuotaCyclesColumns[9]},
 			},
 		},
 	}
 	// CcswitchImportConfigsColumns holds the columns for the "ccswitch_import_configs" table.
 	CcswitchImportConfigsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "id", Type: field.TypeString},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "client_type", Type: field.TypeString},
 		{Name: "provider_name", Type: field.TypeString, Default: ""},
 		{Name: "note", Type: field.TypeString, Default: ""},
@@ -201,15 +258,21 @@ var (
 		PrimaryKey: []*schema.Column{CcswitchImportConfigsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "ccswitchimportconfig_route_path",
+				Name:    "ccswitchimportconfig_tenant_id_id",
 				Unique:  true,
-				Columns: []*schema.Column{CcswitchImportConfigsColumns[7]},
+				Columns: []*schema.Column{CcswitchImportConfigsColumns[1], CcswitchImportConfigsColumns[0]},
+			},
+			{
+				Name:    "ccswitchimportconfig_tenant_id_route_path",
+				Unique:  true,
+				Columns: []*schema.Column{CcswitchImportConfigsColumns[1], CcswitchImportConfigsColumns[8]},
 			},
 		},
 	}
 	// IdentityFingerprintsColumns holds the columns for the "identity_fingerprints" table.
 	IdentityFingerprintsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "provider", Type: field.TypeString},
 		{Name: "account_key", Type: field.TypeString},
 		{Name: "profile_key", Type: field.TypeString, Default: "default"},
@@ -230,25 +293,26 @@ var (
 		PrimaryKey: []*schema.Column{IdentityFingerprintsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "identityfingerprint_provider_account_key_profile_key",
+				Name:    "identityfingerprint_tenant_id_provider_account_key_profile_key",
 				Unique:  true,
-				Columns: []*schema.Column{IdentityFingerprintsColumns[1], IdentityFingerprintsColumns[2], IdentityFingerprintsColumns[3]},
+				Columns: []*schema.Column{IdentityFingerprintsColumns[1], IdentityFingerprintsColumns[2], IdentityFingerprintsColumns[3], IdentityFingerprintsColumns[4]},
 			},
 			{
-				Name:    "identityfingerprint_provider_last_seen_at",
+				Name:    "identityfingerprint_tenant_id_provider_last_seen_at",
 				Unique:  false,
-				Columns: []*schema.Column{IdentityFingerprintsColumns[1], IdentityFingerprintsColumns[12]},
+				Columns: []*schema.Column{IdentityFingerprintsColumns[1], IdentityFingerprintsColumns[2], IdentityFingerprintsColumns[13]},
 			},
 			{
-				Name:    "identityfingerprint_provider_account_key_last_seen_at",
+				Name:    "identityfingerprint_tenant_id_provider_account_key_last_seen_at",
 				Unique:  false,
-				Columns: []*schema.Column{IdentityFingerprintsColumns[1], IdentityFingerprintsColumns[2], IdentityFingerprintsColumns[12]},
+				Columns: []*schema.Column{IdentityFingerprintsColumns[1], IdentityFingerprintsColumns[2], IdentityFingerprintsColumns[3], IdentityFingerprintsColumns[13]},
 			},
 		},
 	}
 	// IdentityFingerprintAccountPoliciesColumns holds the columns for the "identity_fingerprint_account_policies" table.
 	IdentityFingerprintAccountPoliciesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "provider", Type: field.TypeString},
 		{Name: "account_key", Type: field.TypeString},
 		{Name: "strategy", Type: field.TypeString, Default: "cli_preferred"},
@@ -263,16 +327,17 @@ var (
 		PrimaryKey: []*schema.Column{IdentityFingerprintAccountPoliciesColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "identityfingerprintaccountpolicy_provider_account_key",
+				Name:    "identityfingerprintaccountpolicy_tenant_id_provider_account_key",
 				Unique:  true,
-				Columns: []*schema.Column{IdentityFingerprintAccountPoliciesColumns[1], IdentityFingerprintAccountPoliciesColumns[2]},
+				Columns: []*schema.Column{IdentityFingerprintAccountPoliciesColumns[1], IdentityFingerprintAccountPoliciesColumns[2], IdentityFingerprintAccountPoliciesColumns[3]},
 			},
 		},
 	}
 	// ModelConfigsColumns holds the columns for the "model_configs" table.
 	ModelConfigsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
-		{Name: "model_id", Type: field.TypeString, Unique: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
+		{Name: "model_id", Type: field.TypeString},
 		{Name: "owned_by", Type: field.TypeString, Default: ""},
 		{Name: "description", Type: field.TypeString, Default: ""},
 		{Name: "enabled", Type: field.TypeInt, Default: 1},
@@ -295,15 +360,21 @@ var (
 		PrimaryKey: []*schema.Column{ModelConfigsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "modelconfig_owned_by",
+				Name:    "modelconfig_tenant_id_model_id",
+				Unique:  true,
+				Columns: []*schema.Column{ModelConfigsColumns[1], ModelConfigsColumns[2]},
+			},
+			{
+				Name:    "modelconfig_tenant_id_owned_by",
 				Unique:  false,
-				Columns: []*schema.Column{ModelConfigsColumns[2]},
+				Columns: []*schema.Column{ModelConfigsColumns[1], ModelConfigsColumns[3]},
 			},
 		},
 	}
 	// ModelOpenrouterSyncStateColumns holds the columns for the "model_openrouter_sync_state" table.
 	ModelOpenrouterSyncStateColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "enabled", Type: field.TypeInt, Default: 0},
 		{Name: "interval_minutes", Type: field.TypeInt, Default: 1440},
 		{Name: "last_sync_at", Type: field.TypeString, Default: ""},
@@ -320,11 +391,19 @@ var (
 		Name:       "model_openrouter_sync_state",
 		Columns:    ModelOpenrouterSyncStateColumns,
 		PrimaryKey: []*schema.Column{ModelOpenrouterSyncStateColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "modelopenroutersyncstate_tenant_id_id",
+				Unique:  true,
+				Columns: []*schema.Column{ModelOpenrouterSyncStateColumns[1], ModelOpenrouterSyncStateColumns[0]},
+			},
+		},
 	}
 	// ModelOwnerPresetsColumns holds the columns for the "model_owner_presets" table.
 	ModelOwnerPresetsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
-		{Name: "value", Type: field.TypeString, Unique: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
+		{Name: "value", Type: field.TypeString},
 		{Name: "label", Type: field.TypeString, Default: ""},
 		{Name: "description", Type: field.TypeString, Default: ""},
 		{Name: "enabled", Type: field.TypeInt, Default: 1},
@@ -335,11 +414,19 @@ var (
 		Name:       "model_owner_presets",
 		Columns:    ModelOwnerPresetsColumns,
 		PrimaryKey: []*schema.Column{ModelOwnerPresetsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "modelownerpreset_tenant_id_value",
+				Unique:  true,
+				Columns: []*schema.Column{ModelOwnerPresetsColumns[1], ModelOwnerPresetsColumns[2]},
+			},
+		},
 	}
 	// ModelPricingColumns holds the columns for the "model_pricing" table.
 	ModelPricingColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
-		{Name: "model_id", Type: field.TypeString, Unique: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
+		{Name: "model_id", Type: field.TypeString},
 		{Name: "input_price_per_million", Type: field.TypeFloat64, Default: 0},
 		{Name: "output_price_per_million", Type: field.TypeFloat64, Default: 0},
 		{Name: "cached_price_per_million", Type: field.TypeFloat64, Default: 0},
@@ -352,10 +439,37 @@ var (
 		Name:       "model_pricing",
 		Columns:    ModelPricingColumns,
 		PrimaryKey: []*schema.Column{ModelPricingColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "modelpricing_tenant_id_model_id",
+				Unique:  true,
+				Columns: []*schema.Column{ModelPricingColumns[1], ModelPricingColumns[2]},
+			},
+		},
+	}
+	// PermissionsColumns holds the columns for the "permissions" table.
+	PermissionsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "code", Type: field.TypeString, Unique: true},
+		{Name: "name", Type: field.TypeString},
+		{Name: "description", Type: field.TypeString, Default: ""},
+		{Name: "scope", Type: field.TypeString},
+		{Name: "resource", Type: field.TypeString},
+		{Name: "action", Type: field.TypeString},
+		{Name: "sensitive", Type: field.TypeBool, Default: false},
+		{Name: "sort_order", Type: field.TypeInt, Default: 0},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// PermissionsTable holds the schema information for the "permissions" table.
+	PermissionsTable = &schema.Table{
+		Name:       "permissions",
+		Columns:    PermissionsColumns,
+		PrimaryKey: []*schema.Column{PermissionsColumns[0]},
 	}
 	// ProxyPoolColumns holds the columns for the "proxy_pool" table.
 	ProxyPoolColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "id", Type: field.TypeString},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "name", Type: field.TypeString, Default: ""},
 		{Name: "url", Type: field.TypeString},
 		{Name: "enabled", Type: field.TypeInt, Default: 1},
@@ -368,10 +482,18 @@ var (
 		Name:       "proxy_pool",
 		Columns:    ProxyPoolColumns,
 		PrimaryKey: []*schema.Column{ProxyPoolColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "proxypool_tenant_id_id",
+				Unique:  true,
+				Columns: []*schema.Column{ProxyPoolColumns[1], ProxyPoolColumns[0]},
+			},
+		},
 	}
 	// RequestLogsColumns holds the columns for the "request_logs" table.
 	RequestLogsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "timestamp", Type: field.TypeTime},
 		{Name: "api_key", Type: field.TypeString, Default: ""},
 		{Name: "api_key_id", Type: field.TypeString, Default: ""},
@@ -403,55 +525,66 @@ var (
 		PrimaryKey: []*schema.Column{RequestLogsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "requestlog_timestamp",
-				Unique:  false,
-				Columns: []*schema.Column{RequestLogsColumns[1]},
+				Name:    "requestlog_tenant_id_id",
+				Unique:  true,
+				Columns: []*schema.Column{RequestLogsColumns[1], RequestLogsColumns[0]},
 			},
 			{
-				Name:    "requestlog_api_key",
+				Name:    "requestlog_tenant_id_timestamp",
+				Unique:  false,
+				Columns: []*schema.Column{RequestLogsColumns[1], RequestLogsColumns[2]},
+			},
+			{
+				Name:    "requestlog_timestamp",
 				Unique:  false,
 				Columns: []*schema.Column{RequestLogsColumns[2]},
 			},
 			{
-				Name:    "requestlog_api_key_timestamp",
-				Unique:  false,
-				Columns: []*schema.Column{RequestLogsColumns[2], RequestLogsColumns[1]},
-			},
-			{
-				Name:    "requestlog_api_key_id",
+				Name:    "requestlog_api_key",
 				Unique:  false,
 				Columns: []*schema.Column{RequestLogsColumns[3]},
 			},
 			{
+				Name:    "requestlog_api_key_timestamp",
+				Unique:  false,
+				Columns: []*schema.Column{RequestLogsColumns[3], RequestLogsColumns[2]},
+			},
+			{
+				Name:    "requestlog_api_key_id",
+				Unique:  false,
+				Columns: []*schema.Column{RequestLogsColumns[4]},
+			},
+			{
 				Name:    "requestlog_api_key_id_timestamp",
 				Unique:  false,
-				Columns: []*schema.Column{RequestLogsColumns[3], RequestLogsColumns[1]},
+				Columns: []*schema.Column{RequestLogsColumns[4], RequestLogsColumns[2]},
 			},
 			{
 				Name:    "requestlog_model",
 				Unique:  false,
-				Columns: []*schema.Column{RequestLogsColumns[6]},
+				Columns: []*schema.Column{RequestLogsColumns[7]},
 			},
 			{
 				Name:    "requestlog_failed",
 				Unique:  false,
-				Columns: []*schema.Column{RequestLogsColumns[12]},
+				Columns: []*schema.Column{RequestLogsColumns[13]},
 			},
 			{
 				Name:    "requestlog_auth_index",
 				Unique:  false,
-				Columns: []*schema.Column{RequestLogsColumns[11]},
+				Columns: []*schema.Column{RequestLogsColumns[12]},
 			},
 			{
 				Name:    "requestlog_auth_subject_id",
 				Unique:  false,
-				Columns: []*schema.Column{RequestLogsColumns[4]},
+				Columns: []*schema.Column{RequestLogsColumns[5]},
 			},
 		},
 	}
 	// RequestLogContentColumns holds the columns for the "request_log_content" table.
 	RequestLogContentColumns = []*schema.Column{
 		{Name: "log_id", Type: field.TypeInt64, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "timestamp", Type: field.TypeTime},
 		{Name: "compression", Type: field.TypeString, Default: "zstd"},
 		{Name: "input_content", Type: field.TypeBytes, Nullable: true},
@@ -466,20 +599,78 @@ var (
 		PrimaryKey: []*schema.Column{RequestLogContentColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "requestlogcontent_timestamp",
-				Unique:  false,
-				Columns: []*schema.Column{RequestLogContentColumns[1]},
+				Name:    "requestlogcontent_tenant_id_log_id",
+				Unique:  true,
+				Columns: []*schema.Column{RequestLogContentColumns[1], RequestLogContentColumns[0]},
 			},
 			{
-				Name:    "requestlogcontent_session_id_timestamp",
+				Name:    "requestlogcontent_tenant_id_timestamp",
 				Unique:  false,
-				Columns: []*schema.Column{RequestLogContentColumns[6], RequestLogContentColumns[1]},
+				Columns: []*schema.Column{RequestLogContentColumns[1], RequestLogContentColumns[2]},
+			},
+			{
+				Name:    "requestlogcontent_tenant_id_session_id_timestamp",
+				Unique:  false,
+				Columns: []*schema.Column{RequestLogContentColumns[1], RequestLogContentColumns[7], RequestLogContentColumns[2]},
+			},
+		},
+	}
+	// RolesColumns holds the columns for the "roles" table.
+	RolesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "tenant_id", Type: field.TypeString},
+		{Name: "code", Type: field.TypeString},
+		{Name: "name", Type: field.TypeString},
+		{Name: "description", Type: field.TypeString, Default: ""},
+		{Name: "scope", Type: field.TypeString},
+		{Name: "system_protected", Type: field.TypeBool, Default: false},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "version", Type: field.TypeInt64, Default: 1},
+	}
+	// RolesTable holds the schema information for the "roles" table.
+	RolesTable = &schema.Table{
+		Name:       "roles",
+		Columns:    RolesColumns,
+		PrimaryKey: []*schema.Column{RolesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "role_tenant_id_code",
+				Unique:  true,
+				Columns: []*schema.Column{RolesColumns[1], RolesColumns[2]},
+			},
+			{
+				Name:    "role_tenant_id_name",
+				Unique:  true,
+				Columns: []*schema.Column{RolesColumns[1], RolesColumns[3]},
+			},
+		},
+	}
+	// RolePermissionsColumns holds the columns for the "role_permissions" table.
+	RolePermissionsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "role_id", Type: field.TypeString},
+		{Name: "permission_code", Type: field.TypeString},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "created_by", Type: field.TypeString, Nullable: true},
+	}
+	// RolePermissionsTable holds the schema information for the "role_permissions" table.
+	RolePermissionsTable = &schema.Table{
+		Name:       "role_permissions",
+		Columns:    RolePermissionsColumns,
+		PrimaryKey: []*schema.Column{RolePermissionsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "rolepermission_role_id_permission_code",
+				Unique:  true,
+				Columns: []*schema.Column{RolePermissionsColumns[1], RolePermissionsColumns[2]},
 			},
 		},
 	}
 	// RoutingConfigColumns holds the columns for the "routing_config" table.
 	RoutingConfigColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
 		{Name: "payload", Type: field.TypeString, Default: "{}"},
 		{Name: "updated_at", Type: field.TypeString, Default: ""},
 	}
@@ -488,11 +679,19 @@ var (
 		Name:       "routing_config",
 		Columns:    RoutingConfigColumns,
 		PrimaryKey: []*schema.Column{RoutingConfigColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "routingconfig_tenant_id_id",
+				Unique:  true,
+				Columns: []*schema.Column{RoutingConfigColumns[1], RoutingConfigColumns[0]},
+			},
+		},
 	}
 	// RuntimeSettingsColumns holds the columns for the "runtime_settings" table.
 	RuntimeSettingsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
-		{Name: "setting_key", Type: field.TypeString, Unique: true},
+		{Name: "tenant_id", Type: field.TypeString, Default: "00000000-0000-0000-0000-000000000001"},
+		{Name: "setting_key", Type: field.TypeString},
 		{Name: "payload", Type: field.TypeString, Default: "{}"},
 		{Name: "updated_at", Type: field.TypeString, Default: ""},
 	}
@@ -501,11 +700,130 @@ var (
 		Name:       "runtime_settings",
 		Columns:    RuntimeSettingsColumns,
 		PrimaryKey: []*schema.Column{RuntimeSettingsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "runtimesetting_tenant_id_setting_key",
+				Unique:  true,
+				Columns: []*schema.Column{RuntimeSettingsColumns[1], RuntimeSettingsColumns[2]},
+			},
+		},
+	}
+	// TenantsColumns holds the columns for the "tenants" table.
+	TenantsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "slug", Type: field.TypeString, Unique: true},
+		{Name: "name", Type: field.TypeString},
+		{Name: "type", Type: field.TypeString},
+		{Name: "status", Type: field.TypeString, Default: "active"},
+		{Name: "expires_at", Type: field.TypeTime, Nullable: true},
+		{Name: "description", Type: field.TypeString, Default: ""},
+		{Name: "created_by", Type: field.TypeString, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "version", Type: field.TypeInt64, Default: 1},
+	}
+	// TenantsTable holds the schema information for the "tenants" table.
+	TenantsTable = &schema.Table{
+		Name:       "tenants",
+		Columns:    TenantsColumns,
+		PrimaryKey: []*schema.Column{TenantsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "tenant_status_expires_at",
+				Unique:  false,
+				Columns: []*schema.Column{TenantsColumns[4], TenantsColumns[5]},
+			},
+		},
+	}
+	// UsersColumns holds the columns for the "users" table.
+	UsersColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "tenant_id", Type: field.TypeString},
+		{Name: "username", Type: field.TypeString},
+		{Name: "username_normalized", Type: field.TypeString, Unique: true},
+		{Name: "display_name", Type: field.TypeString},
+		{Name: "password_hash", Type: field.TypeString},
+		{Name: "status", Type: field.TypeString, Default: "active"},
+		{Name: "must_change_password", Type: field.TypeBool, Default: false},
+		{Name: "password_changed_at", Type: field.TypeTime},
+		{Name: "last_login_at", Type: field.TypeTime, Nullable: true},
+		{Name: "failed_login_count", Type: field.TypeInt, Default: 0},
+		{Name: "locked_until", Type: field.TypeTime, Nullable: true},
+		{Name: "created_by", Type: field.TypeString, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "version", Type: field.TypeInt64, Default: 1},
+	}
+	// UsersTable holds the schema information for the "users" table.
+	UsersTable = &schema.Table{
+		Name:       "users",
+		Columns:    UsersColumns,
+		PrimaryKey: []*schema.Column{UsersColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "user_tenant_id_status",
+				Unique:  false,
+				Columns: []*schema.Column{UsersColumns[1], UsersColumns[6]},
+			},
+		},
+	}
+	// UserRolesColumns holds the columns for the "user_roles" table.
+	UserRolesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "user_id", Type: field.TypeString},
+		{Name: "role_id", Type: field.TypeString},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "created_by", Type: field.TypeString, Nullable: true},
+	}
+	// UserRolesTable holds the schema information for the "user_roles" table.
+	UserRolesTable = &schema.Table{
+		Name:       "user_roles",
+		Columns:    UserRolesColumns,
+		PrimaryKey: []*schema.Column{UserRolesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "userrole_user_id_role_id",
+				Unique:  true,
+				Columns: []*schema.Column{UserRolesColumns[1], UserRolesColumns[2]},
+			},
+		},
+	}
+	// UserSessionsColumns holds the columns for the "user_sessions" table.
+	UserSessionsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "user_id", Type: field.TypeString},
+		{Name: "tenant_id", Type: field.TypeString},
+		{Name: "token_hash", Type: field.TypeString, Unique: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "expires_at", Type: field.TypeTime},
+		{Name: "last_seen_at", Type: field.TypeTime},
+		{Name: "revoked_at", Type: field.TypeTime, Nullable: true},
+		{Name: "revoke_reason", Type: field.TypeString, Default: ""},
+		{Name: "user_agent_hash", Type: field.TypeString, Default: ""},
+	}
+	// UserSessionsTable holds the schema information for the "user_sessions" table.
+	UserSessionsTable = &schema.Table{
+		Name:       "user_sessions",
+		Columns:    UserSessionsColumns,
+		PrimaryKey: []*schema.Column{UserSessionsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "usersession_user_id_revoked_at_expires_at",
+				Unique:  false,
+				Columns: []*schema.Column{UserSessionsColumns[1], UserSessionsColumns[7], UserSessionsColumns[5]},
+			},
+			{
+				Name:    "usersession_tenant_id_revoked_at_expires_at",
+				Unique:  false,
+				Columns: []*schema.Column{UserSessionsColumns[2], UserSessionsColumns[7], UserSessionsColumns[5]},
+			},
+		},
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		APIKeysTable,
 		APIKeyPermissionProfilesTable,
+		AuditLogsTable,
 		AuthFileQuotaSnapshotsTable,
 		AuthFileQuotaSnapshotPointsTable,
 		AuthGroupModelOwnerMappingsTable,
@@ -517,11 +835,18 @@ var (
 		ModelOpenrouterSyncStateTable,
 		ModelOwnerPresetsTable,
 		ModelPricingTable,
+		PermissionsTable,
 		ProxyPoolTable,
 		RequestLogsTable,
 		RequestLogContentTable,
+		RolesTable,
+		RolePermissionsTable,
 		RoutingConfigTable,
 		RuntimeSettingsTable,
+		TenantsTable,
+		UsersTable,
+		UserRolesTable,
+		UserSessionsTable,
 	}
 )
 
@@ -531,6 +856,9 @@ func init() {
 	}
 	APIKeyPermissionProfilesTable.Annotation = &entsql.Annotation{
 		Table: "api_key_permission_profiles",
+	}
+	AuditLogsTable.Annotation = &entsql.Annotation{
+		Table: "audit_logs",
 	}
 	AuthFileQuotaSnapshotsTable.Annotation = &entsql.Annotation{
 		Table: "auth_file_quota_snapshots",
@@ -565,6 +893,9 @@ func init() {
 	ModelPricingTable.Annotation = &entsql.Annotation{
 		Table: "model_pricing",
 	}
+	PermissionsTable.Annotation = &entsql.Annotation{
+		Table: "permissions",
+	}
 	ProxyPoolTable.Annotation = &entsql.Annotation{
 		Table: "proxy_pool",
 	}
@@ -574,10 +905,28 @@ func init() {
 	RequestLogContentTable.Annotation = &entsql.Annotation{
 		Table: "request_log_content",
 	}
+	RolesTable.Annotation = &entsql.Annotation{
+		Table: "roles",
+	}
+	RolePermissionsTable.Annotation = &entsql.Annotation{
+		Table: "role_permissions",
+	}
 	RoutingConfigTable.Annotation = &entsql.Annotation{
 		Table: "routing_config",
 	}
 	RuntimeSettingsTable.Annotation = &entsql.Annotation{
 		Table: "runtime_settings",
+	}
+	TenantsTable.Annotation = &entsql.Annotation{
+		Table: "tenants",
+	}
+	UsersTable.Annotation = &entsql.Annotation{
+		Table: "users",
+	}
+	UserRolesTable.Annotation = &entsql.Annotation{
+		Table: "user_roles",
+	}
+	UserSessionsTable.Annotation = &entsql.Annotation{
+		Table: "user_sessions",
 	}
 }

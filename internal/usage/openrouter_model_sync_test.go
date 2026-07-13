@@ -1200,3 +1200,37 @@ func containsModality(modalities []string, expected string) bool {
 	}
 	return false
 }
+
+func TestOpenRouterModelSyncIsTenantScoped(t *testing.T) {
+	initModelConfigTestDB(t)
+
+	const tenantA = "00000000-0000-0000-0000-00000000000a"
+	const tenantB = "00000000-0000-0000-0000-00000000000b"
+	const modelID = "gpt-openrouter-tenant-isolation"
+	models := []OpenRouterRemoteModel{{
+		ID:           "openai/" + modelID,
+		Name:         "Tenant isolated model",
+		Architecture: OpenRouterRemoteArchitecture{Modality: "text->text"},
+		Pricing:      OpenRouterRemotePricing{Prompt: "0.000001", Completion: "0.000002"},
+	}}
+
+	if _, err := SyncOpenRouterModelListForTenant(context.Background(), tenantA, models); err != nil {
+		t.Fatalf("SyncOpenRouterModelListForTenant: %v", err)
+	}
+	if _, ok := GetModelConfigForTenant(tenantA, modelID); !ok {
+		t.Fatal("tenant A synced model missing")
+	}
+	if _, ok := GetModelConfigForTenant(tenantB, modelID); ok {
+		t.Fatal("tenant B can see tenant A synced model")
+	}
+
+	if _, err := UpdateOpenRouterModelSyncSettingsForTenant(tenantA, true, 120); err != nil {
+		t.Fatalf("UpdateOpenRouterModelSyncSettingsForTenant: %v", err)
+	}
+	if state := GetOpenRouterModelSyncStateForTenant(tenantA); !state.Enabled || state.IntervalMinutes != 120 {
+		t.Fatalf("tenant A state = %+v", state)
+	}
+	if state := GetOpenRouterModelSyncStateForTenant(tenantB); state.Enabled {
+		t.Fatalf("tenant B inherited tenant A state: %+v", state)
+	}
+}

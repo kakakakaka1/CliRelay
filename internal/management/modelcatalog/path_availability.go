@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	internalrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
@@ -17,10 +18,11 @@ func (s *Service) PathAvailability() map[string]any {
 	modelRegistry := registry.GetGlobalRegistry()
 	items := make(map[string]*modelPathAvailabilityResponse)
 
+	routingConfig := tenantRoutingConfig(s.tenantID, s.cfg)
 	rootOpenAICapabilities := openAIV1Capabilities("/")
 	rootGeminiCapabilities := geminiV1BetaCapabilities("/")
-	appendModelPaths(items, s.modelRootRouteScopedModels(modelRegistry.GetAvailableModels("openai")), "/", rootOpenAICapabilities)
-	appendModelPaths(items, s.modelRootRouteScopedModels(modelRegistry.GetAvailableModels("gemini")), "/", rootGeminiCapabilities)
+	appendModelPaths(items, s.modelRootRouteScopedModels(modelRegistry.GetAvailableModels("openai"), routingConfig), "/", rootOpenAICapabilities)
+	appendModelPaths(items, s.modelRootRouteScopedModels(modelRegistry.GetAvailableModels("gemini"), routingConfig), "/", rootGeminiCapabilities)
 
 	routes := []modelPathRouteResponse{
 		{
@@ -32,7 +34,7 @@ func (s *Service) PathAvailability() map[string]any {
 		},
 	}
 
-	for _, route := range configuredPathRoutes(s.cfg) {
+	for _, route := range configuredPathRoutes(s.tenantID, routingConfig) {
 		capabilities := append(append([]modelPathCapabilityResponse{}, openAIV1Capabilities(route.Path)...), geminiV1BetaCapabilities(route.Path)...)
 		routes = append(routes, modelPathRouteResponse{
 			Label:        route.Label,
@@ -64,31 +66,47 @@ func (s *Service) modelPathRouteScopedModels(models []map[string]any, routeGroup
 		if id == "" {
 			continue
 		}
-		if s.authManager.CanServeModelWithScopes(id, nil, nil, routeGroup) {
+		if s.authManager.CanServeModelWithScopesForTenant(s.tenantID, id, nil, nil, routeGroup) {
 			filtered = append(filtered, model)
 		}
 	}
 	return filtered
 }
 
-func (s *Service) modelRootRouteScopedModels(models []map[string]any) []map[string]any {
-	if s == nil || s.authManager == nil || s.cfg == nil || !s.cfg.Routing.IncludeDefaultGroup {
+func (s *Service) modelRootRouteScopedModels(models []map[string]any, _ *config.RoutingConfig) []map[string]any {
+	if s == nil || s.authManager == nil {
 		return models
 	}
+	// Always scope root path models to auths owned by the effective tenant.
+	// IncludeDefaultGroup used to skip this filter entirely, which leaked the
+	// process-global registry into non-system tenants (models page + path list).
 	filtered := make([]map[string]any, 0, len(models))
 	for _, model := range models {
 		id := strings.TrimSpace(modelPathStringValue(model["id"]))
 		if id == "" {
 			continue
 		}
-		if s.authManager.CanServeModelWithScopes(id, nil, nil, "") {
+		if s.authManager.CanServeModelWithScopesForTenant(s.tenantID, id, nil, nil, "") {
 			filtered = append(filtered, model)
 		}
 	}
 	return filtered
 }
 
-func configuredPathRoutes(cfg *config.Config) []configuredModelPathRoute {
+func tenantRoutingConfig(tenantID string, cfg *config.Config) *config.RoutingConfig {
+	if stored := usage.GetRoutingConfigForTenant(tenantID); stored != nil {
+		return stored
+	}
+	if strings.TrimSpace(tenantID) == "" || tenantID == identity.SystemTenantID {
+		if cfg != nil {
+			routing := cfg.Routing
+			return &routing
+		}
+	}
+	return &config.RoutingConfig{}
+}
+
+func configuredPathRoutes(tenantID string, routingConfig *config.RoutingConfig) []configuredModelPathRoute {
 	seen := make(map[string]struct{})
 	out := []configuredModelPathRoute{}
 	appendRoute := func(label, path, group string) {
@@ -112,14 +130,15 @@ func configuredPathRoutes(cfg *config.Config) []configuredModelPathRoute {
 		})
 	}
 
-	if cfg == nil {
-		cfg = &config.Config{}
+	if routingConfig == nil {
+		routingConfig = &config.RoutingConfig{}
 	}
+	cfg := &config.Config{Routing: *routingConfig}
 	cfg.SanitizeRouting()
 	for _, route := range cfg.Routing.PathRoutes {
 		appendRoute(route.Path, route.Path, route.Group)
 	}
-	for _, row := range usage.ListCcSwitchImportConfigs() {
+	for _, row := range usage.ListCcSwitchImportConfigsForTenant(tenantID) {
 		if row.RoutePath == "" || len(row.AllowedChannelGroups) == 0 {
 			continue
 		}

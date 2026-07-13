@@ -4,6 +4,13 @@ func RuntimeMigrations() []Migration {
 	return []Migration{
 		{Version: "202607050001_runtime_schema", SQL: runtimeSchemaSQL},
 		{Version: "202607100001_identity_fingerprint_profiles", SQL: identityFingerprintProfilesSQL},
+		{Version: "202607110001_multi_tenant_identity", SQL: multiTenantIdentitySQL},
+		{Version: "202607110002_multi_tenant_scope", SQL: multiTenantScopeSQL},
+		{Version: "202607110003_multi_tenant_constraints", SQL: multiTenantConstraintsSQL},
+		{Version: "202607110004_identity_delete_constraints", SQL: identityDeleteConstraintsSQL},
+		{Version: "202607110005_ccswitch_tenant_primary_key", SQL: ccSwitchTenantPrimaryKeySQL},
+		{Version: "202607120001_dynamic_menus", SQL: dynamicMenusSQL},
+		{Version: "202607120002_menu_management_v2", SQL: menuManagementV2SQL},
 	}
 }
 
@@ -346,4 +353,266 @@ CREATE TABLE IF NOT EXISTS identity_fingerprint_account_policies (
       OR (strategy = 'cli_preferred' AND active_profile_key = '')
     )
 );
+`
+
+const multiTenantIdentitySQL = `
+CREATE TABLE IF NOT EXISTS tenants (
+  id          UUID PRIMARY KEY,
+  slug        TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  type        TEXT NOT NULL CHECK (type IN ('system', 'standard')),
+  status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'disabled')),
+  expires_at  TIMESTAMPTZ,
+  description TEXT NOT NULL DEFAULT '',
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  version     BIGINT NOT NULL DEFAULT 1,
+  CONSTRAINT tenants_standard_expiry CHECK (type = 'system' OR expires_at IS NOT NULL)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_single_system
+  ON tenants(type) WHERE type = 'system';
+INSERT INTO tenants (id, slug, name, type, status, created_at, updated_at)
+VALUES ('00000000-0000-0000-0000-000000000001', 'system', 'System Administration', 'system', 'active', now(), now())
+ON CONFLICT (id) DO NOTHING;
+CREATE INDEX IF NOT EXISTS idx_tenants_status_expiry
+  ON tenants(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS users (
+  id                    UUID PRIMARY KEY,
+  tenant_id             UUID NOT NULL REFERENCES tenants(id),
+  username              TEXT NOT NULL,
+  username_normalized   TEXT NOT NULL UNIQUE,
+  display_name          TEXT NOT NULL,
+  password_hash         TEXT NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'locked')),
+  must_change_password  BOOLEAN NOT NULL DEFAULT false,
+  password_changed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_login_at         TIMESTAMPTZ,
+  failed_login_count    INTEGER NOT NULL DEFAULT 0,
+  locked_until          TIMESTAMPTZ,
+  created_by            UUID REFERENCES users(id),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  version               BIGINT NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_users_tenant_status ON users(tenant_id, status);
+
+CREATE TABLE IF NOT EXISTS roles (
+  id               UUID PRIMARY KEY,
+  tenant_id        UUID NOT NULL REFERENCES tenants(id),
+  code             TEXT NOT NULL,
+  name             TEXT NOT NULL,
+  description      TEXT NOT NULL DEFAULT '',
+  scope            TEXT NOT NULL CHECK (scope IN ('platform', 'tenant')),
+  system_protected BOOLEAN NOT NULL DEFAULT false,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  version          BIGINT NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, code),
+  UNIQUE (tenant_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS permissions (
+  code        TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  scope       TEXT NOT NULL CHECK (scope IN ('platform', 'tenant')),
+  resource    TEXT NOT NULL,
+  action      TEXT NOT NULL,
+  sensitive   BOOLEAN NOT NULL DEFAULT false,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role_id         UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  permission_code TEXT NOT NULL REFERENCES permissions(code),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by      UUID REFERENCES users(id),
+  PRIMARY KEY (role_id, permission_code)
+);
+
+CREATE TABLE IF NOT EXISTS user_roles (
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id    UUID NOT NULL REFERENCES roles(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by UUID REFERENCES users(id),
+  PRIMARY KEY (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id              UUID PRIMARY KEY,
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tenant_id       UUID NOT NULL REFERENCES tenants(id),
+  token_hash      TEXT NOT NULL UNIQUE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at      TIMESTAMPTZ NOT NULL,
+  last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at      TIMESTAMPTZ,
+  revoke_reason   TEXT NOT NULL DEFAULT '',
+  user_agent_hash TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active
+  ON user_sessions(user_id, revoked_at, expires_at);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_tenant_active
+  ON user_sessions(tenant_id, revoked_at, expires_at);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id               BIGSERIAL PRIMARY KEY,
+  tenant_id        UUID REFERENCES tenants(id),
+  actor_kind       TEXT NOT NULL CHECK (actor_kind IN ('user_session', 'service_credential', 'system')),
+  actor_user_id    UUID REFERENCES users(id),
+  actor_session_id UUID REFERENCES user_sessions(id),
+  action           TEXT NOT NULL,
+  resource_type    TEXT NOT NULL,
+  resource_id      TEXT NOT NULL DEFAULT '',
+  result           TEXT NOT NULL CHECK (result IN ('success', 'denied', 'failed')),
+  request_id       TEXT NOT NULL DEFAULT '',
+  changes          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_time ON audit_logs(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_time ON audit_logs(actor_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action_time ON audit_logs(action, created_at DESC);
+`
+
+const multiTenantScopeSQL = `
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE api_key_permission_profiles ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE request_log_content ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE auth_file_quota_snapshots ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE auth_file_quota_snapshot_points ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE auth_subject_quota_cycles ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE model_pricing ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE model_configs ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE model_owner_presets ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE auth_group_model_owner_mappings ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE model_openrouter_sync_state ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE proxy_pool ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE routing_config ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE runtime_settings ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE identity_fingerprints ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE identity_fingerprint_account_policies ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+ALTER TABLE ccswitch_import_configs ADD COLUMN IF NOT EXISTS tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES tenants(id);
+
+CREATE INDEX IF NOT EXISTS idx_request_logs_tenant_timestamp ON request_logs(tenant_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_request_logs_tenant_api_key_id_time ON request_logs(tenant_id, api_key_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_request_logs_tenant_auth_subject_time ON request_logs(tenant_id, auth_subject_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_api_key_profiles_tenant ON api_key_permission_profiles(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_runtime_settings_tenant ON runtime_settings(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_proxy_pool_tenant ON proxy_pool(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_model_configs_tenant ON model_configs(tenant_id);
+`
+
+const multiTenantConstraintsSQL = `
+ALTER TABLE api_key_permission_profiles DROP CONSTRAINT IF EXISTS api_key_permission_profiles_pkey;
+ALTER TABLE api_key_permission_profiles ADD PRIMARY KEY (tenant_id, id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_request_logs_tenant_id ON request_logs(tenant_id, id);
+ALTER TABLE request_log_content DROP CONSTRAINT IF EXISTS request_log_content_log_id_fkey;
+ALTER TABLE request_log_content DROP CONSTRAINT IF EXISTS request_log_content_pkey;
+ALTER TABLE request_log_content ADD PRIMARY KEY (tenant_id, log_id);
+ALTER TABLE request_log_content ADD CONSTRAINT request_log_content_tenant_log_fkey
+  FOREIGN KEY (tenant_id, log_id) REFERENCES request_logs(tenant_id, id) ON DELETE CASCADE;
+
+ALTER TABLE auth_file_quota_snapshots DROP CONSTRAINT IF EXISTS auth_file_quota_snapshots_pkey;
+ALTER TABLE auth_file_quota_snapshots ADD PRIMARY KEY (tenant_id, date_key, auth_index, quota_key);
+ALTER TABLE auth_subject_quota_cycles DROP CONSTRAINT IF EXISTS auth_subject_quota_cycles_pkey;
+ALTER TABLE auth_subject_quota_cycles ADD PRIMARY KEY (tenant_id, subject_id, quota_key);
+
+ALTER TABLE model_pricing DROP CONSTRAINT IF EXISTS model_pricing_pkey;
+ALTER TABLE model_pricing ADD PRIMARY KEY (tenant_id, model_id);
+ALTER TABLE model_configs DROP CONSTRAINT IF EXISTS model_configs_pkey;
+ALTER TABLE model_configs ADD PRIMARY KEY (tenant_id, model_id);
+ALTER TABLE model_owner_presets DROP CONSTRAINT IF EXISTS model_owner_presets_pkey;
+ALTER TABLE model_owner_presets ADD PRIMARY KEY (tenant_id, value);
+ALTER TABLE auth_group_model_owner_mappings DROP CONSTRAINT IF EXISTS auth_group_model_owner_mappings_pkey;
+ALTER TABLE auth_group_model_owner_mappings ADD PRIMARY KEY (tenant_id, auth_group);
+ALTER TABLE model_openrouter_sync_state DROP CONSTRAINT IF EXISTS model_openrouter_sync_state_pkey;
+ALTER TABLE model_openrouter_sync_state ADD PRIMARY KEY (tenant_id, id);
+ALTER TABLE proxy_pool DROP CONSTRAINT IF EXISTS proxy_pool_pkey;
+ALTER TABLE proxy_pool ADD PRIMARY KEY (tenant_id, id);
+ALTER TABLE routing_config DROP CONSTRAINT IF EXISTS routing_config_pkey;
+ALTER TABLE routing_config ADD PRIMARY KEY (tenant_id, id);
+ALTER TABLE runtime_settings DROP CONSTRAINT IF EXISTS runtime_settings_pkey;
+ALTER TABLE runtime_settings ADD PRIMARY KEY (tenant_id, setting_key);
+
+ALTER TABLE identity_fingerprints DROP CONSTRAINT IF EXISTS identity_fingerprints_pkey;
+ALTER TABLE identity_fingerprints ADD PRIMARY KEY (tenant_id, provider, account_key, profile_key);
+ALTER TABLE identity_fingerprint_account_policies DROP CONSTRAINT IF EXISTS identity_fingerprint_account_policies_pkey;
+ALTER TABLE identity_fingerprint_account_policies ADD PRIMARY KEY (tenant_id, provider, account_key);
+
+DROP INDEX IF EXISTS idx_ccswitch_import_configs_route_path;
+CREATE UNIQUE INDEX idx_ccswitch_import_configs_tenant_route_path
+  ON ccswitch_import_configs(tenant_id, route_path) WHERE route_path <> '';
+
+CREATE INDEX IF NOT EXISTS idx_request_log_content_tenant_time ON request_log_content(tenant_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_quota_snapshots_tenant_auth ON auth_file_quota_snapshots(tenant_id, auth_index);
+CREATE INDEX IF NOT EXISTS idx_quota_snapshot_points_tenant_auth_time ON auth_file_quota_snapshot_points(tenant_id, auth_index, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_model_pricing_tenant ON model_pricing(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_model_owner_presets_tenant ON model_owner_presets(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_routing_config_tenant ON routing_config(tenant_id);
+`
+
+const identityDeleteConstraintsSQL = `
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_created_by_fkey;
+ALTER TABLE users ADD CONSTRAINT users_created_by_fkey
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE role_permissions DROP CONSTRAINT IF EXISTS role_permissions_created_by_fkey;
+ALTER TABLE role_permissions ADD CONSTRAINT role_permissions_created_by_fkey
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE user_roles DROP CONSTRAINT IF EXISTS user_roles_created_by_fkey;
+ALTER TABLE user_roles ADD CONSTRAINT user_roles_created_by_fkey
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_actor_user_id_fkey;
+ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_actor_user_id_fkey
+  FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_actor_session_id_fkey;
+ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_actor_session_id_fkey
+  FOREIGN KEY (actor_session_id) REFERENCES user_sessions(id) ON DELETE SET NULL;
+`
+
+const ccSwitchTenantPrimaryKeySQL = `
+ALTER TABLE ccswitch_import_configs DROP CONSTRAINT IF EXISTS ccswitch_import_configs_pkey;
+ALTER TABLE ccswitch_import_configs ADD PRIMARY KEY (tenant_id, id);
+`
+
+const dynamicMenusSQL = `
+CREATE TABLE IF NOT EXISTS menus (
+  code             TEXT PRIMARY KEY,
+  parent_code      TEXT REFERENCES menus(code) ON DELETE RESTRICT,
+  menu_type        TEXT NOT NULL CHECK (menu_type IN ('directory', 'menu')),
+  path             TEXT NOT NULL DEFAULT '',
+  label_key        TEXT NOT NULL,
+  icon             TEXT NOT NULL DEFAULT '',
+  permission_code  TEXT REFERENCES permissions(code) ON DELETE RESTRICT,
+  sort_order       INTEGER NOT NULL DEFAULT 0,
+  visible          BOOLEAN NOT NULL DEFAULT true,
+  enabled          BOOLEAN NOT NULL DEFAULT true,
+  system_protected BOOLEAN NOT NULL DEFAULT true,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  version          BIGINT NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_menus_parent_sort ON menus(parent_code, sort_order, code);
+CREATE INDEX IF NOT EXISTS idx_menus_permission ON menus(permission_code);
+`
+
+const menuManagementV2SQL = `
+ALTER TABLE menus DROP CONSTRAINT IF EXISTS menus_menu_type_check;
+ALTER TABLE menus ADD CONSTRAINT menus_menu_type_check CHECK (menu_type IN ('directory', 'menu', 'button', 'embed', 'link'));
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS component TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS link_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS badge_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS badge_content TEXT NOT NULL DEFAULT '';
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS hide_menu BOOLEAN NOT NULL DEFAULT false;
 `

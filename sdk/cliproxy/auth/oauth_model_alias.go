@@ -65,15 +65,23 @@ func compileOAuthModelAliasTable(aliases map[string][]sdkconfig.OAuthModelAlias)
 // The alias is applied per-auth channel to resolve the upstream model name while keeping the
 // client-visible model name unchanged for translation/response formatting.
 func (m *Manager) SetOAuthModelAlias(aliases map[string][]sdkconfig.OAuthModelAlias) {
+	m.SetOAuthModelAliasForTenant(defaultTenantID, aliases)
+}
+
+func (m *Manager) SetOAuthModelAliasForTenant(tenantID string, aliases map[string][]sdkconfig.OAuthModelAlias) {
 	if m == nil {
 		return
 	}
-	table := compileOAuthModelAliasTable(aliases)
-	// atomic.Value requires non-nil store values.
-	if table == nil {
-		table = &oauthModelAliasTable{}
+	tenantID = normalizedTenantID(tenantID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, _ := m.oauthModelAlias.Load().(map[string]*oauthModelAliasTable)
+	next := make(map[string]*oauthModelAliasTable, len(current)+1)
+	for id, table := range current {
+		next[id] = table
 	}
-	m.oauthModelAlias.Store(table)
+	next[tenantID] = compileOAuthModelAliasTable(aliases)
+	m.oauthModelAlias.Store(next)
 }
 
 // applyOAuthModelAlias resolves the upstream model from OAuth model alias.
@@ -208,8 +216,8 @@ func resolveUpstreamModelFromAliasTable(m *Manager, auth *Auth, requestedModel, 
 		candidates = append(candidates, requestedModel)
 	}
 
-	raw := m.oauthModelAlias.Load()
-	table, _ := raw.(*oauthModelAliasTable)
+	tables, _ := m.oauthModelAlias.Load().(map[string]*oauthModelAliasTable)
+	table := tables[normalizedTenantID(auth.TenantID)]
 	if table == nil || table.reverse == nil {
 		return ""
 	}

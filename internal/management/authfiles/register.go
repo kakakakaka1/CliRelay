@@ -14,9 +14,10 @@ import (
 )
 
 type Registrar struct {
-	Manager *coreauth.Manager
-	AuthDir string
-	Now     time.Time
+	Manager  *coreauth.Manager
+	AuthDir  string
+	TenantID string
+	Now      time.Time
 }
 
 func (r Registrar) RegisterFile(ctx context.Context, path string, data []byte) error {
@@ -49,6 +50,7 @@ func (r Registrar) RegisterFile(ctx context.Context, path string, data []byte) e
 		Metadata: metadata,
 		Now:      r.Now,
 	}
+	opts.TenantID = NormalizeTenantID(r.TenantID)
 	if existing, ok := r.Manager.GetByID(authID); ok {
 		opts.Existing = existing
 		auth := BuildRecord(opts)

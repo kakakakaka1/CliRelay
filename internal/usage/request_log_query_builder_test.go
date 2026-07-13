@@ -20,24 +20,27 @@ func TestBuildWhereClauseUsesParameterizedFilters(t *testing.T) {
 		ChannelNames:          []string{" Codex ", ""},
 	})
 
-	wantWhere := " WHERE timestamp >= ? AND (api_key = ? OR api_key = ?) AND model IN (?,?) AND failed = 1 AND (auth_index IN (?) OR (auth_index = ? AND lower(trim(channel_name)) IN (?)) OR lower(trim(channel_name)) IN (?))"
+	wantWhere := " WHERE tenant_id = ? AND timestamp >= ? AND (api_key = ? OR api_key = ?) AND model IN (?,?) AND failed = 1 AND (auth_index IN (?) OR (auth_index = ? AND lower(trim(channel_name)) IN (?)) OR lower(trim(channel_name)) IN (?))"
 	if where != wantWhere {
 		t.Fatalf("where = %q, want %q", where, wantWhere)
 	}
 	if len(args) == 0 {
 		t.Fatal("expected cutoff argument")
 	}
-	cutoff, ok := args[0].(string)
+	if args[0] != systemTenantID {
+		t.Fatalf("tenant arg = %#v, want %q", args[0], systemTenantID)
+	}
+	cutoff, ok := args[1].(string)
 	if !ok {
-		t.Fatalf("cutoff arg type = %T, want string", args[0])
+		t.Fatalf("cutoff arg type = %T, want string", args[1])
 	}
 	if _, err := time.Parse(time.RFC3339, cutoff); err != nil {
 		t.Fatalf("cutoff arg %q is not RFC3339: %v", cutoff, err)
 	}
 
 	wantArgs := []interface{}{"sk-a", "sk-b", "gpt-5", "gpt-4", "auth-1", "auth-2", "legacy", "codex"}
-	if !reflect.DeepEqual(args[1:], wantArgs) {
-		t.Fatalf("args[1:] = %#v, want %#v", args[1:], wantArgs)
+	if !reflect.DeepEqual(args[2:], wantArgs) {
+		t.Fatalf("args[2:] = %#v, want %#v", args[2:], wantArgs)
 	}
 }
 
@@ -56,8 +59,8 @@ func TestBuildWhereClauseSupportsSystemRequestFilter(t *testing.T) {
 			t.Fatalf("system filter where missing %q in %q", want, where)
 		}
 	}
-	if len(args) != 1 {
-		t.Fatalf("system filter args = %#v, want only cutoff", args)
+	if len(args) != 2 {
+		t.Fatalf("system filter args = %#v, want tenant and cutoff", args)
 	}
 }
 

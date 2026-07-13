@@ -792,8 +792,9 @@ func TestRoundRobinSelectorPick_CursorKeyCap(t *testing.T) {
 	if len(selector.cursors) != 1 {
 		t.Fatalf("len(selector.cursors) = %d, want %d", len(selector.cursors), 1)
 	}
-	if _, ok := selector.cursors["gemini:m3"]; !ok {
-		t.Fatalf("selector.cursors missing key %q", "gemini:m3")
+	expectedKey := defaultTenantID + ":gemini:m3"
+	if _, ok := selector.cursors[expectedKey]; !ok {
+		t.Fatalf("selector.cursors missing key %q", expectedKey)
 	}
 }
 

@@ -6,10 +6,15 @@ import (
 )
 
 type Service struct {
+	tenantID    string
 	cfg         *config.Config
 	authManager *coreauth.Manager
 }
 
 func New(cfg *config.Config, authManager *coreauth.Manager) *Service {
-	return &Service{cfg: cfg, authManager: authManager}
+	return NewForTenant("", cfg, authManager)
+}
+
+func NewForTenant(tenantID string, cfg *config.Config, authManager *coreauth.Manager) *Service {
+	return &Service{tenantID: tenantID, cfg: cfg, authManager: authManager}
 }

@@ -15,14 +15,14 @@ func (s *Service) AuthExists(authIndex string) bool {
 
 func (s *Service) AuthFileGroupTrend(group string, days int) (AuthFileGroupTrendResponse, error) {
 	authIndexes := s.authIndexesForProviderGroup(group)
-	points, err := usage.QueryDailyCallsByAuthIndexes(authIndexes, days)
+	points, err := usage.QueryDailyCallsByAuthIndexesForTenant(s.tenantID, authIndexes, days)
 	if err != nil {
 		return AuthFileGroupTrendResponse{}, err
 	}
 	if points == nil {
 		points = []usage.DailyCountPoint{}
 	}
-	quotaPoints, err := usage.QueryDailyQuotaByAuthIndexes(authIndexes, "code_week", days)
+	quotaPoints, err := usage.QueryDailyQuotaByAuthIndexesForTenant(s.tenantID, authIndexes, "code_week", days)
 	if err != nil {
 		return AuthFileGroupTrendResponse{}, err
 	}
@@ -43,13 +43,13 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 	matcher := s.authSubjectMatcher(auth)
 	preferredWeeklyQuotaKeys := primaryWeeklyQuotaKeysForProvider(auth.Provider)
 
-	dailyRaw, err := usage.QueryDailyUsageByAuthSubject(matcher, days)
+	dailyRaw, err := usage.QueryDailyUsageByAuthSubjectForTenant(s.tenantID, matcher, days)
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 	daily := fillDailyUsagePoints(dailyRaw, days)
 
-	hourly, err := usage.QueryHourlyUsageByAuthSubject(matcher, hours)
+	hourly, err := usage.QueryHourlyUsageByAuthSubjectForTenant(s.tenantID, matcher, hours)
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
@@ -58,14 +58,14 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 	}
 
 	cutoff := usage.CutoffStartUTC(days)
-	requestTotal, err := usage.QueryRequestCountByAuthSubjectSince(matcher, cutoff)
+	requestTotal, err := usage.QueryRequestCountByAuthSubjectSinceForTenant(s.tenantID, matcher, cutoff)
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 
 	trendStart := time.Now().AddDate(0, 0, -7)
 	trendEnd := time.Now().Add(time.Minute)
-	series, err := usage.QueryQuotaSnapshotSeriesByAuthSubject(matcher, trendStart, trendEnd)
+	series, err := usage.QueryQuotaSnapshotSeriesByAuthSubjectForTenant(s.tenantID, matcher, trendStart, trendEnd)
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
@@ -76,7 +76,7 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 
 	var cycleStart time.Time
 	if identity := usage.ResolveAuthSubjectIdentity(auth); identity != nil && identity.ID != "" {
-		cycle, err := usage.QueryLatestWeeklyQuotaCycleByAuthSubject(identity.ID, preferredWeeklyQuotaKeys...)
+		cycle, err := usage.QueryLatestWeeklyQuotaCycleByAuthSubjectForTenant(s.tenantID, identity.ID, preferredWeeklyQuotaKeys...)
 		if err != nil {
 			return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 		}
@@ -94,11 +94,11 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 	var cycleCostTotal float64
 	cycleKnown := !cycleStart.IsZero()
 	if cycleKnown {
-		cycleRequestTotal, err = usage.QueryRequestCountByAuthSubjectSince(matcher, cycleStart)
+		cycleRequestTotal, err = usage.QueryRequestCountByAuthSubjectSinceForTenant(s.tenantID, matcher, cycleStart)
 		if err != nil {
 			return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 		}
-		cycleCostTotal, err = usage.QueryCostByAuthSubjectSince(matcher, cycleStart)
+		cycleCostTotal, err = usage.QueryCostByAuthSubjectSinceForTenant(s.tenantID, matcher, cycleStart)
 		if err != nil {
 			return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 		}
@@ -256,7 +256,7 @@ func (s *Service) authIndexesForProviderGroup(group string) []string {
 	if s == nil || s.authManager == nil {
 		return []string{}
 	}
-	auths := s.authManager.List()
+	auths := s.authManager.ListForTenant(s.tenantID)
 	indexes := make([]string, 0, len(auths))
 	for _, auth := range auths {
 		if auth == nil {
@@ -282,7 +282,7 @@ func (s *Service) authByIndex(authIndex string) *coreauth.Auth {
 	if authIndex == "" {
 		return nil
 	}
-	for _, auth := range s.authManager.List() {
+	for _, auth := range s.authManager.ListForTenant(s.tenantID) {
 		if auth == nil {
 			continue
 		}
@@ -300,7 +300,7 @@ func (s *Service) authSubjectMatcher(auth *coreauth.Auth) usage.AuthSubjectMatch
 	}
 	auths := []*coreauth.Auth{}
 	if s != nil && s.authManager != nil {
-		auths = s.authManager.List()
+		auths = s.authManager.ListForTenant(s.tenantID)
 	}
 	return usage.BuildAuthSubjectMatcher(auth, auths)
 }

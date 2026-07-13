@@ -12,6 +12,9 @@ type APIKey func(*sql.Selector)
 // APIKeyPermissionProfile is the predicate function for apikeypermissionprofile builders.
 type APIKeyPermissionProfile func(*sql.Selector)
 
+// AuditLog is the predicate function for auditlog builders.
+type AuditLog func(*sql.Selector)
+
 // AuthFileQuotaSnapshot is the predicate function for authfilequotasnapshot builders.
 type AuthFileQuotaSnapshot func(*sql.Selector)
 
@@ -45,6 +48,9 @@ type ModelOwnerPreset func(*sql.Selector)
 // ModelPricing is the predicate function for modelpricing builders.
 type ModelPricing func(*sql.Selector)
 
+// Permission is the predicate function for permission builders.
+type Permission func(*sql.Selector)
+
 // ProxyPool is the predicate function for proxypool builders.
 type ProxyPool func(*sql.Selector)
 
@@ -54,8 +60,26 @@ type RequestLog func(*sql.Selector)
 // RequestLogContent is the predicate function for requestlogcontent builders.
 type RequestLogContent func(*sql.Selector)
 
+// Role is the predicate function for role builders.
+type Role func(*sql.Selector)
+
+// RolePermission is the predicate function for rolepermission builders.
+type RolePermission func(*sql.Selector)
+
 // RoutingConfig is the predicate function for routingconfig builders.
 type RoutingConfig func(*sql.Selector)
 
 // RuntimeSetting is the predicate function for runtimesetting builders.
 type RuntimeSetting func(*sql.Selector)
+
+// Tenant is the predicate function for tenant builders.
+type Tenant func(*sql.Selector)
+
+// User is the predicate function for user builders.
+type User func(*sql.Selector)
+
+// UserRole is the predicate function for userrole builders.
+type UserRole func(*sql.Selector)
+
+// UserSession is the predicate function for usersession builders.
+type UserSession func(*sql.Selector)

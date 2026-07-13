@@ -137,7 +137,7 @@ func sessionStickySelectionKey(provider string, opts cliproxyexecutor.Options, s
 	if scope == "" {
 		scope = "default"
 	}
-	return strings.ToLower(strings.TrimSpace(provider)) + "|" + strings.TrimSpace(opts.SourceFormat.String()) + "|" + scope + "|" + sessionKey
+	return tenantIDFromMetadata(opts.Metadata) + "|" + strings.ToLower(strings.TrimSpace(provider)) + "|" + strings.TrimSpace(opts.SourceFormat.String()) + "|" + scope + "|" + sessionKey
 }
 
 func sessionStickyKey(opts cliproxyexecutor.Options) string {

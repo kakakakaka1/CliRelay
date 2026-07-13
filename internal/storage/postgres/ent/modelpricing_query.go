@@ -262,12 +262,12 @@ func (_q *ModelPricingQuery) Clone() *ModelPricingQuery {
 // Example:
 //
 //	var v []struct {
-//		ModelID string `json:"model_id,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.ModelPricing.Query().
-//		GroupBy(modelpricing.FieldModelID).
+//		GroupBy(modelpricing.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *ModelPricingQuery) GroupBy(field string, fields ...string) *ModelPricingGroupBy {
@@ -285,11 +285,11 @@ func (_q *ModelPricingQuery) GroupBy(field string, fields ...string) *ModelPrici
 // Example:
 //
 //	var v []struct {
-//		ModelID string `json:"model_id,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.ModelPricing.Query().
-//		Select(modelpricing.FieldModelID).
+//		Select(modelpricing.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *ModelPricingQuery) Select(fields ...string) *ModelPricingSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

@@ -327,6 +327,11 @@ func requestImageExecutionMetadata(c *gin.Context) map[string]any {
 	meta := map[string]any{
 		coreexecutor.SinglePickMetadataKey: true,
 	}
+	if tenantValue, exists := c.Get("tenantID"); exists {
+		if tenantID, ok := tenantValue.(string); ok && strings.TrimSpace(tenantID) != "" {
+			meta[coreexecutor.TenantMetadataKey] = strings.TrimSpace(tenantID)
+		}
+	}
 	if metadataVal, exists := c.Get("accessMetadata"); exists {
 		if metadata, ok := metadataVal.(map[string]string); ok {
 			if allowedChannels := strings.TrimSpace(metadata["allowed-channels"]); allowedChannels != "" {

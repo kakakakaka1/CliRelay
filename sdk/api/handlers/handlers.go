@@ -245,12 +245,17 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 	routeGroup := ""
 	routeFallback := ""
 	sessionStickyKey := ""
+	tenantID := ""
 	if route := internalrouting.PathRouteContextFromContext(ctx); route != nil {
 		routeGroup = strings.TrimSpace(route.Group)
 		routeFallback = strings.TrimSpace(route.Fallback)
 	}
 	if ctx != nil {
 		if ginCtx, ok := ctx.Value(util.ContextKeyGin).(*gin.Context); ok && ginCtx != nil && ginCtx.Request != nil {
+			if tenantValue, exists := ginCtx.Get("tenantID"); exists {
+				tenantID, _ = tenantValue.(string)
+				tenantID = strings.TrimSpace(tenantID)
+			}
 			key = strings.TrimSpace(ginCtx.GetHeader("Idempotency-Key"))
 			sessionStickyKey = requestSessionStickyHeaderKey(ginCtx)
 			if metadataVal, exists := ginCtx.Get("accessMetadata"); exists {
@@ -282,6 +287,9 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 	}
 
 	meta := map[string]any{idempotencyKeyMetadataKey: key}
+	if tenantID != "" {
+		meta[coreexecutor.TenantMetadataKey] = tenantID
+	}
 	if allowedChannels != "" {
 		meta["allowed-channels"] = allowedChannels
 	}

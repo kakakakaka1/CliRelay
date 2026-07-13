@@ -782,3 +782,30 @@ func TestBuildGeminiVirtualID(t *testing.T) {
 		})
 	}
 }
+
+func TestFileSynthesizerLoadsTenantSubdirectories(t *testing.T) {
+	authDir := t.TempDir()
+	const tenantID = "00000000-0000-0000-0000-00000000000a"
+	tenantDir := filepath.Join(authDir, tenantID)
+	if err := os.MkdirAll(tenantDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tenantDir, "codex.json"), []byte(`{"type":"codex","email":"tenant@example.com"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	auths, err := NewFileSynthesizer().Synthesize(&SynthesisContext{
+		AuthDir: authDir,
+		Config:  &config.Config{},
+		Now:     time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	if len(auths) != 1 {
+		t.Fatalf("auth count = %d, want 1", len(auths))
+	}
+	if auths[0].TenantID != tenantID || auths[0].ID != filepath.Join(tenantID, "codex.json") || auths[0].FileName != "codex.json" {
+		t.Fatalf("tenant auth = %+v", auths[0])
+	}
+}

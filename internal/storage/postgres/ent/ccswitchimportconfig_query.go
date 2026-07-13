@@ -262,12 +262,12 @@ func (_q *CcSwitchImportConfigQuery) Clone() *CcSwitchImportConfigQuery {
 // Example:
 //
 //	var v []struct {
-//		ClientType string `json:"client_type,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.CcSwitchImportConfig.Query().
-//		GroupBy(ccswitchimportconfig.FieldClientType).
+//		GroupBy(ccswitchimportconfig.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *CcSwitchImportConfigQuery) GroupBy(field string, fields ...string) *CcSwitchImportConfigGroupBy {
@@ -285,11 +285,11 @@ func (_q *CcSwitchImportConfigQuery) GroupBy(field string, fields ...string) *Cc
 // Example:
 //
 //	var v []struct {
-//		ClientType string `json:"client_type,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.CcSwitchImportConfig.Query().
-//		Select(ccswitchimportconfig.FieldClientType).
+//		Select(ccswitchimportconfig.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *CcSwitchImportConfigQuery) Select(fields ...string) *CcSwitchImportConfigSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

@@ -32,14 +32,19 @@ type QuotaSnapshotSeries struct {
 }
 
 func RecordDailyQuotaSnapshot(authIndex, provider string, quotas map[string]*float64) error {
-	return RecordDailyQuotaSnapshotIdentity(authIndex, "", provider, quotas)
+	return RecordDailyQuotaSnapshotIdentityForTenant(systemTenantID, authIndex, "", provider, quotas)
 }
 
 func RecordQuotaSnapshotPoints(authIndex, provider string, points []QuotaSnapshotPoint) error {
-	return RecordQuotaSnapshotPointsIdentity(authIndex, "", provider, points)
+	return RecordQuotaSnapshotPointsIdentityForTenant(systemTenantID, authIndex, "", provider, points)
 }
 
 func QueryDailyQuotaByAuthIndexes(authIndexes []string, quotaKey string, days int) ([]DailyQuotaPoint, error) {
+	return QueryDailyQuotaByAuthIndexesForTenant(systemTenantID, authIndexes, quotaKey, days)
+}
+
+func QueryDailyQuotaByAuthIndexesForTenant(tenantID string, authIndexes []string, quotaKey string, days int) ([]DailyQuotaPoint, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
 		return []DailyQuotaPoint{}, nil
@@ -73,8 +78,8 @@ func QueryDailyQuotaByAuthIndexes(authIndexes []string, quotaKey string, days in
 	}
 
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(normalized)), ",")
-	args := make([]interface{}, 0, len(normalized)+2)
-	args = append(args, cutoffDayKey(days), quotaKey)
+	args := make([]interface{}, 0, len(normalized)+3)
+	args = append(args, tenantID, cutoffDayKey(days), quotaKey)
 	for _, idx := range normalized {
 		args = append(args, idx)
 	}
@@ -82,7 +87,7 @@ func QueryDailyQuotaByAuthIndexes(authIndexes []string, quotaKey string, days in
 	q := fmt.Sprintf(`
 		SELECT date_key, AVG(percent) AS avg_percent, COUNT(percent) AS samples
 		FROM auth_file_quota_snapshots
-		WHERE date_key >= ? AND quota_key = ? AND auth_index IN (%s) AND percent IS NOT NULL
+		WHERE tenant_id = ? AND date_key >= ? AND quota_key = ? AND auth_index IN (%s) AND percent IS NOT NULL
 		GROUP BY date_key
 		ORDER BY date_key ASC
 	`, placeholders)
@@ -110,6 +115,11 @@ func QueryDailyQuotaByAuthIndexes(authIndexes []string, quotaKey string, days in
 }
 
 func QueryQuotaSnapshotPoints(authIndex string, start, end time.Time) ([]QuotaSnapshotPoint, error) {
+	return QueryQuotaSnapshotPointsForTenant(systemTenantID, authIndex, start, end)
+}
+
+func QueryQuotaSnapshotPointsForTenant(tenantID, authIndex string, start, end time.Time) ([]QuotaSnapshotPoint, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getDB()
 	if db == nil {
 		return []QuotaSnapshotPoint{}, nil
@@ -128,9 +138,9 @@ func QueryQuotaSnapshotPoints(authIndex string, start, end time.Time) ([]QuotaSn
 	rows, err := db.Query(`
 		SELECT recorded_at, auth_index, provider, quota_key, quota_label, percent, reset_at, window_seconds
 		FROM auth_file_quota_snapshot_points
-		WHERE auth_index = ? AND recorded_at >= ? AND recorded_at <= ?
+		WHERE tenant_id = ? AND auth_index = ? AND recorded_at >= ? AND recorded_at <= ?
 		ORDER BY recorded_at ASC, quota_key ASC
-	`, authIndex, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
+	`, tenantID, authIndex, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, fmt.Errorf("usage: quota snapshot points query: %w", err)
 	}
@@ -171,7 +181,11 @@ func QueryQuotaSnapshotPoints(authIndex string, start, end time.Time) ([]QuotaSn
 }
 
 func QueryQuotaSnapshotSeries(authIndex string, start, end time.Time) ([]QuotaSnapshotSeries, error) {
-	points, err := QueryQuotaSnapshotPoints(authIndex, start, end)
+	return QueryQuotaSnapshotSeriesForTenant(systemTenantID, authIndex, start, end)
+}
+
+func QueryQuotaSnapshotSeriesForTenant(tenantID, authIndex string, start, end time.Time) ([]QuotaSnapshotSeries, error) {
+	points, err := QueryQuotaSnapshotPointsForTenant(tenantID, authIndex, start, end)
 	if err != nil {
 		return nil, err
 	}

@@ -12,10 +12,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func (m *Manager) executorFor(provider string) ProviderExecutor {
+func (m *Manager) executorForTenant(tenantID, provider string) ProviderExecutor {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.executors[provider]
+	return m.executorForTenantLocked(tenantID, provider)
 }
 
 // roundTripperContextKey is an unexported context key type to avoid collisions.
@@ -135,7 +135,7 @@ func (m *Manager) InjectCredentials(req *http.Request, authID string) error {
 	a := m.auths[authID]
 	var exec ProviderExecutor
 	if a != nil {
-		exec = m.executors[executorKeyFromAuth(a)]
+		exec = m.executorForTenantLocked(a.TenantID, executorKeyFromAuth(a))
 	}
 	m.mu.RUnlock()
 	if a == nil || exec == nil {
@@ -165,7 +165,7 @@ func (m *Manager) PrepareHttpRequest(ctx context.Context, auth *Auth, req *http.
 	if providerKey == "" {
 		return &Error{Code: "provider_not_found", Message: "auth provider is empty"}
 	}
-	exec := m.executorFor(providerKey)
+	exec := m.executorForTenant(auth.TenantID, providerKey)
 	if exec == nil {
 		return &Error{Code: "provider_not_found", Message: "executor not registered for provider: " + providerKey}
 	}
@@ -217,7 +217,7 @@ func (m *Manager) HttpRequest(ctx context.Context, auth *Auth, req *http.Request
 	if providerKey == "" {
 		return nil, &Error{Code: "provider_not_found", Message: "auth provider is empty"}
 	}
-	exec := m.executorFor(providerKey)
+	exec := m.executorForTenant(auth.TenantID, providerKey)
 	if exec == nil {
 		return nil, &Error{Code: "provider_not_found", Message: "executor not registered for provider: " + providerKey}
 	}

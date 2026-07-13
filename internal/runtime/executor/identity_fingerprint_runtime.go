@@ -94,6 +94,10 @@ func identityFingerprintAccount(auth *cliproxyauth.Auth) (accountKey string, aut
 }
 
 func observeRuntimeIdentityFingerprint(provider identityfingerprint.Provider, auth *cliproxyauth.Auth, ctx context.Context) *identityfingerprint.LearnedRecord {
+	// Same AI account (account_key / auth subject) shares one fingerprint catalog
+	// across tenants. Storage is keyed under the platform system tenant so a
+	// credential that moved from system → business tenant keeps the learned
+	// UA/version bundles; business tenants still observe and apply them.
 	accountKey, authSubjectID := identityFingerprintAccount(auth)
 	if accountKey == "" {
 		return nil

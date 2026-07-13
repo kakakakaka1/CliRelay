@@ -13,6 +13,7 @@ var ErrAuthFileNotFound = errors.New("auth file not found")
 
 type DeleteService struct {
 	AuthDir        string
+	TenantID       string
 	Manager        *coreauth.Manager
 	Repository     Repository
 	RemoveChannels func([]string) error
@@ -23,7 +24,8 @@ type DeleteResult struct {
 }
 
 func (s DeleteService) DeleteAll(ctx context.Context) (DeleteResult, error) {
-	entries, err := os.ReadDir(s.AuthDir)
+	authDir := TenantAuthDir(s.AuthDir, s.TenantID)
+	entries, err := os.ReadDir(authDir)
 	if err != nil {
 		return DeleteResult{}, fmt.Errorf("failed to read auth dir: %w", err)
 	}
@@ -36,8 +38,9 @@ func (s DeleteService) DeleteAll(ctx context.Context) (DeleteResult, error) {
 		if !IsJSONFileName(name) {
 			continue
 		}
-		full := FilePath(s.AuthDir, name)
-		deletedChannels := DeletedChannelIdentifiers(FindByNameOrID(s.Manager, name))
+		full := FilePath(authDir, name)
+		target := FindByNameOrIDForTenant(s.Manager, s.TenantID, name)
+		deletedChannels := DeletedChannelIdentifiers(target)
 		if errRemove := os.Remove(full); errRemove != nil {
 			continue
 		}
@@ -45,7 +48,9 @@ func (s DeleteService) DeleteAll(ctx context.Context) (DeleteResult, error) {
 			return result, errDelete
 		}
 		result.Deleted++
-		RemoveFromManager(ctx, s.Manager, s.AuthDir, full)
+		if target != nil {
+			_, _ = s.Manager.Delete(coreauth.WithSkipPersist(ctx), target.ID)
+		}
 		if errCleanup := s.removeChannelReferences(deletedChannels); errCleanup != nil {
 			return result, errCleanup
 		}
@@ -54,8 +59,9 @@ func (s DeleteService) DeleteAll(ctx context.Context) (DeleteResult, error) {
 }
 
 func (s DeleteService) DeleteOne(ctx context.Context, name string) (DeleteResult, error) {
-	full := FilePath(s.AuthDir, name)
-	deletedChannels := DeletedChannelIdentifiers(FindByNameOrID(s.Manager, name))
+	full := ExistingTenantFilePath(s.AuthDir, s.TenantID, name)
+	target := FindByNameOrIDForTenant(s.Manager, s.TenantID, name)
+	deletedChannels := DeletedChannelIdentifiers(target)
 	if err := os.Remove(full); err != nil {
 		if os.IsNotExist(err) {
 			return DeleteResult{}, ErrAuthFileNotFound
@@ -65,7 +71,9 @@ func (s DeleteService) DeleteOne(ctx context.Context, name string) (DeleteResult
 	if err := s.Repository.Delete(ctx, full); err != nil {
 		return DeleteResult{}, err
 	}
-	RemoveFromManager(ctx, s.Manager, s.AuthDir, full)
+	if target != nil {
+		_, _ = s.Manager.Delete(coreauth.WithSkipPersist(ctx), target.ID)
+	}
 	if err := s.removeChannelReferences(deletedChannels); err != nil {
 		return DeleteResult{}, err
 	}

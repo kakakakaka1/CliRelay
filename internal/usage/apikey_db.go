@@ -29,6 +29,10 @@ func apiKeyStore() sqlapikey.Store {
 	return sqlapikey.NewStore(getDB())
 }
 
+func apiKeyStoreForTenant(tenantID string) sqlapikey.Store {
+	return sqlapikey.NewTenantStore(getDB(), tenantID)
+}
+
 func defaultAPIKeyName(index int) string {
 	return sqlapikey.DefaultAPIKeyName(index)
 }
@@ -130,7 +134,11 @@ func MigrateAPIKeysFromConfig(cfg *config.Config, configFilePath string) int {
 // EffectiveAPIKeyRow applies the currently linked permission profile to an API key row.
 // If the profile is missing, the row's copied/custom settings remain the fallback.
 func EffectiveAPIKeyRow(row APIKeyRow) APIKeyRow {
-	return EffectiveAPIKeyRowWithProfiles(row, ListAPIKeyPermissionProfiles())
+	return EffectiveAPIKeyRowForTenant(row.TenantID, row)
+}
+
+func EffectiveAPIKeyRowForTenant(tenantID string, row APIKeyRow) APIKeyRow {
+	return EffectiveAPIKeyRowWithProfiles(row, ListAPIKeyPermissionProfilesForTenant(tenantID))
 }
 
 // EffectiveAPIKeyRowWithProfiles applies a preloaded permission profile snapshot.
@@ -140,15 +148,27 @@ func EffectiveAPIKeyRowWithProfiles(row APIKeyRow, profiles []APIKeyPermissionPr
 
 // EffectiveAPIKeyRows applies the current permission profile snapshot to each row.
 func EffectiveAPIKeyRows(rows []APIKeyRow) []APIKeyRow {
+	return EffectiveAPIKeyRowsForTenant("", rows)
+}
+
+func EffectiveAPIKeyRowsForTenant(tenantID string, rows []APIKeyRow) []APIKeyRow {
 	if len(rows) == 0 {
 		return rows
 	}
-	return sqlapikey.EffectiveAPIKeyRowsWithProfiles(rows, toPermissionProfileSnapshots(ListAPIKeyPermissionProfiles()))
+	return sqlapikey.EffectiveAPIKeyRowsWithProfiles(rows, toPermissionProfileSnapshots(ListAPIKeyPermissionProfilesForTenant(tenantID)))
 }
 
-// ListAPIKeys retrieves all API key entries from SQLite.
+// ListAPIKeys retrieves system-tenant API key entries for legacy callers.
 func ListAPIKeys() []APIKeyRow {
 	return apiKeyStore().List()
+}
+
+func ListAPIKeysForTenant(tenantID string) []APIKeyRow {
+	return apiKeyStoreForTenant(tenantID).List()
+}
+
+func ListAllAPIKeys() []APIKeyRow {
+	return apiKeyStore().ListAll()
 }
 
 // GetAPIKey retrieves a single API key entry by key string.
@@ -186,6 +206,36 @@ func ReplaceAllAPIKeys(entries []APIKeyRow) error {
 	return apiKeyStore().ReplaceAll(entries)
 }
 
+func GetAPIKeyForTenant(tenantID, key string) *APIKeyRow {
+	return apiKeyStoreForTenant(tenantID).Get(key)
+}
+
+func GetAPIKeyByIDForTenant(tenantID, id string) *APIKeyRow {
+	return apiKeyStoreForTenant(tenantID).GetByID(id)
+}
+
+func UpsertAPIKeyForTenant(tenantID string, entry APIKeyRow) error {
+	entry.TenantID = tenantID
+	return apiKeyStoreForTenant(tenantID).Upsert(entry)
+}
+
+func UpdateAPIKeyByIDForTenant(tenantID string, entry APIKeyRow) error {
+	entry.TenantID = tenantID
+	return apiKeyStoreForTenant(tenantID).UpdateByID(entry)
+}
+
+func DeleteAPIKeyForTenant(tenantID, key string) error {
+	return apiKeyStoreForTenant(tenantID).Delete(key)
+}
+
+func DeleteAPIKeyByIDForTenant(tenantID, id string) error {
+	return apiKeyStoreForTenant(tenantID).DeleteByID(id)
+}
+
+func ReplaceAllAPIKeysForTenant(tenantID string, entries []APIKeyRow) error {
+	return apiKeyStoreForTenant(tenantID).ReplaceAll(entries)
+}
+
 func toPermissionProfileSnapshots(profiles []APIKeyPermissionProfileRow) []sqlapikey.PermissionProfileSnapshot {
 	if len(profiles) == 0 {
 		return nil
@@ -207,4 +257,18 @@ func toPermissionProfileSnapshots(profiles []APIKeyPermissionProfileRow) []sqlap
 		})
 	}
 	return snapshots
+}
+
+// ResolveAPIKeyTenant returns the trusted tenant scope attached to an API key.
+// Legacy rows are assigned to the built-in system tenant by the PostgreSQL migration.
+func ResolveAPIKeyTenant(key string) string {
+	db := getReadDB()
+	if db == nil {
+		return ""
+	}
+	var tenantID string
+	if err := db.QueryRow(`SELECT tenant_id FROM api_keys WHERE key = ?`, strings.TrimSpace(key)).Scan(&tenantID); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(tenantID)
 }

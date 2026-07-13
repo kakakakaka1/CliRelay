@@ -10,7 +10,7 @@ import (
 )
 
 func (h *Handler) GetCcSwitchImportConfigs(c *gin.Context) {
-	items := usage.ListCcSwitchImportConfigs()
+	items := usage.ListCcSwitchImportConfigsForTenant(effectiveTenantID(c))
 	if items == nil {
 		items = []usage.CcSwitchImportConfigRow{}
 	}
@@ -78,7 +78,7 @@ func (h *Handler) PutCcSwitchImportConfigs(c *gin.Context) {
 		}
 	}
 
-	if err := usage.ReplaceAllCcSwitchImportConfigs(items); err != nil {
+	if err := usage.ReplaceAllCcSwitchImportConfigsForTenant(effectiveTenantID(c), items); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

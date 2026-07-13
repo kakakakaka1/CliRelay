@@ -139,7 +139,8 @@ func (h *Handler) GetPublicCcSwitchImportConfigs(c *gin.Context) {
 		return
 	}
 
-	row := apikeysettings.NewService(nil).GetRow(apiKey)
+	tenantID := usage.ResolveAPIKeyTenant(apiKey)
+	row := apikeysettings.NewService(nil, apikeysettings.WithTenantID(tenantID)).GetRow(apiKey)
 	maskedAPIKey := maskKey(apiKey)
 	if row == nil {
 		items := []usage.CcSwitchImportConfigRow{}
@@ -153,7 +154,7 @@ func (h *Handler) GetPublicCcSwitchImportConfigs(c *gin.Context) {
 		return
 	}
 
-	profiles := usage.ListAPIKeyPermissionProfiles()
+	profiles := usage.ListAPIKeyPermissionProfilesForTenant(tenantID)
 	effective := usage.EffectiveAPIKeyRowWithProfiles(*row, profiles)
 	if effective.Disabled {
 		items := []usage.CcSwitchImportConfigRow{}
@@ -167,7 +168,7 @@ func (h *Handler) GetPublicCcSwitchImportConfigs(c *gin.Context) {
 		return
 	}
 
-	configs := usage.ListCcSwitchImportConfigs()
+	configs := usage.ListCcSwitchImportConfigsForTenant(tenantID)
 	if configs == nil {
 		configs = []usage.CcSwitchImportConfigRow{}
 	}

@@ -27,6 +27,20 @@ func (_u *CcSwitchImportConfigUpdate) Where(ps ...predicate.CcSwitchImportConfig
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *CcSwitchImportConfigUpdate) SetTenantID(v string) *CcSwitchImportConfigUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *CcSwitchImportConfigUpdate) SetNillableTenantID(v *string) *CcSwitchImportConfigUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetClientType sets the "client_type" field.
 func (_u *CcSwitchImportConfigUpdate) SetClientType(v string) *CcSwitchImportConfigUpdate {
 	_u.mutation.SetClientType(v)
@@ -243,6 +257,9 @@ func (_u *CcSwitchImportConfigUpdate) sqlSave(ctx context.Context) (_node int, e
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(ccswitchimportconfig.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.ClientType(); ok {
 		_spec.SetField(ccswitchimportconfig.FieldClientType, field.TypeString, value)
 	}
@@ -300,6 +317,20 @@ type CcSwitchImportConfigUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *CcSwitchImportConfigMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *CcSwitchImportConfigUpdateOne) SetTenantID(v string) *CcSwitchImportConfigUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *CcSwitchImportConfigUpdateOne) SetNillableTenantID(v *string) *CcSwitchImportConfigUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetClientType sets the "client_type" field.
@@ -547,6 +578,9 @@ func (_u *CcSwitchImportConfigUpdateOne) sqlSave(ctx context.Context) (_node *Cc
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(ccswitchimportconfig.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.ClientType(); ok {
 		_spec.SetField(ccswitchimportconfig.FieldClientType, field.TypeString, value)

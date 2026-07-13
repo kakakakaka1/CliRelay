@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
@@ -256,5 +257,44 @@ func TestProbeUsageLogEgressIPFallsBackToPlainIPProbe(t *testing.T) {
 	}
 	if got != "203.0.113.50" {
 		t.Fatalf("probeUsageLogEgressIP = %q, want %q", got, "203.0.113.50")
+	}
+}
+
+func TestGetUsageLogEgressCannotReadAnotherTenantLog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	dbPath := filepath.Join(t.TempDir(), "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{StoreContent: true}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(usage.CloseDB)
+
+	const tenantA = "00000000-0000-0000-0000-00000000000a"
+	const tenantB = "00000000-0000-0000-0000-00000000000b"
+	const apiKeyA = "sk-tenant-a-egress"
+	if err := usage.UpsertAPIKeyForTenant(tenantA, usage.APIKeyRow{Key: apiKeyA}); err != nil {
+		t.Fatalf("UpsertAPIKeyForTenant: %v", err)
+	}
+	usage.InsertLogWithDetails(
+		apiKeyA, "Tenant A", "gpt-test", "codex", "Codex", "auth-a",
+		false, time.Now().UTC(), 100, 10,
+		usage.TokenStats{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		`{"messages":[]}`, `{"choices":[]}`, `{"egress":{"route_kind":"direct"}}`,
+	)
+	rows, err := usage.QueryLogs(usage.LogQueryParams{TenantID: tenantA, Page: 1, Size: 10, Days: 1})
+	if err != nil || len(rows.Items) != 1 {
+		t.Fatalf("QueryLogsForTenant: items=%d err=%v", len(rows.Items), err)
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Set(managementPrincipalKey, identity.Principal{EffectiveTenant: identity.Tenant{ID: tenantB}})
+	c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(rows.Items[0].ID, 10)}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/usage/logs/1/egress", nil)
+
+	(&Handler{cfg: &config.Config{}}).GetUsageLogEgress(c)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }

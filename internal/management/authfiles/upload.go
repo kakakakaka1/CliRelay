@@ -15,6 +15,7 @@ var ErrAuthManagerUnavailable = errors.New("core auth manager unavailable")
 
 type UploadService struct {
 	AuthDir    string
+	TenantID   string
 	Manager    *coreauth.Manager
 	Repository Repository
 	Now        time.Time
@@ -72,14 +73,36 @@ func (s UploadService) upload(ctx context.Context, name string, data []byte, wri
 	if strings.TrimSpace(name) == "" {
 		return UploadResult{}, fmt.Errorf("invalid name")
 	}
-	dst := FilePath(s.AuthDir, name)
-	if errWrite := os.WriteFile(dst, data, 0o600); errWrite != nil {
+	tenantDir := TenantAuthDir(s.AuthDir, s.TenantID)
+	if errMkdir := os.MkdirAll(tenantDir, 0o700); errMkdir != nil {
+		return UploadResult{}, fmt.Errorf("failed to prepare tenant auth directory: %w", errMkdir)
+	}
+	dst := FilePath(tenantDir, name)
+	tmp, errCreate := os.CreateTemp(tenantDir, ".auth-upload-*")
+	if errCreate != nil {
+		return UploadResult{}, fmt.Errorf("%s: %w", writeMessage, errCreate)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if errChmod := tmp.Chmod(0o600); errChmod != nil {
+		_ = tmp.Close()
+		return UploadResult{}, fmt.Errorf("%s: %w", writeMessage, errChmod)
+	}
+	if _, errWrite := tmp.Write(data); errWrite != nil {
+		_ = tmp.Close()
+		return UploadResult{}, fmt.Errorf("%s: %w", writeMessage, errWrite)
+	}
+	if errClose := tmp.Close(); errClose != nil {
+		return UploadResult{}, fmt.Errorf("%s: %w", writeMessage, errClose)
+	}
+	if errWrite := os.Rename(tmpPath, dst); errWrite != nil {
 		return UploadResult{}, fmt.Errorf("%s: %w", writeMessage, errWrite)
 	}
 	if errRegister := (Registrar{
-		Manager: s.Manager,
-		AuthDir: s.AuthDir,
-		Now:     s.Now,
+		Manager:  s.Manager,
+		AuthDir:  s.AuthDir,
+		TenantID: s.TenantID,
+		Now:      s.Now,
 	}).RegisterFile(ctx, dst, data); errRegister != nil {
 		return UploadResult{}, errRegister
 	}

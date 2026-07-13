@@ -13,6 +13,8 @@ const (
 	Label = "request_log"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldTenantID holds the string denoting the tenant_id field in the database.
+	FieldTenantID = "tenant_id"
 	// FieldTimestamp holds the string denoting the timestamp field in the database.
 	FieldTimestamp = "timestamp"
 	// FieldAPIKey holds the string denoting the api_key field in the database.
@@ -66,6 +68,7 @@ const (
 // Columns holds all SQL columns for requestlog fields.
 var Columns = []string{
 	FieldID,
+	FieldTenantID,
 	FieldTimestamp,
 	FieldAPIKey,
 	FieldAPIKeyID,
@@ -102,6 +105,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultTenantID holds the default value on creation for the "tenant_id" field.
+	DefaultTenantID string
 	// DefaultTimestamp holds the default value on creation for the "timestamp" field.
 	DefaultTimestamp func() time.Time
 	// DefaultAPIKey holds the default value on creation for the "api_key" field.
@@ -156,6 +161,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByTenantID orders the results by the tenant_id field.
+func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
 }
 
 // ByTimestamp orders the results by the timestamp field.

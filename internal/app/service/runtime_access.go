@@ -4,10 +4,12 @@ import (
 	"context"
 
 	configaccess "github.com/router-for-me/CLIProxyAPI/v6/internal/access/config_access"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	modelconfigsettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/modelconfig"
 	internalusage "github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/watcher"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 )
 
@@ -17,6 +19,23 @@ type OAuthProviderModelConfigRow struct {
 	Description string
 	Source      string
 	Enabled     bool
+}
+
+func ApplyTenantRuntimeConfigs(base *config.Config, manager *coreauth.Manager) {
+	if base == nil || manager == nil || identity.Default() == nil {
+		return
+	}
+	tenants, err := identity.Default().ListTenants(context.Background())
+	if err != nil {
+		return
+	}
+	for _, tenant := range tenants {
+		if tenant.ID == "" || tenant.ID == identity.SystemTenantID {
+			continue
+		}
+		tenantCfg := internalusage.BuildTenantRuntimeConfig(base, tenant.ID)
+		manager.SetConfigForTenant(tenant.ID, &tenantCfg)
+	}
 }
 
 func ListOAuthProviderModelConfigRows() []OAuthProviderModelConfigRow {

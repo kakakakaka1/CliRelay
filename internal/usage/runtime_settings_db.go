@@ -42,6 +42,10 @@ func runtimeSettingsStore() sqlsettings.RuntimeSettingsStore {
 	return sqlsettings.NewRuntimeSettingsStore(getDB())
 }
 
+func runtimeSettingsStoreForTenant(tenantID string) sqlsettings.RuntimeSettingsStore {
+	return sqlsettings.NewTenantRuntimeSettingsStore(getDB(), tenantID)
+}
+
 func UpsertRuntimeSetting(key string, value any) error {
 	return runtimeSettingsStore().Upsert(key, value)
 }
@@ -94,4 +98,59 @@ func MigrateRuntimeSettingsFromConfig(cfg *config.Config, configFilePath string)
 		cleanRuntimeSettingsFromYAML(configFilePath)
 	}
 	return migrated
+}
+
+func UpsertRuntimeSettingForTenant(tenantID, key string, value any) error {
+	return runtimeSettingsStoreForTenant(tenantID).Upsert(key, value)
+}
+func GetRuntimeSettingPayloadForTenant(tenantID, key string) (json.RawMessage, bool) {
+	if !ConfigStoreAvailable() {
+		return nil, false
+	}
+	return runtimeSettingsStoreForTenant(tenantID).Payload(key)
+}
+func ApplyStoredRuntimeSettingsForTenant(tenantID string, cfg *config.Config) bool {
+	if cfg == nil || !ConfigStoreAvailable() {
+		return false
+	}
+	return runtimeSettingsStoreForTenant(tenantID).ApplyToConfig(cfg)
+}
+
+// BuildTenantRuntimeConfig returns an isolated runtime snapshot for one tenant.
+// Tenant-scoped settings must start empty so missing rows never inherit system credentials.
+func BuildTenantRuntimeConfig(base *config.Config, tenantID string) config.Config {
+	var tenantCfg config.Config
+	if base != nil {
+		tenantCfg = *base
+	}
+	tenantID = normalizeTenantID(tenantID)
+	if tenantID == systemTenantID {
+		return tenantCfg
+	}
+
+	tenantCfg.GeminiKey = nil
+	tenantCfg.CodexKey = nil
+	tenantCfg.ClaudeKey = nil
+	tenantCfg.BedrockKey = nil
+	tenantCfg.OpenCodeGoKey = nil
+	tenantCfg.ClineKey = nil
+	tenantCfg.OllamaCloudKey = nil
+	tenantCfg.OpenAICompatibility = nil
+	tenantCfg.VertexCompatAPIKey = nil
+	tenantCfg.ClaudeHeaderDefaults = config.ClaudeHeaderDefaults{}
+	tenantCfg.KimiHeaderDefaults = config.KimiHeaderDefaults{}
+	tenantCfg.IdentityFingerprint = config.IdentityFingerprintConfig{}
+	tenantCfg.CodexOAuthAdmission = config.CodexOAuthAdmissionConfig{}
+	tenantCfg.OAuthExcludedModels = nil
+	tenantCfg.OAuthModelAlias = nil
+	tenantCfg.Payload = config.PayloadConfig{}
+
+	if routing := GetRoutingConfigForTenant(tenantID); routing != nil {
+		tenantCfg.Routing = *routing
+	} else {
+		tenantCfg.Routing = config.RoutingConfig{IncludeDefaultGroup: true}
+	}
+	tenantCfg.ProxyPool = ListProxyPoolForTenant(tenantID)
+	ApplyStoredRuntimeSettingsForTenant(tenantID, &tenantCfg)
+	return tenantCfg
 }

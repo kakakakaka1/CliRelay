@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -51,12 +52,13 @@ func (s *Server) setupRoutes() {
 		group.POST("/models/*action", geminiHandlers.GeminiHandler)
 		group.GET("/models/*action", geminiHandlers.GeminiGetHandler)
 	}
-	resolveRoute := func(rawGroup string) (*internalrouting.PathRouteContext, bool) {
-		return resolvePathRouteContext(s.cfg, s.handlers.AuthManager, rawGroup)
+	resolveRoute := func(tenantID, rawGroup string) (*internalrouting.PathRouteContext, bool) {
+		return resolvePathRouteContext(s.cfg, s.handlers.AuthManager, tenantID, rawGroup)
 	}
 
 	v1 := s.engine.Group("/v1")
 	v1.Use(AuthMiddleware(s.accessManager))
+	v1.Use(rewrittenGroupRoutingMiddleware(resolveRoute))
 	v1.Use(channelGroupAuthorizationMiddleware())
 	v1.Use(middleware.QuotaMiddleware())
 	v1.Use(s.modelRestrictionMiddleware())
@@ -65,8 +67,8 @@ func (s *Server) setupRoutes() {
 	registerV1Routes(v1)
 
 	groupedV1 := s.engine.Group("/:group/v1")
-	groupedV1.Use(groupRoutingMiddleware(resolveRoute))
 	groupedV1.Use(AuthMiddleware(s.accessManager))
+	groupedV1.Use(groupRoutingMiddleware(resolveRoute))
 	groupedV1.Use(channelGroupAuthorizationMiddleware())
 	groupedV1.Use(middleware.QuotaMiddleware())
 	groupedV1.Use(s.modelRestrictionMiddleware())
@@ -76,14 +78,15 @@ func (s *Server) setupRoutes() {
 
 	v1beta := s.engine.Group("/v1beta")
 	v1beta.Use(AuthMiddleware(s.accessManager))
+	v1beta.Use(rewrittenGroupRoutingMiddleware(resolveRoute))
 	v1beta.Use(channelGroupAuthorizationMiddleware())
 	v1beta.Use(middleware.QuotaMiddleware())
 	v1beta.Use(s.modelRestrictionMiddleware())
 	registerV1BetaRoutes(v1beta)
 
 	groupedV1Beta := s.engine.Group("/:group/v1beta")
-	groupedV1Beta.Use(groupRoutingMiddleware(resolveRoute))
 	groupedV1Beta.Use(AuthMiddleware(s.accessManager))
+	groupedV1Beta.Use(groupRoutingMiddleware(resolveRoute))
 	groupedV1Beta.Use(channelGroupAuthorizationMiddleware())
 	groupedV1Beta.Use(middleware.QuotaMiddleware())
 	groupedV1Beta.Use(s.modelRestrictionMiddleware())
@@ -99,13 +102,9 @@ func (s *Server) setupRoutes() {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
-		route, ok := resolveRoute(rawGroupPath)
-		if !ok || route == nil {
-			abortChannelGroupRouteNotFound(c)
-			return
-		}
-		attachPathRouteContext(c, route)
+		c.Set(rewrittenPathRouteGroupKey, rawGroupPath)
 		c.Set("cliproxy.grouped_path_rewrite", true)
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), rewrittenPathRouteContextKey{}, rawGroupPath))
 		c.Request.URL.Path = apiPath
 		if c.Request.URL.RawQuery != "" {
 			c.Request.RequestURI = apiPath + "?" + c.Request.URL.RawQuery

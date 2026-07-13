@@ -262,12 +262,12 @@ func (_q *ModelOwnerPresetQuery) Clone() *ModelOwnerPresetQuery {
 // Example:
 //
 //	var v []struct {
-//		Value string `json:"value,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.ModelOwnerPreset.Query().
-//		GroupBy(modelownerpreset.FieldValue).
+//		GroupBy(modelownerpreset.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *ModelOwnerPresetQuery) GroupBy(field string, fields ...string) *ModelOwnerPresetGroupBy {
@@ -285,11 +285,11 @@ func (_q *ModelOwnerPresetQuery) GroupBy(field string, fields ...string) *ModelO
 // Example:
 //
 //	var v []struct {
-//		Value string `json:"value,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.ModelOwnerPreset.Query().
-//		Select(modelownerpreset.FieldValue).
+//		Select(modelownerpreset.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *ModelOwnerPresetQuery) Select(fields ...string) *ModelOwnerPresetSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

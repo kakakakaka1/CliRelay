@@ -9,7 +9,9 @@ import (
 	"github.com/gin-gonic/gin"
 	claudeauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/claude"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	managementapitools "github.com/router-for-me/CLIProxyAPI/v6/internal/management/apitools"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
@@ -55,6 +57,10 @@ func (h *Handler) APITools() *APIToolsHandler {
 }
 
 func (h *APIToolsHandler) service() *managementapitools.Service {
+	return h.serviceForTenant(identity.SystemTenantID)
+}
+
+func (h *APIToolsHandler) serviceForTenant(tenantID string) *managementapitools.Service {
 	deps := managementapitools.Dependencies{
 		DefaultAPICallTimeout:             defaultAPICallTimeout,
 		ManagementAPICallResponseLimit:    managementAPICallResponseLimit,
@@ -68,9 +74,10 @@ func (h *APIToolsHandler) service() *managementapitools.Service {
 		KimiOAuthTokenURL: kimiOAuthTokenURL,
 	}
 	if h == nil {
-		return managementapitools.New(nil, nil, deps)
+		return managementapitools.NewForTenant(tenantID, nil, nil, deps)
 	}
-	return managementapitools.New(h.cfg, h.authManager, deps)
+	cfg := usage.BuildTenantRuntimeConfig(h.cfg, tenantID)
+	return managementapitools.NewForTenant(tenantID, &cfg, h.authManager, deps)
 }
 
 // authByIndex remains on the root handler as a narrow compatibility bridge for
@@ -82,6 +89,22 @@ func (h *Handler) authByIndex(authIndex string) *coreauth.Auth {
 	return h.APITools().authByIndex(authIndex)
 }
 
+func (h *Handler) authByIndexForTenant(tenantID, authIndex string) *coreauth.Auth {
+	if h == nil || h.authManager == nil {
+		return nil
+	}
+	authIndex = strings.TrimSpace(authIndex)
+	if authIndex == "" {
+		return nil
+	}
+	for _, auth := range h.authManager.ListForTenant(tenantID) {
+		if auth != nil && auth.Index == authIndex {
+			return auth
+		}
+	}
+	return nil
+}
+
 // APICall makes a generic HTTP request on behalf of the management API caller.
 func (h *APIToolsHandler) APICall(c *gin.Context) {
 	var body apiCallRequest
@@ -89,7 +112,7 @@ func (h *APIToolsHandler) APICall(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	status, payload := h.service().APICall(c.Request.Context(), body)
+	status, payload := h.serviceForTenant(effectiveTenantID(c)).APICall(c.Request.Context(), body)
 	c.JSON(status, payload)
 }
 

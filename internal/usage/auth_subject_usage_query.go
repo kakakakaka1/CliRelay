@@ -20,6 +20,11 @@ func QueryDailyCallsByAuthSubject(matcher AuthSubjectMatcher, days int) ([]Daily
 }
 
 func QueryDailyUsageByAuthSubject(matcher AuthSubjectMatcher, days int) ([]DailyUsagePoint, error) {
+	return QueryDailyUsageByAuthSubjectForTenant(systemTenantID, matcher, days)
+}
+
+func QueryDailyUsageByAuthSubjectForTenant(tenantID string, matcher AuthSubjectMatcher, days int) ([]DailyUsagePoint, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getReadDB()
 	if db == nil {
 		return []DailyUsagePoint{}, nil
@@ -33,14 +38,14 @@ func QueryDailyUsageByAuthSubject(matcher AuthSubjectMatcher, days int) ([]Daily
 		return []DailyUsagePoint{}, nil
 	}
 
-	args := make([]interface{}, 0, len(matchArgs)+1)
-	args = append(args, CutoffStartUTC(days).Format(time.RFC3339))
+	args := make([]interface{}, 0, len(matchArgs)+2)
+	args = append(args, tenantID, CutoffStartUTC(days).Format(time.RFC3339))
 	args = append(args, matchArgs...)
 
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT timestamp, cost
 		FROM request_logs
-		WHERE timestamp >= ? AND (%s)
+		WHERE tenant_id = ? AND timestamp >= ? AND (%s)
 		ORDER BY timestamp ASC
 	`, matchSQL), args...)
 	if err != nil {
@@ -94,6 +99,11 @@ func QueryHourlyCallsByAuthSubject(matcher AuthSubjectMatcher, hours int) ([]Hou
 }
 
 func QueryHourlyUsageByAuthSubject(matcher AuthSubjectMatcher, hours int) ([]HourlyUsagePoint, error) {
+	return QueryHourlyUsageByAuthSubjectForTenant(systemTenantID, matcher, hours)
+}
+
+func QueryHourlyUsageByAuthSubjectForTenant(tenantID string, matcher AuthSubjectMatcher, hours int) ([]HourlyUsagePoint, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getReadDB()
 	if db == nil {
 		return []HourlyUsagePoint{}, nil
@@ -121,14 +131,14 @@ func QueryHourlyUsageByAuthSubject(matcher AuthSubjectMatcher, hours int) ([]Hou
 		byKey[key] = &buckets[len(buckets)-1]
 	}
 
-	args := make([]interface{}, 0, len(matchArgs)+1)
-	args = append(args, start.UTC().Format(time.RFC3339))
+	args := make([]interface{}, 0, len(matchArgs)+2)
+	args = append(args, tenantID, start.UTC().Format(time.RFC3339))
 	args = append(args, matchArgs...)
 
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT timestamp, cost
 		FROM request_logs
-		WHERE timestamp >= ? AND (%s)
+		WHERE tenant_id = ? AND timestamp >= ? AND (%s)
 	`, matchSQL), args...)
 	if err != nil {
 		return nil, fmt.Errorf("usage: hourly usage by auth subject query: %w", err)
@@ -154,10 +164,19 @@ func QueryHourlyUsageByAuthSubject(matcher AuthSubjectMatcher, hours int) ([]Hou
 }
 
 func QueryRequestCountByAuthSubjectSince(matcher AuthSubjectMatcher, since time.Time) (int64, error) {
-	return queryCountByAuthSubjectSince(matcher, since, "COUNT(*)")
+	return QueryRequestCountByAuthSubjectSinceForTenant(systemTenantID, matcher, since)
+}
+
+func QueryRequestCountByAuthSubjectSinceForTenant(tenantID string, matcher AuthSubjectMatcher, since time.Time) (int64, error) {
+	return queryCountByAuthSubjectSince(tenantID, matcher, since, "COUNT(*)")
 }
 
 func QueryCostByAuthSubjectSince(matcher AuthSubjectMatcher, since time.Time) (float64, error) {
+	return QueryCostByAuthSubjectSinceForTenant(systemTenantID, matcher, since)
+}
+
+func QueryCostByAuthSubjectSinceForTenant(tenantID string, matcher AuthSubjectMatcher, since time.Time) (float64, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getReadDB()
 	if db == nil {
 		return 0, nil
@@ -168,15 +187,15 @@ func QueryCostByAuthSubjectSince(matcher AuthSubjectMatcher, since time.Time) (f
 		return 0, nil
 	}
 
-	args := make([]interface{}, 0, len(matchArgs)+1)
-	args = append(args, since.UTC().Format(time.RFC3339))
+	args := make([]interface{}, 0, len(matchArgs)+2)
+	args = append(args, tenantID, since.UTC().Format(time.RFC3339))
 	args = append(args, matchArgs...)
 
 	var total float64
 	err := db.QueryRow(fmt.Sprintf(`
 		SELECT COALESCE(SUM(cost), 0)
 		FROM request_logs
-		WHERE timestamp >= ? AND (%s)
+		WHERE tenant_id = ? AND timestamp >= ? AND (%s)
 	`, matchSQL), args...).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("usage: request cost by auth subject query: %w", err)
@@ -184,7 +203,7 @@ func QueryCostByAuthSubjectSince(matcher AuthSubjectMatcher, since time.Time) (f
 	return total, nil
 }
 
-func queryCountByAuthSubjectSince(matcher AuthSubjectMatcher, since time.Time, aggregate string) (int64, error) {
+func queryCountByAuthSubjectSince(tenantID string, matcher AuthSubjectMatcher, since time.Time, aggregate string) (int64, error) {
 	db := getReadDB()
 	if db == nil {
 		return 0, nil
@@ -195,15 +214,15 @@ func queryCountByAuthSubjectSince(matcher AuthSubjectMatcher, since time.Time, a
 		return 0, nil
 	}
 
-	args := make([]interface{}, 0, len(matchArgs)+1)
-	args = append(args, since.UTC().Format(time.RFC3339))
+	args := make([]interface{}, 0, len(matchArgs)+2)
+	args = append(args, normalizeTenantID(tenantID), since.UTC().Format(time.RFC3339))
 	args = append(args, matchArgs...)
 
 	var total int64
 	err := db.QueryRow(fmt.Sprintf(`
 		SELECT %s
 		FROM request_logs
-		WHERE timestamp >= ? AND (%s)
+		WHERE tenant_id = ? AND timestamp >= ? AND (%s)
 	`, aggregate, matchSQL), args...).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("usage: request count by auth subject query: %w", err)

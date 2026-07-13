@@ -262,12 +262,12 @@ func (_q *ModelOpenrouterSyncStateQuery) Clone() *ModelOpenrouterSyncStateQuery 
 // Example:
 //
 //	var v []struct {
-//		Enabled int `json:"enabled,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.ModelOpenrouterSyncState.Query().
-//		GroupBy(modelopenroutersyncstate.FieldEnabled).
+//		GroupBy(modelopenroutersyncstate.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *ModelOpenrouterSyncStateQuery) GroupBy(field string, fields ...string) *ModelOpenrouterSyncStateGroupBy {
@@ -285,11 +285,11 @@ func (_q *ModelOpenrouterSyncStateQuery) GroupBy(field string, fields ...string)
 // Example:
 //
 //	var v []struct {
-//		Enabled int `json:"enabled,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.ModelOpenrouterSyncState.Query().
-//		Select(modelopenroutersyncstate.FieldEnabled).
+//		Select(modelopenroutersyncstate.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *ModelOpenrouterSyncStateQuery) Select(fields ...string) *ModelOpenrouterSyncStateSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

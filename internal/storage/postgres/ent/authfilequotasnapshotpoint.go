@@ -17,6 +17,8 @@ type AuthFileQuotaSnapshotPoint struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int64 `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// RecordedAt holds the value of the "recorded_at" field.
 	RecordedAt time.Time `json:"recorded_at,omitempty"`
 	// AuthIndex holds the value of the "auth_index" field.
@@ -47,7 +49,7 @@ func (*AuthFileQuotaSnapshotPoint) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case authfilequotasnapshotpoint.FieldID, authfilequotasnapshotpoint.FieldWindowSeconds:
 			values[i] = new(sql.NullInt64)
-		case authfilequotasnapshotpoint.FieldAuthIndex, authfilequotasnapshotpoint.FieldAuthSubjectID, authfilequotasnapshotpoint.FieldProvider, authfilequotasnapshotpoint.FieldQuotaKey, authfilequotasnapshotpoint.FieldQuotaLabel:
+		case authfilequotasnapshotpoint.FieldTenantID, authfilequotasnapshotpoint.FieldAuthIndex, authfilequotasnapshotpoint.FieldAuthSubjectID, authfilequotasnapshotpoint.FieldProvider, authfilequotasnapshotpoint.FieldQuotaKey, authfilequotasnapshotpoint.FieldQuotaLabel:
 			values[i] = new(sql.NullString)
 		case authfilequotasnapshotpoint.FieldRecordedAt, authfilequotasnapshotpoint.FieldResetAt:
 			values[i] = new(sql.NullTime)
@@ -72,6 +74,12 @@ func (_m *AuthFileQuotaSnapshotPoint) assignValues(columns []string, values []an
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int64(value.Int64)
+		case authfilequotasnapshotpoint.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case authfilequotasnapshotpoint.FieldRecordedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field recorded_at", values[i])
@@ -164,6 +172,9 @@ func (_m *AuthFileQuotaSnapshotPoint) String() string {
 	var builder strings.Builder
 	builder.WriteString("AuthFileQuotaSnapshotPoint(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("recorded_at=")
 	builder.WriteString(_m.RecordedAt.Format(time.ANSIC))
 	builder.WriteString(", ")

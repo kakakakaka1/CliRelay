@@ -19,6 +19,20 @@ type RuntimeSettingCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *RuntimeSettingCreate) SetTenantID(v string) *RuntimeSettingCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *RuntimeSettingCreate) SetNillableTenantID(v *string) *RuntimeSettingCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetSettingKey sets the "setting_key" field.
 func (_c *RuntimeSettingCreate) SetSettingKey(v string) *RuntimeSettingCreate {
 	_c.mutation.SetSettingKey(v)
@@ -88,6 +102,10 @@ func (_c *RuntimeSettingCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *RuntimeSettingCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := runtimesetting.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.Payload(); !ok {
 		v := runtimesetting.DefaultPayload
 		_c.mutation.SetPayload(v)
@@ -100,6 +118,9 @@ func (_c *RuntimeSettingCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *RuntimeSettingCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "RuntimeSetting.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.SettingKey(); !ok {
 		return &ValidationError{Name: "setting_key", err: errors.New(`ent: missing required field "RuntimeSetting.setting_key"`)}
 	}
@@ -135,6 +156,10 @@ func (_c *RuntimeSettingCreate) createSpec() (*RuntimeSetting, *sqlgraph.CreateS
 		_node = &RuntimeSetting{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(runtimesetting.Table, sqlgraph.NewFieldSpec(runtimesetting.FieldID, field.TypeInt))
 	)
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(runtimesetting.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
+	}
 	if value, ok := _c.mutation.SettingKey(); ok {
 		_spec.SetField(runtimesetting.FieldSettingKey, field.TypeString, value)
 		_node.SettingKey = value

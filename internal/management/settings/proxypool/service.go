@@ -33,3 +33,23 @@ func Update(id string, entry config.ProxyPoolEntry) error {
 	}
 	return err
 }
+
+func StoreAvailableForTenant(tenantID string) bool {
+	return usage.ProxyPoolStoreAvailableForTenant(tenantID)
+}
+func ListForTenant(tenantID string) []config.ProxyPoolEntry {
+	return usage.ListProxyPoolForTenant(tenantID)
+}
+func GetForTenant(tenantID, id string) *config.ProxyPoolEntry {
+	return usage.GetProxyPoolEntryForTenant(tenantID, id)
+}
+func ReplaceForTenant(tenantID string, entries []config.ProxyPoolEntry) error {
+	return usage.ReplaceProxyPoolForTenant(tenantID, entries)
+}
+func UpdateForTenant(tenantID, id string, entry config.ProxyPoolEntry) error {
+	err := usage.UpdateProxyPoolEntryForTenant(tenantID, id, entry)
+	if errors.Is(err, sqlproxypool.ErrEntryNotFound) {
+		return ErrItemNotFound
+	}
+	return err
+}

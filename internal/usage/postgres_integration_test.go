@@ -486,7 +486,7 @@ func assertPostgresIdentityAndQuotaCRUD(t *testing.T) {
 		AccountKey:    "acct-postgres-test",
 		AuthSubjectID: "subject-postgres-test",
 		Headers: map[string][]string{
-			"User-Agent": {"codex desktop/1.2.3"},
+			"User-Agent": {"codex_cli_rs/1.2.3 (Mac OS; arm64)"},
 			"Originator": {"codex_cli_rs"},
 		},
 		ObservedAt: observedAt,

@@ -19,6 +19,20 @@ type CcSwitchImportConfigCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *CcSwitchImportConfigCreate) SetTenantID(v string) *CcSwitchImportConfigCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *CcSwitchImportConfigCreate) SetNillableTenantID(v *string) *CcSwitchImportConfigCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetClientType sets the "client_type" field.
 func (_c *CcSwitchImportConfigCreate) SetClientType(v string) *CcSwitchImportConfigCreate {
 	_c.mutation.SetClientType(v)
@@ -220,6 +234,10 @@ func (_c *CcSwitchImportConfigCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *CcSwitchImportConfigCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := ccswitchimportconfig.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.ProviderName(); !ok {
 		v := ccswitchimportconfig.DefaultProviderName
 		_c.mutation.SetProviderName(v)
@@ -268,6 +286,9 @@ func (_c *CcSwitchImportConfigCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *CcSwitchImportConfigCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "CcSwitchImportConfig.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.ClientType(); !ok {
 		return &ValidationError{Name: "client_type", err: errors.New(`ent: missing required field "CcSwitchImportConfig.client_type"`)}
 	}
@@ -338,6 +359,10 @@ func (_c *CcSwitchImportConfigCreate) createSpec() (*CcSwitchImportConfig, *sqlg
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = id
+	}
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(ccswitchimportconfig.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
 	}
 	if value, ok := _c.mutation.ClientType(); ok {
 		_spec.SetField(ccswitchimportconfig.FieldClientType, field.TypeString, value)

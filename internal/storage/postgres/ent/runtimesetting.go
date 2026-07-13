@@ -16,6 +16,8 @@ type RuntimeSetting struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// SettingKey holds the value of the "setting_key" field.
 	SettingKey string `json:"setting_key,omitempty"`
 	// Payload holds the value of the "payload" field.
@@ -32,7 +34,7 @@ func (*RuntimeSetting) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case runtimesetting.FieldID:
 			values[i] = new(sql.NullInt64)
-		case runtimesetting.FieldSettingKey, runtimesetting.FieldPayload, runtimesetting.FieldUpdatedAt:
+		case runtimesetting.FieldTenantID, runtimesetting.FieldSettingKey, runtimesetting.FieldPayload, runtimesetting.FieldUpdatedAt:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -55,6 +57,12 @@ func (_m *RuntimeSetting) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case runtimesetting.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case runtimesetting.FieldSettingKey:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field setting_key", values[i])
@@ -109,6 +117,9 @@ func (_m *RuntimeSetting) String() string {
 	var builder strings.Builder
 	builder.WriteString("RuntimeSetting(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("setting_key=")
 	builder.WriteString(_m.SettingKey)
 	builder.WriteString(", ")

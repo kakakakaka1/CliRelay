@@ -26,12 +26,12 @@ func (s *Service) ConfiguredAvailability(allowedChannelsRaw, allowedGroupsRaw st
 		if rows, keys, configuredModelKeys, ok := s.defaultMappedOwnerRows(); ok {
 			usesMappedOwners = true
 			ownerKeys = keys
-			ownerMappings = authGroupOwnerMappingMap()
+			ownerMappings = s.authGroupOwnerMappingMap()
 			allModels = withDefaultMappedOwnerRows(modelRegistry, allModels, rows, ownerKeys, configuredModelKeys, authByID, ownerMappings)
 		}
 	}
 
-	allConfigRows := modelconfigsettings.ListAllConfigs()
+	allConfigRows := modelconfigsettings.ListAllConfigsForTenant(s.tenantID)
 	configByID := make(map[string]usage.ModelConfigRow, len(allConfigRows))
 	for _, row := range allConfigRows {
 		configByID[strings.ToLower(strings.TrimSpace(row.ModelID))] = row
@@ -97,7 +97,7 @@ func (s *Service) Models(allowedChannelsRaw, allowedGroupsRaw string) map[string
 	modelRegistry := registry.GetGlobalRegistry()
 	allModels := s.effectiveModels(managementVisibleModels(modelRegistry), allowedChannelsRaw, allowedGroupsRaw)
 
-	pricingMap := usage.GetAllModelPricing()
+	pricingMap := usage.GetAllModelPricingForTenant(s.tenantID)
 	filteredModels := make([]map[string]any, len(allModels))
 	for i, model := range allModels {
 		filteredModel := map[string]any{
@@ -111,7 +111,7 @@ func (s *Service) Models(allowedChannelsRaw, allowedGroupsRaw string) map[string
 			filteredModel["owned_by"] = ownedBy
 		}
 		if modelID, ok := model["id"].(string); ok {
-			if row, exists := modelconfigsettings.GetConfig(modelID); exists {
+			if row, exists := modelconfigsettings.GetConfigForTenant(s.tenantID, modelID); exists {
 				attachModelConfigCapabilities(filteredModel, row)
 			}
 			if pricing, exists := pricingMap[modelID]; exists {
@@ -207,40 +207,32 @@ func (s *Service) filterModelsByScopes(models []map[string]any, allowedChannelsR
 	if s == nil || s.authManager == nil {
 		return models
 	}
+
+	// Always scope the global registry to models this tenant can actually serve.
+	// Without this, non-system tenants inherit every system-tenant client model
+	// whenever no channel/group restriction is present (the models page default).
+	var allowedChannels map[string]struct{}
 	if allowedChannelsRaw != "" && allowedChannelsRaw != "*" && !strings.EqualFold(allowedChannelsRaw, "all") {
-		allowed := make(map[string]struct{})
+		allowedChannels = make(map[string]struct{})
 		for _, part := range strings.Split(allowedChannelsRaw, ",") {
 			key := strings.ToLower(strings.TrimSpace(part))
 			if key == "" {
 				continue
 			}
-			allowed[key] = struct{}{}
+			allowedChannels[key] = struct{}{}
 		}
-		if len(allowed) == 0 {
-			return models
+		if len(allowedChannels) == 0 {
+			allowedChannels = nil
 		}
-		filtered := make([]map[string]any, 0, len(models))
-		for _, model := range models {
-			id, _ := model["id"].(string)
-			if id == "" {
-				continue
-			}
-			if s.authManager.CanServeModelWithScopes(id, allowed, allowedGroups, "") {
-				filtered = append(filtered, model)
-			}
-		}
-		return filtered
 	}
-	if len(allowedGroups) == 0 {
-		return models
-	}
+
 	filtered := make([]map[string]any, 0, len(models))
 	for _, model := range models {
 		id, _ := model["id"].(string)
 		if id == "" {
 			continue
 		}
-		if s.authManager.CanServeModelWithScopes(id, nil, allowedGroups, "") {
+		if s.authManager.CanServeModelWithScopesForTenant(s.tenantID, id, allowedChannels, allowedGroups, "") {
 			filtered = append(filtered, model)
 		}
 	}
@@ -290,7 +282,7 @@ func (s *Service) scopedModelConfigRows(allowedChannelsRaw, allowedGroupsRaw str
 	if len(ownerKeys) == 0 && len(explicitModels) == 0 {
 		return nil
 	}
-	rows := modelconfigsettings.ListAllConfigs()
+	rows := modelconfigsettings.ListAllConfigsForTenant(s.tenantID)
 	out := make([]usage.ModelConfigRow, 0, len(rows))
 	for _, row := range rows {
 		modelID := strings.TrimSpace(row.ModelID)
@@ -320,7 +312,7 @@ func (s *Service) defaultMappedOwnerRows() ([]usage.ModelConfigRow, map[string]b
 	if len(ownerKeys) == 0 {
 		return nil, nil, nil, false
 	}
-	rows := modelconfigsettings.ListAllConfigs()
+	rows := modelconfigsettings.ListAllConfigsForTenant(s.tenantID)
 	out := make([]usage.ModelConfigRow, 0, len(rows))
 	configuredModelKeys := make(map[string]bool, len(rows))
 	for _, row := range rows {
@@ -491,12 +483,12 @@ func mappedOwnerForSource(source registry.ModelClientSource, authByID map[string
 }
 
 func (s *Service) defaultMappedOwnerKeys() map[string]bool {
-	ownerMappings := authGroupOwnerMappingMap()
+	ownerMappings := s.authGroupOwnerMappingMap()
 	if len(ownerMappings) == 0 || s == nil || s.authManager == nil {
 		return nil
 	}
 	owners := make(map[string]bool)
-	for _, auth := range s.authManager.List() {
+	for _, auth := range s.authManager.ListForTenant(s.tenantID) {
 		if auth == nil || auth.Disabled || auth.Status == coreauth.StatusDisabled {
 			continue
 		}
@@ -519,7 +511,7 @@ func (s *Service) authByID() map[string]*coreauth.Auth {
 	if s == nil || s.authManager == nil {
 		return nil
 	}
-	auths := s.authManager.List()
+	auths := s.authManager.ListForTenant(s.tenantID)
 	if len(auths) == 0 {
 		return nil
 	}
@@ -634,8 +626,8 @@ func parseScopedChannelList(value string) []string {
 }
 
 func (s *Service) modelOwnerScope(channels []string, groups map[string]struct{}) (map[string]bool, map[string]struct{}) {
-	ownerMappings := authGroupOwnerMappingMap()
-	providerOwners := modelConfigOwnersBySource()
+	ownerMappings := s.authGroupOwnerMappingMap()
+	providerOwners := s.modelConfigOwnersBySource()
 	ownerKeys := make(map[string]bool)
 	explicitModels := make(map[string]struct{})
 	if s == nil {
@@ -643,7 +635,7 @@ func (s *Service) modelOwnerScope(channels []string, groups map[string]struct{})
 	}
 	auths := []*coreauth.Auth(nil)
 	if s.authManager != nil {
-		auths = s.authManager.List()
+		auths = s.authManager.ListForTenant(s.tenantID)
 	}
 	addOwnersForChannel := func(channel string) {
 		for _, owner := range ownersForChannel(channel, auths, ownerMappings, providerOwners) {
@@ -728,8 +720,8 @@ func authMatchesRoutingTags(auth *coreauth.Auth, tags []string) bool {
 	return false
 }
 
-func authGroupOwnerMappingMap() map[string]string {
-	rows := modelconfigsettings.ListAuthGroupOwnerMappings()
+func (s *Service) authGroupOwnerMappingMap() map[string]string {
+	rows := modelconfigsettings.ListAuthGroupOwnerMappingsForTenant(s.tenantID)
 	out := make(map[string]string, len(rows))
 	for _, row := range rows {
 		authGroup := normalizeAuthGroupKey(row.AuthGroup)
@@ -742,8 +734,8 @@ func authGroupOwnerMappingMap() map[string]string {
 	return out
 }
 
-func modelConfigOwnersBySource() map[string][]string {
-	rows := modelconfigsettings.ListAllConfigs()
+func (s *Service) modelConfigOwnersBySource() map[string][]string {
+	rows := modelconfigsettings.ListAllConfigsForTenant(s.tenantID)
 	ownersBySource := make(map[string]map[string]struct{})
 	for _, row := range rows {
 		if !row.Enabled {

@@ -75,6 +75,10 @@ func BuildAPIKeyClients(cfg *config.Config) (int, int, int, int, int, int, int, 
 	return internalserviceapp.BuildAPIKeyClients(cfg)
 }
 
+func ApplyTenantRuntimeConfigs(cfg *config.Config, manager *coreauth.Manager) {
+	internalserviceapp.ApplyTenantRuntimeConfigs(cfg, manager)
+}
+
 func NewDefaultRoundTripperProvider() coreauth.RoundTripperProvider {
 	return internalserviceapp.NewDefaultRoundTripperProvider()
 }

@@ -9,6 +9,10 @@ import (
 )
 
 func FindByNameOrID(manager *coreauth.Manager, name string) *coreauth.Auth {
+	return FindByNameOrIDForTenant(manager, "", name)
+}
+
+func FindByNameOrIDForTenant(manager *coreauth.Manager, tenantID, name string) *coreauth.Auth {
 	if manager == nil {
 		return nil
 	}
@@ -16,10 +20,11 @@ func FindByNameOrID(manager *coreauth.Manager, name string) *coreauth.Auth {
 	if name == "" {
 		return nil
 	}
-	if auth, ok := manager.GetByID(name); ok {
+	tenantID = NormalizeTenantID(tenantID)
+	if auth, ok := manager.GetByID(name); ok && coreauth.NormalizedTenantID(auth.TenantID) == tenantID {
 		return auth
 	}
-	for _, auth := range manager.List() {
+	for _, auth := range manager.ListForTenant(tenantID) {
 		if auth == nil {
 			continue
 		}

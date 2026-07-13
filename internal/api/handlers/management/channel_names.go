@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	internalrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
@@ -335,6 +336,10 @@ func (h *Handler) validateAllowedChannels(values []string) ([]string, error) {
 }
 
 func (h *Handler) sanitizeAllowedChannelsForSave(values []string) ([]string, error) {
+	return h.sanitizeAllowedChannelsForTenant(identity.SystemTenantID, values)
+}
+
+func (h *Handler) sanitizeAllowedChannelsForTenant(tenantID string, values []string) ([]string, error) {
 	normalized := uniqueChannels(values)
 	if len(normalized) == 0 {
 		return nil, nil
@@ -343,10 +348,14 @@ func (h *Handler) sanitizeAllowedChannelsForSave(values []string) ([]string, err
 	var auths []*coreauth.Auth
 	var cfg *config.Config
 	if h != nil {
-		cfg = h.cfg
+		if tenantID == identity.SystemTenantID {
+			cfg = h.cfg
+		} else {
+			cfg = &config.Config{Routing: currentRoutingConfigForTenant(h.cfg, tenantID)}
+		}
 	}
 	if h != nil && h.authManager != nil {
-		auths = h.authManager.List()
+		auths = h.authManager.ListForTenant(tenantID)
 	}
 	known, err := collectKnownChannels(cfg, auths, "")
 	if err != nil {
@@ -382,6 +391,10 @@ func (h *Handler) sanitizeAllowedChannelsForSave(values []string) ([]string, err
 }
 
 func (h *Handler) validateAllowedChannelGroups(values []string) ([]string, error) {
+	return h.validateAllowedChannelGroupsForTenant(identity.SystemTenantID, values)
+}
+
+func (h *Handler) validateAllowedChannelGroupsForTenant(tenantID string, values []string) ([]string, error) {
 	normalized := uniqueChannelGroups(values)
 	if len(normalized) == 0 {
 		return nil, nil
@@ -389,7 +402,7 @@ func (h *Handler) validateAllowedChannelGroups(values []string) ([]string, error
 	if h == nil || h.authManager == nil {
 		return normalized, nil
 	}
-	known := h.authManager.KnownChannelGroups()
+	known := h.authManager.KnownChannelGroupsForTenant(tenantID)
 	for _, value := range normalized {
 		if _, exists := known[value]; !exists {
 			return nil, fmt.Errorf("unknown channel group %q", value)
@@ -399,15 +412,23 @@ func (h *Handler) validateAllowedChannelGroups(values []string) ([]string, error
 }
 
 func (h *Handler) validateAuthChannelName(name, excludeAuthID string) (string, error) {
+	return h.validateAuthChannelNameForTenant(identity.SystemTenantID, name, excludeAuthID)
+}
+
+func (h *Handler) validateAuthChannelNameForTenant(tenantID, name, excludeAuthID string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
 		return "", fmt.Errorf("channel name is required")
 	}
 	var auths []*coreauth.Auth
 	if h != nil && h.authManager != nil {
-		auths = h.authManager.List()
+		auths = h.authManager.ListForTenant(tenantID)
 	}
-	known := collectKnownChannelsForAuthRename(h.cfg, auths, excludeAuthID)
+	cfg := h.cfg
+	if tenantID != identity.SystemTenantID {
+		cfg = &config.Config{Routing: currentRoutingConfigForTenant(h.cfg, tenantID)}
+	}
+	known := collectKnownChannelsForAuthRename(cfg, auths, excludeAuthID)
 	key := strings.ToLower(trimmed)
 	if existing, exists := known[key]; exists {
 		return "", fmt.Errorf("channel name %q is already used by %s", trimmed, existing.Source)

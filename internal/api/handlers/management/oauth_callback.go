@@ -73,7 +73,7 @@ func (h *Handler) PostOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	sessionProvider, sessionStatus, ok := GetOAuthSession(state)
+	sessionProvider, sessionTenantID, sessionStatus, ok := GetOAuthSessionWithTenant(state)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "unknown or expired state"})
 		return
@@ -89,6 +89,16 @@ func (h *Handler) PostOAuthCallback(c *gin.Context) {
 	if !strings.EqualFold(sessionProvider, canonicalProvider) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "provider does not match state"})
 		return
+	}
+	if sessionTenantID != "" && sessionTenantID != effectiveTenantID(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "oauth state belongs to another tenant"})
+		return
+	}
+	if sessionTenantID != "" {
+		if err = h.identity().ValidateTenantAccess(c.Request.Context(), sessionTenantID); err != nil {
+			identityError(c, err)
+			return
+		}
 	}
 
 	if _, errWrite := WriteOAuthCallbackFileForPendingSession(h.cfg.AuthDir, canonicalProvider, state, code, errMsg); errWrite != nil {

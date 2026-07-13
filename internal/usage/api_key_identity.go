@@ -39,6 +39,18 @@ func currentAPIKeyRowsByID() map[string]APIKeyRow {
 	return result
 }
 
+func currentAPIKeyRowsByIDForTenant(tenantID string) map[string]APIKeyRow {
+	rows := ListAPIKeysForTenant(tenantID)
+	result := make(map[string]APIKeyRow, len(rows))
+	for _, row := range rows {
+		id := strings.TrimSpace(row.ID)
+		if id != "" {
+			result[id] = row
+		}
+	}
+	return result
+}
+
 func uniqueAPIKeyIDByName() map[string]string {
 	return uniqueAPIKeyIDByNameFromRows(ListAPIKeys())
 }

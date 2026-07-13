@@ -20,6 +20,20 @@ type ModelConfigCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *ModelConfigCreate) SetTenantID(v string) *ModelConfigCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *ModelConfigCreate) SetNillableTenantID(v *string) *ModelConfigCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetModelID sets the "model_id" field.
 func (_c *ModelConfigCreate) SetModelID(v string) *ModelConfigCreate {
 	_c.mutation.SetModelID(v)
@@ -249,6 +263,10 @@ func (_c *ModelConfigCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *ModelConfigCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := modelconfig.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.OwnedBy(); !ok {
 		v := modelconfig.DefaultOwnedBy
 		_c.mutation.SetOwnedBy(v)
@@ -305,6 +323,9 @@ func (_c *ModelConfigCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *ModelConfigCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "ModelConfig.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.ModelID(); !ok {
 		return &ValidationError{Name: "model_id", err: errors.New(`ent: missing required field "ModelConfig.model_id"`)}
 	}
@@ -376,6 +397,10 @@ func (_c *ModelConfigCreate) createSpec() (*ModelConfig, *sqlgraph.CreateSpec) {
 		_node = &ModelConfig{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(modelconfig.Table, sqlgraph.NewFieldSpec(modelconfig.FieldID, field.TypeInt))
 	)
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(modelconfig.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
+	}
 	if value, ok := _c.mutation.ModelID(); ok {
 		_spec.SetField(modelconfig.FieldModelID, field.TypeString, value)
 		_node.ModelID = value

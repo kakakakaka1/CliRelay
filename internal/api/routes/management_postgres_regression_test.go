@@ -301,7 +301,8 @@ func postgresSmokeAllowsStatus(routePath string, status int, body string) bool {
 			(strings.Contains(routePath, ":") || strings.Contains(routePath, "*"))
 	}
 	if status == http.StatusBadGateway {
-		return routePath == "/v0/management/update/progress" && strings.Contains(body, "update_progress_failed")
+		return routePath == "/v0/management/update/progress" && strings.Contains(body, "update_progress_failed") ||
+			routePath == "/v0/management/update/events" && strings.Contains(body, "update_events_failed")
 	}
 	if status != http.StatusServiceUnavailable {
 		return false
@@ -310,6 +311,7 @@ func postgresSmokeAllowsStatus(routePath string, status int, body string) bool {
 		"auth manager unavailable",
 		"core auth manager unavailable",
 		"image generation service unavailable",
+		"identity service unavailable",
 	}
 	for _, text := range allowed {
 		if strings.Contains(body, text) {

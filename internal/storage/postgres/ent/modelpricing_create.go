@@ -20,6 +20,20 @@ type ModelPricingCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *ModelPricingCreate) SetTenantID(v string) *ModelPricingCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *ModelPricingCreate) SetNillableTenantID(v *string) *ModelPricingCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetModelID sets the "model_id" field.
 func (_c *ModelPricingCreate) SetModelID(v string) *ModelPricingCreate {
 	_c.mutation.SetModelID(v)
@@ -137,6 +151,10 @@ func (_c *ModelPricingCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *ModelPricingCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := modelpricing.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.InputPricePerMillion(); !ok {
 		v := modelpricing.DefaultInputPricePerMillion
 		_c.mutation.SetInputPricePerMillion(v)
@@ -161,6 +179,9 @@ func (_c *ModelPricingCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *ModelPricingCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "ModelPricing.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.ModelID(); !ok {
 		return &ValidationError{Name: "model_id", err: errors.New(`ent: missing required field "ModelPricing.model_id"`)}
 	}
@@ -208,6 +229,10 @@ func (_c *ModelPricingCreate) createSpec() (*ModelPricing, *sqlgraph.CreateSpec)
 		_node = &ModelPricing{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(modelpricing.Table, sqlgraph.NewFieldSpec(modelpricing.FieldID, field.TypeInt))
 	)
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(modelpricing.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
+	}
 	if value, ok := _c.mutation.ModelID(); ok {
 		_spec.SetField(modelpricing.FieldModelID, field.TypeString, value)
 		_node.ModelID = value

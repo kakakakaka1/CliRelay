@@ -106,15 +106,21 @@ func newRuntimeConfigSnapshot(cfg *sdkconfig.Config) *runtimeConfigSnapshot {
 	}
 }
 
+type runtimeConfigSnapshotSet map[string]*runtimeConfigSnapshot
+
 func (m *Manager) currentRuntimeConfig() *runtimeConfigSnapshot {
+	return m.currentRuntimeConfigForTenant(defaultTenantID)
+}
+
+func (m *Manager) currentRuntimeConfigForTenant(tenantID string) *runtimeConfigSnapshot {
 	if m == nil {
 		return emptyRuntimeConfigSnapshot
 	}
-	cfg, _ := m.runtimeConfig.Load().(*runtimeConfigSnapshot)
-	if cfg == nil {
-		return emptyRuntimeConfigSnapshot
+	set, _ := m.runtimeConfig.Load().(runtimeConfigSnapshotSet)
+	if cfg := set[normalizedTenantID(tenantID)]; cfg != nil {
+		return cfg
 	}
-	return cfg
+	return emptyRuntimeConfigSnapshot
 }
 
 func cloneRuntimeRoutingChannelGroups(groups []sdkconfig.RoutingChannelGroup) []runtimeRoutingChannelGroup {

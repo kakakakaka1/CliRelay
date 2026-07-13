@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 )
 
@@ -163,5 +164,65 @@ func TestGetDashboardSummaryCountsAPIKeysFromSQLite(t *testing.T) {
 
 	if payload.Counts.APIKeys != 3 {
 		t.Fatalf("counts.api_keys = %d, want 3", payload.Counts.APIKeys)
+	}
+}
+
+func TestGetDashboardSummaryThroughputScopeByPrincipal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	dbPath := filepath.Join(t.TempDir(), "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{StoreContent: false}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(usage.CloseDB)
+
+	h := &Handler{cfg: &config.Config{}}
+
+	// Ordinary tenant principal → tenant-scoped throughput.
+	recTenant := httptest.NewRecorder()
+	cTenant, _ := gin.CreateTestContext(recTenant)
+	cTenant.Request = httptest.NewRequest(http.MethodGet, "/dashboard-summary?days=1", nil)
+	cTenant.Set(managementPrincipalKey, identity.Principal{
+		PlatformAdmin:   false,
+		EffectiveTenant: identity.Tenant{ID: "00000000-0000-0000-0000-00000000000a"},
+	})
+	h.GetDashboardSummary(cTenant)
+	if recTenant.Code != http.StatusOK {
+		t.Fatalf("tenant status %d body=%s", recTenant.Code, recTenant.Body.String())
+	}
+	var tenantPayload struct {
+		Meta struct {
+			ThroughputScope string `json:"throughput_scope"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(recTenant.Body.Bytes(), &tenantPayload); err != nil {
+		t.Fatalf("unmarshal tenant: %v", err)
+	}
+	if tenantPayload.Meta.ThroughputScope != "tenant" {
+		t.Fatalf("tenant throughput_scope = %q, want tenant", tenantPayload.Meta.ThroughputScope)
+	}
+
+	// Platform super-admin → all-tenant throughput scope (aggregation covered in usage tests).
+	recAdmin := httptest.NewRecorder()
+	cAdmin, _ := gin.CreateTestContext(recAdmin)
+	cAdmin.Request = httptest.NewRequest(http.MethodGet, "/dashboard-summary?days=1", nil)
+	cAdmin.Set(managementPrincipalKey, identity.Principal{
+		PlatformAdmin:   true,
+		EffectiveTenant: identity.Tenant{ID: "00000000-0000-0000-0000-00000000000a"},
+	})
+	h.GetDashboardSummary(cAdmin)
+	if recAdmin.Code != http.StatusOK {
+		t.Fatalf("admin status %d body=%s", recAdmin.Code, recAdmin.Body.String())
+	}
+	var adminPayload struct {
+		Meta struct {
+			ThroughputScope string `json:"throughput_scope"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(recAdmin.Body.Bytes(), &adminPayload); err != nil {
+		t.Fatalf("unmarshal admin: %v", err)
+	}
+	if adminPayload.Meta.ThroughputScope != "all_tenants" {
+		t.Fatalf("admin throughput_scope = %q, want all_tenants", adminPayload.Meta.ThroughputScope)
 	}
 }

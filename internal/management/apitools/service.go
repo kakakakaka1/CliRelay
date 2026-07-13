@@ -25,13 +25,18 @@ type Dependencies struct {
 }
 
 type Service struct {
+	tenantID    string
 	cfg         *config.Config
 	authManager *coreauth.Manager
 	deps        Dependencies
 }
 
 func New(cfg *config.Config, authManager *coreauth.Manager, deps Dependencies) *Service {
-	return &Service{cfg: cfg, authManager: authManager, deps: deps}
+	return NewForTenant("", cfg, authManager, deps)
+}
+
+func NewForTenant(tenantID string, cfg *config.Config, authManager *coreauth.Manager, deps Dependencies) *Service {
+	return &Service{tenantID: coreauth.NormalizedTenantID(tenantID), cfg: cfg, authManager: authManager, deps: deps}
 }
 
 func (s *Service) defaultAPICallTimeout() time.Duration {

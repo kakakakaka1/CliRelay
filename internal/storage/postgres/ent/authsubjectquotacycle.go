@@ -17,6 +17,8 @@ type AuthSubjectQuotaCycle struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// SubjectID holds the value of the "subject_id" field.
 	SubjectID string `json:"subject_id,omitempty"`
 	// AuthIndex holds the value of the "auth_index" field.
@@ -43,7 +45,7 @@ func (*AuthSubjectQuotaCycle) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case authsubjectquotacycle.FieldID, authsubjectquotacycle.FieldWindowSeconds:
 			values[i] = new(sql.NullInt64)
-		case authsubjectquotacycle.FieldSubjectID, authsubjectquotacycle.FieldAuthIndex, authsubjectquotacycle.FieldProvider, authsubjectquotacycle.FieldQuotaKey:
+		case authsubjectquotacycle.FieldTenantID, authsubjectquotacycle.FieldSubjectID, authsubjectquotacycle.FieldAuthIndex, authsubjectquotacycle.FieldProvider, authsubjectquotacycle.FieldQuotaKey:
 			values[i] = new(sql.NullString)
 		case authsubjectquotacycle.FieldCycleStartAt, authsubjectquotacycle.FieldResetAt, authsubjectquotacycle.FieldLastVerifiedAt:
 			values[i] = new(sql.NullTime)
@@ -68,6 +70,12 @@ func (_m *AuthSubjectQuotaCycle) assignValues(columns []string, values []any) er
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case authsubjectquotacycle.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case authsubjectquotacycle.FieldSubjectID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field subject_id", values[i])
@@ -152,6 +160,9 @@ func (_m *AuthSubjectQuotaCycle) String() string {
 	var builder strings.Builder
 	builder.WriteString("AuthSubjectQuotaCycle(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("subject_id=")
 	builder.WriteString(_m.SubjectID)
 	builder.WriteString(", ")

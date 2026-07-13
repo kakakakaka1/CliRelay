@@ -1,6 +1,9 @@
 package usage
 
-import "testing"
+import (
+	"database/sql"
+	"testing"
+)
 
 func TestReplaceAllCcSwitchImportConfigsPersistsModelMappings(t *testing.T) {
 	cleanup := setupTestDB(t)
@@ -140,5 +143,70 @@ func TestNormalizeCcSwitchModelMappingsClampsKnownCodexContext(t *testing.T) {
 	}
 	if got := mappings[1].ContextWindow; got != 2000000 {
 		t.Fatalf("unknown model context = %d, want 2000000", got)
+	}
+}
+
+func TestCcSwitchImportConfigsAreTenantScoped(t *testing.T) {
+	initModelConfigTestDB(t)
+
+	const tenantA = "00000000-0000-0000-0000-00000000000a"
+	const tenantB = "00000000-0000-0000-0000-00000000000b"
+	for tenantID, group := range map[string]string{tenantA: "group-a", tenantB: "group-b"} {
+		if err := ReplaceAllCcSwitchImportConfigsForTenant(tenantID, []CcSwitchImportConfigRow{{
+			ID:                   "shared-config",
+			ClientType:           "codex",
+			ProviderName:         group,
+			DefaultModel:         "gpt-test",
+			AllowedChannelGroups: []string{group},
+			RoutePath:            "/shared-route",
+		}}); err != nil {
+			t.Fatalf("ReplaceAllCcSwitchImportConfigsForTenant(%s): %v", tenantID, err)
+		}
+	}
+
+	for tenantID, group := range map[string]string{tenantA: "group-a", tenantB: "group-b"} {
+		rows := ListCcSwitchImportConfigsForTenant(tenantID)
+		if len(rows) != 1 || rows[0].ProviderName != group {
+			t.Fatalf("tenant %s rows = %#v", tenantID, rows)
+		}
+		row, ok := FindCcSwitchImportConfigByRoutePathForTenant(tenantID, "/shared-route")
+		if !ok || len(row.AllowedChannelGroups) != 1 || row.AllowedChannelGroups[0] != group {
+			t.Fatalf("tenant %s route = %#v, ok=%v", tenantID, row, ok)
+		}
+	}
+}
+
+func TestCcSwitchImportConfigLegacySchemaMigratesToTenantPrimaryKey(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+t.Name()+"?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`CREATE TABLE ccswitch_import_configs (
+		id TEXT PRIMARY KEY NOT NULL, client_type TEXT NOT NULL, provider_name TEXT NOT NULL DEFAULT '',
+		note TEXT NOT NULL DEFAULT '', default_model TEXT NOT NULL DEFAULT '', model_mappings TEXT NOT NULL DEFAULT '[]',
+		allowed_channel_groups TEXT NOT NULL DEFAULT '[]', route_path TEXT NOT NULL DEFAULT '', endpoint_path TEXT NOT NULL DEFAULT '',
+		usage_auto_interval INTEGER NOT NULL DEFAULT 30, api_key_field TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '')`); err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	if _, err = db.Exec(`INSERT INTO ccswitch_import_configs(id,client_type,provider_name,default_model) VALUES('legacy','codex','Legacy','gpt-test')`); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	initCcSwitchImportConfigsTable(db)
+
+	pk, err := sqlitePrimaryKeyColumns(db, "ccswitch_import_configs")
+	if err != nil {
+		t.Fatalf("sqlitePrimaryKeyColumns: %v", err)
+	}
+	if len(pk) != 2 || pk[0] != "tenant_id" || pk[1] != "id" {
+		t.Fatalf("primary key = %v", pk)
+	}
+	var tenantID, id string
+	if err = db.QueryRow(`SELECT tenant_id,id FROM ccswitch_import_configs`).Scan(&tenantID, &id); err != nil {
+		t.Fatalf("read migrated row: %v", err)
+	}
+	if tenantID != systemTenantID || id != "legacy" {
+		t.Fatalf("migrated row = tenant %q id %q", tenantID, id)
 	}
 }

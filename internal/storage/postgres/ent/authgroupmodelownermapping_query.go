@@ -262,12 +262,12 @@ func (_q *AuthGroupModelOwnerMappingQuery) Clone() *AuthGroupModelOwnerMappingQu
 // Example:
 //
 //	var v []struct {
-//		AuthGroup string `json:"auth_group,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.AuthGroupModelOwnerMapping.Query().
-//		GroupBy(authgroupmodelownermapping.FieldAuthGroup).
+//		GroupBy(authgroupmodelownermapping.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *AuthGroupModelOwnerMappingQuery) GroupBy(field string, fields ...string) *AuthGroupModelOwnerMappingGroupBy {
@@ -285,11 +285,11 @@ func (_q *AuthGroupModelOwnerMappingQuery) GroupBy(field string, fields ...strin
 // Example:
 //
 //	var v []struct {
-//		AuthGroup string `json:"auth_group,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.AuthGroupModelOwnerMapping.Query().
-//		Select(authgroupmodelownermapping.FieldAuthGroup).
+//		Select(authgroupmodelownermapping.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *AuthGroupModelOwnerMappingQuery) Select(fields ...string) *AuthGroupModelOwnerMappingSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

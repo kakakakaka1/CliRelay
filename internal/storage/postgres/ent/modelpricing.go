@@ -17,6 +17,8 @@ type ModelPricing struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// ModelID holds the value of the "model_id" field.
 	ModelID string `json:"model_id,omitempty"`
 	// InputPricePerMillion holds the value of the "input_price_per_million" field.
@@ -43,7 +45,7 @@ func (*ModelPricing) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case modelpricing.FieldID:
 			values[i] = new(sql.NullInt64)
-		case modelpricing.FieldModelID:
+		case modelpricing.FieldTenantID, modelpricing.FieldModelID:
 			values[i] = new(sql.NullString)
 		case modelpricing.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -68,6 +70,12 @@ func (_m *ModelPricing) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case modelpricing.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case modelpricing.FieldModelID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field model_id", values[i])
@@ -146,6 +154,9 @@ func (_m *ModelPricing) String() string {
 	var builder strings.Builder
 	builder.WriteString("ModelPricing(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("model_id=")
 	builder.WriteString(_m.ModelID)
 	builder.WriteString(", ")

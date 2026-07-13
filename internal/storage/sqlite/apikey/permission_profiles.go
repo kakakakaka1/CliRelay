@@ -13,6 +13,7 @@ import (
 const createAPIKeyPermissionProfilesTableSQL = `
 CREATE TABLE IF NOT EXISTS api_key_permission_profiles (
   id                     TEXT PRIMARY KEY NOT NULL,
+  tenant_id              TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
   name                   TEXT NOT NULL DEFAULT '',
   daily_limit            INTEGER NOT NULL DEFAULT 0,
   total_quota            INTEGER NOT NULL DEFAULT 0,
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS api_key_permission_profiles (
 `
 
 type PermissionProfileRow struct {
+	TenantID             string   `json:"tenant_id,omitempty" yaml:"tenant_id,omitempty"`
 	ID                   string   `json:"id" yaml:"id"`
 	Name                 string   `json:"name" yaml:"name"`
 	DailyLimit           int      `json:"daily-limit" yaml:"daily-limit"`
@@ -51,6 +53,9 @@ func InitPermissionProfilesTable(db *sql.DB) {
 	if _, err := db.Exec(createAPIKeyPermissionProfilesTableSQL); err != nil {
 		log.Errorf("sqlite/apikey: create api_key_permission_profiles table: %v", err)
 	}
+	if _, err := db.Exec("ALTER TABLE api_key_permission_profiles ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'"); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		log.Warnf("sqlite/apikey: migrate api_key_permission_profiles tenant_id: %v", err)
+	}
 }
 
 func (s Store) ListPermissionProfiles() []PermissionProfileRow {
@@ -61,7 +66,7 @@ func (s Store) ListPermissionProfiles() []PermissionProfileRow {
 	rows, err := s.db.Query(`SELECT id, name, daily_limit, total_quota, concurrency_limit,
 		rpm_limit, tpm_limit, allowed_models, allowed_channels, allowed_channel_groups,
 		system_prompt, created_at, updated_at
-		FROM api_key_permission_profiles ORDER BY created_at ASC, id ASC`)
+		FROM api_key_permission_profiles WHERE tenant_id = ? ORDER BY created_at ASC, id ASC`, s.tenantID)
 	if err != nil {
 		log.Errorf("sqlite/apikey: list api_key_permission_profiles: %v", err)
 		return nil
@@ -72,6 +77,7 @@ func (s Store) ListPermissionProfiles() []PermissionProfileRow {
 	for rows.Next() {
 		profile, ok := scanPermissionProfileRow(rows)
 		if ok {
+			profile.TenantID = s.tenantID
 			result = append(result, *profile)
 		}
 	}
@@ -91,15 +97,15 @@ func (s Store) ReplaceAllPermissionProfiles(profiles []PermissionProfileRow) err
 		return err
 	}
 
-	if _, err := tx.Exec("DELETE FROM api_key_permission_profiles"); err != nil {
+	if _, err := tx.Exec("DELETE FROM api_key_permission_profiles WHERE tenant_id = ?", s.tenantID); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 
 	stmt, err := tx.Prepare(`INSERT INTO api_key_permission_profiles
-		(id, name, daily_limit, total_quota, concurrency_limit, rpm_limit, tpm_limit,
+		(tenant_id, id, name, daily_limit, total_quota, concurrency_limit, rpm_limit, tpm_limit,
 		 allowed_models, allowed_channels, allowed_channel_groups, system_prompt, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
@@ -129,7 +135,7 @@ func (s Store) ReplaceAllPermissionProfiles(profiles []PermissionProfileRow) err
 		profile.UpdatedAt = now
 
 		if _, err := stmt.Exec(
-			profile.ID, profile.Name, profile.DailyLimit, profile.TotalQuota,
+			s.tenantID, profile.ID, profile.Name, profile.DailyLimit, profile.TotalQuota,
 			profile.ConcurrencyLimit, profile.RPMLimit, profile.TPMLimit,
 			mustJSONStringList(profile.AllowedModels), mustJSONStringList(profile.AllowedChannels),
 			mustJSONStringList(profile.AllowedChannelGroups), profile.SystemPrompt,

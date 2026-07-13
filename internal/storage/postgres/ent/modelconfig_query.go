@@ -262,12 +262,12 @@ func (_q *ModelConfigQuery) Clone() *ModelConfigQuery {
 // Example:
 //
 //	var v []struct {
-//		ModelID string `json:"model_id,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.ModelConfig.Query().
-//		GroupBy(modelconfig.FieldModelID).
+//		GroupBy(modelconfig.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *ModelConfigQuery) GroupBy(field string, fields ...string) *ModelConfigGroupBy {
@@ -285,11 +285,11 @@ func (_q *ModelConfigQuery) GroupBy(field string, fields ...string) *ModelConfig
 // Example:
 //
 //	var v []struct {
-//		ModelID string `json:"model_id,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.ModelConfig.Query().
-//		Select(modelconfig.FieldModelID).
+//		Select(modelconfig.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *ModelConfigQuery) Select(fields ...string) *ModelConfigSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

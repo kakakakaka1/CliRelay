@@ -17,6 +17,8 @@ type AuthGroupModelOwnerMapping struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// AuthGroup holds the value of the "auth_group" field.
 	AuthGroup string `json:"auth_group,omitempty"`
 	// Owner holds the value of the "owner" field.
@@ -33,7 +35,7 @@ func (*AuthGroupModelOwnerMapping) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case authgroupmodelownermapping.FieldID:
 			values[i] = new(sql.NullInt64)
-		case authgroupmodelownermapping.FieldAuthGroup, authgroupmodelownermapping.FieldOwner:
+		case authgroupmodelownermapping.FieldTenantID, authgroupmodelownermapping.FieldAuthGroup, authgroupmodelownermapping.FieldOwner:
 			values[i] = new(sql.NullString)
 		case authgroupmodelownermapping.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -58,6 +60,12 @@ func (_m *AuthGroupModelOwnerMapping) assignValues(columns []string, values []an
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case authgroupmodelownermapping.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
 		case authgroupmodelownermapping.FieldAuthGroup:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field auth_group", values[i])
@@ -112,6 +120,9 @@ func (_m *AuthGroupModelOwnerMapping) String() string {
 	var builder strings.Builder
 	builder.WriteString("AuthGroupModelOwnerMapping(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("auth_group=")
 	builder.WriteString(_m.AuthGroup)
 	builder.WriteString(", ")

@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/bodyutil"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
@@ -104,7 +105,7 @@ func TestUploadAuthFilePersistsUploadedJSONThroughStorePersister(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	wantPath := filepath.Join(authDir, "codex-subscription.json")
+	wantPath := filepath.Join(authDir, identity.SystemTenantID, "codex-subscription.json")
 	store.mu.Lock()
 	gotPaths := append([]string(nil), store.persistedPaths...)
 	store.mu.Unlock()

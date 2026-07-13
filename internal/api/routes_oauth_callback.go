@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v6/internal/api/handlers/management"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 )
 
 const oauthCallbackSuccessHTML = `<html><head><meta charset="utf-8"><title>Authentication successful</title><script>setTimeout(function(){window.close();},5000);</script></head><body><h1>Authentication successful!</h1><p>You can close this window.</p><p>This window will close automatically in 5 seconds.</p></body></html>`
@@ -30,6 +31,16 @@ func (s *Server) registerPendingOAuthCallbackRoute(path, provider string) {
 			errStr = c.Query("error_description")
 		}
 		if state != "" {
+			_, tenantID, _, ok := managementHandlers.GetOAuthSessionWithTenant(state)
+			if ok && tenantID != "" {
+				if service := identity.Default(); service != nil {
+					if err := service.ValidateTenantAccess(c.Request.Context(), tenantID); err != nil {
+						c.Header("Content-Type", "text/html; charset=utf-8")
+						c.String(http.StatusForbidden, "Authentication is not available for this tenant.")
+						return
+					}
+				}
+			}
 			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, provider, state, code, errStr)
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")

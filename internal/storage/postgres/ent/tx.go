@@ -16,6 +16,8 @@ type Tx struct {
 	APIKey *APIKeyClient
 	// APIKeyPermissionProfile is the client for interacting with the APIKeyPermissionProfile builders.
 	APIKeyPermissionProfile *APIKeyPermissionProfileClient
+	// AuditLog is the client for interacting with the AuditLog builders.
+	AuditLog *AuditLogClient
 	// AuthFileQuotaSnapshot is the client for interacting with the AuthFileQuotaSnapshot builders.
 	AuthFileQuotaSnapshot *AuthFileQuotaSnapshotClient
 	// AuthFileQuotaSnapshotPoint is the client for interacting with the AuthFileQuotaSnapshotPoint builders.
@@ -38,16 +40,30 @@ type Tx struct {
 	ModelOwnerPreset *ModelOwnerPresetClient
 	// ModelPricing is the client for interacting with the ModelPricing builders.
 	ModelPricing *ModelPricingClient
+	// Permission is the client for interacting with the Permission builders.
+	Permission *PermissionClient
 	// ProxyPool is the client for interacting with the ProxyPool builders.
 	ProxyPool *ProxyPoolClient
 	// RequestLog is the client for interacting with the RequestLog builders.
 	RequestLog *RequestLogClient
 	// RequestLogContent is the client for interacting with the RequestLogContent builders.
 	RequestLogContent *RequestLogContentClient
+	// Role is the client for interacting with the Role builders.
+	Role *RoleClient
+	// RolePermission is the client for interacting with the RolePermission builders.
+	RolePermission *RolePermissionClient
 	// RoutingConfig is the client for interacting with the RoutingConfig builders.
 	RoutingConfig *RoutingConfigClient
 	// RuntimeSetting is the client for interacting with the RuntimeSetting builders.
 	RuntimeSetting *RuntimeSettingClient
+	// Tenant is the client for interacting with the Tenant builders.
+	Tenant *TenantClient
+	// User is the client for interacting with the User builders.
+	User *UserClient
+	// UserRole is the client for interacting with the UserRole builders.
+	UserRole *UserRoleClient
+	// UserSession is the client for interacting with the UserSession builders.
+	UserSession *UserSessionClient
 
 	// lazily loaded.
 	client     *Client
@@ -181,6 +197,7 @@ func (tx *Tx) Client() *Client {
 func (tx *Tx) init() {
 	tx.APIKey = NewAPIKeyClient(tx.config)
 	tx.APIKeyPermissionProfile = NewAPIKeyPermissionProfileClient(tx.config)
+	tx.AuditLog = NewAuditLogClient(tx.config)
 	tx.AuthFileQuotaSnapshot = NewAuthFileQuotaSnapshotClient(tx.config)
 	tx.AuthFileQuotaSnapshotPoint = NewAuthFileQuotaSnapshotPointClient(tx.config)
 	tx.AuthGroupModelOwnerMapping = NewAuthGroupModelOwnerMappingClient(tx.config)
@@ -192,11 +209,18 @@ func (tx *Tx) init() {
 	tx.ModelOpenrouterSyncState = NewModelOpenrouterSyncStateClient(tx.config)
 	tx.ModelOwnerPreset = NewModelOwnerPresetClient(tx.config)
 	tx.ModelPricing = NewModelPricingClient(tx.config)
+	tx.Permission = NewPermissionClient(tx.config)
 	tx.ProxyPool = NewProxyPoolClient(tx.config)
 	tx.RequestLog = NewRequestLogClient(tx.config)
 	tx.RequestLogContent = NewRequestLogContentClient(tx.config)
+	tx.Role = NewRoleClient(tx.config)
+	tx.RolePermission = NewRolePermissionClient(tx.config)
 	tx.RoutingConfig = NewRoutingConfigClient(tx.config)
 	tx.RuntimeSetting = NewRuntimeSettingClient(tx.config)
+	tx.Tenant = NewTenantClient(tx.config)
+	tx.User = NewUserClient(tx.config)
+	tx.UserRole = NewUserRoleClient(tx.config)
+	tx.UserSession = NewUserSessionClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.

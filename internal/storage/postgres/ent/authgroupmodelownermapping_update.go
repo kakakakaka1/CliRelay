@@ -28,6 +28,20 @@ func (_u *AuthGroupModelOwnerMappingUpdate) Where(ps ...predicate.AuthGroupModel
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *AuthGroupModelOwnerMappingUpdate) SetTenantID(v string) *AuthGroupModelOwnerMappingUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *AuthGroupModelOwnerMappingUpdate) SetNillableTenantID(v *string) *AuthGroupModelOwnerMappingUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetAuthGroup sets the "auth_group" field.
 func (_u *AuthGroupModelOwnerMappingUpdate) SetAuthGroup(v string) *AuthGroupModelOwnerMappingUpdate {
 	_u.mutation.SetAuthGroup(v)
@@ -111,6 +125,9 @@ func (_u *AuthGroupModelOwnerMappingUpdate) sqlSave(ctx context.Context) (_node 
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(authgroupmodelownermapping.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.AuthGroup(); ok {
 		_spec.SetField(authgroupmodelownermapping.FieldAuthGroup, field.TypeString, value)
 	}
@@ -138,6 +155,20 @@ type AuthGroupModelOwnerMappingUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *AuthGroupModelOwnerMappingMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *AuthGroupModelOwnerMappingUpdateOne) SetTenantID(v string) *AuthGroupModelOwnerMappingUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *AuthGroupModelOwnerMappingUpdateOne) SetNillableTenantID(v *string) *AuthGroupModelOwnerMappingUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetAuthGroup sets the "auth_group" field.
@@ -252,6 +283,9 @@ func (_u *AuthGroupModelOwnerMappingUpdateOne) sqlSave(ctx context.Context) (_no
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(authgroupmodelownermapping.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.AuthGroup(); ok {
 		_spec.SetField(authgroupmodelownermapping.FieldAuthGroup, field.TypeString, value)

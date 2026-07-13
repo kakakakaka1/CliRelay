@@ -11,6 +11,8 @@ const (
 	Label = "auth_subject_quota_cycle"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldTenantID holds the string denoting the tenant_id field in the database.
+	FieldTenantID = "tenant_id"
 	// FieldSubjectID holds the string denoting the subject_id field in the database.
 	FieldSubjectID = "subject_id"
 	// FieldAuthIndex holds the string denoting the auth_index field in the database.
@@ -34,6 +36,7 @@ const (
 // Columns holds all SQL columns for authsubjectquotacycle fields.
 var Columns = []string{
 	FieldID,
+	FieldTenantID,
 	FieldSubjectID,
 	FieldAuthIndex,
 	FieldProvider,
@@ -55,6 +58,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultTenantID holds the default value on creation for the "tenant_id" field.
+	DefaultTenantID string
 	// DefaultAuthIndex holds the default value on creation for the "auth_index" field.
 	DefaultAuthIndex string
 	// DefaultProvider holds the default value on creation for the "provider" field.
@@ -69,6 +74,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByTenantID orders the results by the tenant_id field.
+func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
 }
 
 // BySubjectID orders the results by the subject_id field.

@@ -28,6 +28,20 @@ func (_u *AuthFileQuotaSnapshotUpdate) Where(ps ...predicate.AuthFileQuotaSnapsh
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *AuthFileQuotaSnapshotUpdate) SetTenantID(v string) *AuthFileQuotaSnapshotUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *AuthFileQuotaSnapshotUpdate) SetNillableTenantID(v *string) *AuthFileQuotaSnapshotUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetDateKey sets the "date_key" field.
 func (_u *AuthFileQuotaSnapshotUpdate) SetDateKey(v string) *AuthFileQuotaSnapshotUpdate {
 	_u.mutation.SetDateKey(v)
@@ -180,6 +194,9 @@ func (_u *AuthFileQuotaSnapshotUpdate) sqlSave(ctx context.Context) (_node int, 
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(authfilequotasnapshot.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.DateKey(); ok {
 		_spec.SetField(authfilequotasnapshot.FieldDateKey, field.TypeString, value)
 	}
@@ -225,6 +242,20 @@ type AuthFileQuotaSnapshotUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *AuthFileQuotaSnapshotMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *AuthFileQuotaSnapshotUpdateOne) SetTenantID(v string) *AuthFileQuotaSnapshotUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *AuthFileQuotaSnapshotUpdateOne) SetNillableTenantID(v *string) *AuthFileQuotaSnapshotUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetDateKey sets the "date_key" field.
@@ -408,6 +439,9 @@ func (_u *AuthFileQuotaSnapshotUpdateOne) sqlSave(ctx context.Context) (_node *A
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(authfilequotasnapshot.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.DateKey(); ok {
 		_spec.SetField(authfilequotasnapshot.FieldDateKey, field.TypeString, value)

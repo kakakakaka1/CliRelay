@@ -19,7 +19,7 @@ func (s *Service) AuthByIndex(authIndex string) *coreauth.Auth {
 	if authIndex == "" || s == nil || s.authManager == nil {
 		return nil
 	}
-	auths := s.authManager.List()
+	auths := s.authManager.ListForTenant(s.tenantID)
 	for _, auth := range auths {
 		if auth == nil {
 			continue

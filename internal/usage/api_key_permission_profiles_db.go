@@ -23,12 +23,24 @@ func apiKeyPermissionProfileStore() sqlapikey.Store {
 	return sqlapikey.NewStore(getDB())
 }
 
+func apiKeyPermissionProfileStoreForTenant(tenantID string) sqlapikey.Store {
+	return sqlapikey.NewTenantStore(getDB(), tenantID)
+}
+
 func ListAPIKeyPermissionProfiles() []APIKeyPermissionProfileRow {
 	return apiKeyPermissionProfileStore().ListPermissionProfiles()
 }
 
 func ReplaceAllAPIKeyPermissionProfiles(profiles []APIKeyPermissionProfileRow) error {
 	return apiKeyPermissionProfileStore().ReplaceAllPermissionProfiles(profiles)
+}
+
+func ListAPIKeyPermissionProfilesForTenant(tenantID string) []APIKeyPermissionProfileRow {
+	return apiKeyPermissionProfileStoreForTenant(tenantID).ListPermissionProfiles()
+}
+
+func ReplaceAllAPIKeyPermissionProfilesForTenant(tenantID string, profiles []APIKeyPermissionProfileRow) error {
+	return apiKeyPermissionProfileStoreForTenant(tenantID).ReplaceAllPermissionProfiles(profiles)
 }
 
 func MigrateAPIKeyPermissionProfilesFromYAML(configFilePath string) int {

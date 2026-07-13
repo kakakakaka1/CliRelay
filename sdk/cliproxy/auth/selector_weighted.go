@@ -21,7 +21,7 @@ func ensureWeightedState(states map[string]*weightedCursorState, key string, lim
 }
 
 func weightedSelectionKey(provider, model string, opts cliproxyexecutor.Options) string {
-	return provider + ":" + canonicalModelKey(model) + ":" + weightedSelectionScope(opts.Metadata)
+	return tenantSelectionPrefix(opts.Metadata) + provider + ":" + canonicalModelKey(model) + ":" + weightedSelectionScope(opts.Metadata)
 }
 
 func pickWeightedAvailable(states map[string]*weightedCursorState, key string, available []*Auth) *Auth {

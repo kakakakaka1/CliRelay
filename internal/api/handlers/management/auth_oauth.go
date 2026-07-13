@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
+	managementauthfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/management/authfiles"
 	antigravityprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/antigravity"
 	claudeprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/claude"
 	codexprovider "github.com/router-for-me/CLIProxyAPI/v6/internal/management/oauth/providers/codex"
@@ -55,25 +59,94 @@ func (h *Handler) managementCallbackURL(path string) (string, error) {
 }
 
 func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (string, error) {
-	return h.authFileRepository().Save(ctx, record)
+	return h.saveTenantTokenRecord(ctx, "", record)
+}
+
+func (h *Handler) saveTenantTokenRecord(ctx context.Context, tenantID string, record *coreauth.Auth) (string, error) {
+	if h == nil || h.cfg == nil || record == nil {
+		return "", fmt.Errorf("auth record is unavailable")
+	}
+	tenantID = managementauthfiles.NormalizeTenantID(tenantID)
+	if service := identity.Default(); service != nil {
+		if err := service.ValidateTenantAccess(ctx, tenantID); err != nil {
+			return "", err
+		}
+	}
+	name := filepath.Base(strings.TrimSpace(record.FileName))
+	if name == "." || name == "" {
+		name = filepath.Base(strings.TrimSpace(record.ID))
+	}
+	if _, err := managementauthfiles.ValidateFileQueryName(name, true); err != nil {
+		return "", err
+	}
+	tenantDir := managementauthfiles.TenantAuthDir(h.cfg.AuthDir, tenantID)
+	if err := os.MkdirAll(tenantDir, 0o700); err != nil {
+		return "", fmt.Errorf("prepare tenant auth directory: %w", err)
+	}
+	record.TenantID = tenantID
+	record.ID = filepath.ToSlash(filepath.Join(tenantID, name))
+	record.FileName = name
+	if record.Attributes == nil {
+		record.Attributes = make(map[string]string)
+	}
+	record.Attributes["path"] = managementauthfiles.TenantFilePath(h.cfg.AuthDir, tenantID, name)
+
+	savedPath, err := h.authFileRepository().Save(ctx, record)
+	if err != nil {
+		return "", err
+	}
+	if h.authManager != nil {
+		runtimeCtx := coreauth.WithSkipPersist(ctx)
+		if _, exists := h.authManager.GetByID(record.ID); exists {
+			_, err = h.authManager.Update(runtimeCtx, record)
+		} else {
+			_, err = h.authManager.Register(runtimeCtx, record)
+		}
+		if err != nil {
+			return "", fmt.Errorf("register tenant auth record: %w", err)
+		}
+	}
+	return savedPath, nil
+}
+
+func (h *Handler) tenantOAuthBindings(c *gin.Context) (
+	authDir string,
+	saveRecord func(context.Context, *coreauth.Auth) (string, error),
+	registerSession func(string, string),
+	completeProvider func(string) int,
+) {
+	tenantID := effectiveTenantID(c)
+	authDir = managementauthfiles.TenantAuthDir(h.cfg.AuthDir, tenantID)
+	saveRecord = func(ctx context.Context, record *coreauth.Auth) (string, error) {
+		return h.saveTenantTokenRecord(ctx, tenantID, record)
+	}
+	registerSession = func(state, provider string) {
+		RegisterOAuthSessionForTenant(state, provider, tenantID)
+	}
+	completeProvider = func(provider string) int {
+		return CompleteOAuthSessionsByProviderForTenant(provider, tenantID)
+	}
+	return authDir, saveRecord, registerSession, completeProvider
 }
 
 func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
+	authDir, saveRecord, registerSession, completeProvider := h.tenantOAuthBindings(c)
 
 	result, err := claudeprovider.StartOAuthLogin(ctx, claudeprovider.OAuthLoginOptions{
+		AuthDir:               authDir,
 		Config:                h.cfg,
 		WebUI:                 isWebUIRequest(c),
 		PreferredCallbackPort: anthropicCallbackPort,
 		CallbackTarget:        h.managementCallbackURL,
 		WaitCallback:          WaitOAuthCallbackFile,
 		CallbackWaitTimeout:   oauthCallbackWaitTimeout,
-		SaveRecord:            h.saveTokenRecord,
+		SaveRecord:            saveRecord,
 		Sessions: claudeprovider.SessionCallbacks{
-			Register:         RegisterOAuthSession,
+			Register:         registerSession,
 			SetError:         SetOAuthSessionError,
 			Complete:         CompleteOAuthSession,
-			CompleteProvider: CompleteOAuthSessionsByProvider,
+			CompleteProvider: completeProvider,
 		},
 	})
 	if err != nil {
@@ -99,8 +172,10 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 
 func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
+	authDir, saveRecord, registerSession, completeProvider := h.tenantOAuthBindings(c)
 
 	result, err := geminicli.StartOAuthLogin(ctx, geminicli.OAuthLoginOptions{
+		AuthDir:             authDir,
 		Config:              h.cfg,
 		ProjectID:           c.Query("project_id"),
 		WebUI:               isWebUIRequest(c),
@@ -108,12 +183,12 @@ func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 		CallbackTarget:      h.managementCallbackURL,
 		WaitCallback:        WaitOAuthCallbackFile,
 		CallbackWaitTimeout: oauthCallbackWaitTimeout,
-		SaveRecord:          h.saveTokenRecord,
+		SaveRecord:          saveRecord,
 		Sessions: geminicli.SessionCallbacks{
-			Register:         RegisterOAuthSession,
+			Register:         registerSession,
 			SetError:         SetOAuthSessionError,
 			Complete:         CompleteOAuthSession,
-			CompleteProvider: CompleteOAuthSessionsByProvider,
+			CompleteProvider: completeProvider,
 		},
 	})
 	if err != nil {
@@ -140,20 +215,22 @@ func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 
 func (h *Handler) RequestCodexToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
+	authDir, saveRecord, registerSession, completeProvider := h.tenantOAuthBindings(c)
 
 	result, err := codexprovider.StartOAuthLogin(ctx, codexprovider.OAuthLoginOptions{
+		AuthDir:             authDir,
 		Config:              h.cfg,
 		WebUI:               isWebUIRequest(c),
 		CallbackPort:        codexCallbackPort,
 		CallbackTarget:      h.managementCallbackURL,
 		WaitCallback:        WaitOAuthCallbackFile,
 		CallbackWaitTimeout: oauthCallbackWaitTimeout,
-		SaveRecord:          h.saveTokenRecord,
+		SaveRecord:          saveRecord,
 		Sessions: codexprovider.SessionCallbacks{
-			Register:         RegisterOAuthSession,
+			Register:         registerSession,
 			SetError:         SetOAuthSessionError,
 			Complete:         CompleteOAuthSession,
-			CompleteProvider: CompleteOAuthSessionsByProvider,
+			CompleteProvider: completeProvider,
 		},
 	})
 	if err != nil {
@@ -179,19 +256,21 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 
 func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
+	authDir, saveRecord, registerSession, completeProvider := h.tenantOAuthBindings(c)
 
 	result, err := antigravityprovider.StartOAuthLogin(ctx, antigravityprovider.OAuthLoginOptions{
+		AuthDir:             authDir,
 		Config:              h.cfg,
 		WebUI:               isWebUIRequest(c),
 		CallbackTarget:      h.managementCallbackURL,
 		WaitCallback:        WaitOAuthCallbackFile,
 		CallbackWaitTimeout: oauthCallbackWaitTimeout,
-		SaveRecord:          h.saveTokenRecord,
+		SaveRecord:          saveRecord,
 		Sessions: antigravityprovider.SessionCallbacks{
-			Register:         RegisterOAuthSession,
+			Register:         registerSession,
 			SetError:         SetOAuthSessionError,
 			Complete:         CompleteOAuthSession,
-			CompleteProvider: CompleteOAuthSessionsByProvider,
+			CompleteProvider: completeProvider,
 		},
 	})
 	if err != nil {
@@ -219,12 +298,13 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 
 func (h *Handler) RequestQwenToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
+	_, saveRecord, registerSession, _ := h.tenantOAuthBindings(c)
 
 	result, err := qwenprovider.StartDeviceLogin(ctx, qwenprovider.DeviceLoginOptions{
 		Config:     h.cfg,
-		SaveRecord: h.saveTokenRecord,
+		SaveRecord: saveRecord,
 		Sessions: qwenprovider.SessionCallbacks{
-			Register: RegisterOAuthSession,
+			Register: registerSession,
 			SetError: SetOAuthSessionError,
 			Complete: CompleteOAuthSession,
 		},
@@ -240,15 +320,16 @@ func (h *Handler) RequestQwenToken(c *gin.Context) {
 
 func (h *Handler) RequestKimiToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
+	_, saveRecord, registerSession, completeProvider := h.tenantOAuthBindings(c)
 
 	result, err := kimiprovider.StartDeviceLogin(ctx, kimiprovider.DeviceLoginOptions{
 		Config:     h.cfg,
-		SaveRecord: h.saveTokenRecord,
+		SaveRecord: saveRecord,
 		Sessions: kimiprovider.SessionCallbacks{
-			Register:         RegisterOAuthSession,
+			Register:         registerSession,
 			SetError:         SetOAuthSessionError,
 			Complete:         CompleteOAuthSession,
-			CompleteProvider: CompleteOAuthSessionsByProvider,
+			CompleteProvider: completeProvider,
 		},
 	})
 	if err != nil {
@@ -262,20 +343,22 @@ func (h *Handler) RequestKimiToken(c *gin.Context) {
 
 func (h *Handler) RequestXAIToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
+	authDir, saveRecord, registerSession, completeProvider := h.tenantOAuthBindings(c)
 
 	result, err := xaiprovider.StartOAuthLogin(ctx, xaiprovider.OAuthLoginOptions{
+		AuthDir:             authDir,
 		Config:              h.cfg,
 		WebUI:               isWebUIRequest(c),
 		UsingAPI:            queryBool(c, "using_api"),
 		CallbackTarget:      h.managementCallbackURL,
 		WaitCallback:        WaitOAuthCallbackFile,
 		CallbackWaitTimeout: oauthCallbackWaitTimeout,
-		SaveRecord:          h.saveTokenRecord,
+		SaveRecord:          saveRecord,
 		Sessions: xaiprovider.SessionCallbacks{
-			Register:         RegisterOAuthSession,
+			Register:         registerSession,
 			SetError:         SetOAuthSessionError,
 			Complete:         CompleteOAuthSession,
-			CompleteProvider: CompleteOAuthSessionsByProvider,
+			CompleteProvider: completeProvider,
 		},
 	})
 	if err != nil {
@@ -307,19 +390,21 @@ func (h *Handler) RequestXAIToken(c *gin.Context) {
 
 func (h *Handler) RequestIFlowToken(c *gin.Context) {
 	ctx := detachedAuthContext(c)
+	authDir, saveRecord, registerSession, completeProvider := h.tenantOAuthBindings(c)
 
 	result, err := iflowprovider.StartOAuthLogin(ctx, iflowprovider.OAuthLoginOptions{
+		AuthDir:             authDir,
 		Config:              h.cfg,
 		WebUI:               isWebUIRequest(c),
 		CallbackTarget:      h.managementCallbackURL,
 		WaitCallback:        WaitOAuthCallbackFile,
 		CallbackWaitTimeout: oauthCallbackWaitTimeout,
-		SaveRecord:          h.saveTokenRecord,
+		SaveRecord:          saveRecord,
 		Sessions: iflowprovider.SessionCallbacks{
-			Register:         RegisterOAuthSession,
+			Register:         registerSession,
 			SetError:         SetOAuthSessionError,
 			Complete:         CompleteOAuthSession,
-			CompleteProvider: CompleteOAuthSessionsByProvider,
+			CompleteProvider: completeProvider,
 		},
 	})
 	if err != nil {
@@ -342,6 +427,7 @@ func (h *Handler) RequestIFlowToken(c *gin.Context) {
 
 func (h *Handler) RequestIFlowCookieToken(c *gin.Context) {
 	ctx := requestAuthContext(c)
+	authDir, saveRecord, _, _ := h.tenantOAuthBindings(c)
 
 	var payload struct {
 		Cookie string `json:"cookie"`
@@ -353,7 +439,8 @@ func (h *Handler) RequestIFlowCookieToken(c *gin.Context) {
 
 	result, err := iflowprovider.AuthenticateCookie(ctx, payload.Cookie, iflowprovider.CookieLoginOptions{
 		Config:     h.cfg,
-		SaveRecord: h.saveTokenRecord,
+		AuthDir:    authDir,
+		SaveRecord: saveRecord,
 	})
 	if err != nil {
 		var duplicate iflowprovider.DuplicateBXAuthError
@@ -394,9 +481,13 @@ func (h *Handler) GetAuthStatus(c *gin.Context) {
 		return
 	}
 
-	_, status, ok := GetOAuthSession(state)
+	_, tenantID, status, ok := GetOAuthSessionWithTenant(state)
 	if !ok {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		return
+	}
+	if tenantID != "" && tenantID != effectiveTenantID(c) {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "unknown or expired state"})
 		return
 	}
 	if status == oauthSessionStatusCompleted {

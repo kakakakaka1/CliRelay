@@ -28,6 +28,7 @@ type LogsDeleter func(string) (int64, error)
 type Option func(*Service)
 
 type Service struct {
+	tenantID             string
 	sanitizeChannels     ChannelSanitizer
 	validateChannelGroup ChannelGroupValidator
 	validateEntry        EntryValidator
@@ -54,6 +55,12 @@ type EntryPatch struct {
 
 type DeleteEntryResult struct {
 	LogsDeleted int64
+}
+
+func WithTenantID(tenantID string) Option {
+	return func(s *Service) {
+		s.tenantID = strings.TrimSpace(tenantID)
+	}
 }
 
 func WithChannelGroupValidator(fn ChannelGroupValidator) Option {
@@ -85,7 +92,7 @@ func NewService(sanitizeChannels ChannelSanitizer, opts ...Option) *Service {
 }
 
 func (s *Service) EnabledKeys() []string {
-	rows := usage.ListAPIKeys()
+	rows := usage.ListAPIKeysForTenant(s.tenantID)
 	keys := make([]string, 0, len(rows))
 	for _, row := range rows {
 		if !row.Disabled {
@@ -96,15 +103,15 @@ func (s *Service) EnabledKeys() []string {
 }
 
 func (s *Service) ListRows() []usage.APIKeyRow {
-	return usage.ListAPIKeys()
+	return usage.ListAPIKeysForTenant(s.tenantID)
 }
 
 func (s *Service) GetRow(key string) *usage.APIKeyRow {
-	return usage.GetAPIKey(strings.TrimSpace(key))
+	return usage.GetAPIKeyForTenant(s.tenantID, strings.TrimSpace(key))
 }
 
 func (s *Service) GetRowByID(id string) *usage.APIKeyRow {
-	return usage.GetAPIKeyByID(strings.TrimSpace(id))
+	return usage.GetAPIKeyByIDForTenant(s.tenantID, strings.TrimSpace(id))
 }
 
 func (s *Service) ReplaceKeys(keys []string) error {
@@ -115,7 +122,7 @@ func (s *Service) ReplaceKeys(keys []string) error {
 			rows = append(rows, usage.APIKeyRow{Key: trimmed})
 		}
 	}
-	return usage.ReplaceAllAPIKeys(rows)
+	return usage.ReplaceAllAPIKeysForTenant(s.tenantID, rows)
 }
 
 func (s *Service) PatchKey(oldKey string, newKey string) error {
@@ -125,21 +132,21 @@ func (s *Service) PatchKey(oldKey string, newKey string) error {
 		if newKey == "" {
 			return nil
 		}
-		return usage.UpsertAPIKey(usage.APIKeyRow{Key: newKey})
+		return usage.UpsertAPIKeyForTenant(s.tenantID, usage.APIKeyRow{Key: newKey})
 	}
-	existing := usage.GetAPIKey(oldKey)
+	existing := usage.GetAPIKeyForTenant(s.tenantID, oldKey)
 	if existing == nil {
 		if newKey == "" {
 			return nil
 		}
-		return usage.UpsertAPIKey(usage.APIKeyRow{Key: newKey})
+		return usage.UpsertAPIKeyForTenant(s.tenantID, usage.APIKeyRow{Key: newKey})
 	}
 	if newKey == "" {
-		return usage.DeleteAPIKeyByID(existing.ID)
+		return usage.DeleteAPIKeyByIDForTenant(s.tenantID, existing.ID)
 	}
 	updated := *existing
 	updated.Key = newKey
-	return usage.UpdateAPIKeyByID(updated)
+	return usage.UpdateAPIKeyByIDForTenant(s.tenantID, updated)
 }
 
 func (s *Service) DeleteKey(key string) error {
@@ -147,11 +154,11 @@ func (s *Service) DeleteKey(key string) error {
 	if key == "" {
 		return ErrMissingValue
 	}
-	return usage.DeleteAPIKey(key)
+	return usage.DeleteAPIKeyForTenant(s.tenantID, key)
 }
 
 func (s *Service) PermissionProfiles() []usage.APIKeyPermissionProfileRow {
-	return usage.ListAPIKeyPermissionProfiles()
+	return usage.ListAPIKeyPermissionProfilesForTenant(s.tenantID)
 }
 
 func (s *Service) ReplacePermissionProfiles(profiles []usage.APIKeyPermissionProfileRow) error {
@@ -174,17 +181,17 @@ func (s *Service) ReplacePermissionProfiles(profiles []usage.APIKeyPermissionPro
 			normalized[idx].AllowedChannels = cleaned
 		}
 	}
-	return usage.ReplaceAllAPIKeyPermissionProfiles(normalized)
+	return usage.ReplaceAllAPIKeyPermissionProfilesForTenant(s.tenantID, normalized)
 }
 
 func (s *Service) RenameAllowedChannelRestrictions(oldNameSet map[string]struct{}, newName string) error {
-	for _, row := range usage.ListAPIKeys() {
+	for _, row := range usage.ListAPIKeysForTenant(s.tenantID) {
 		channels, changed := renameChannelRestrictions(row.AllowedChannels, oldNameSet, newName)
 		if !changed {
 			continue
 		}
 		row.AllowedChannels = channels
-		if err := usage.UpsertAPIKey(row); err != nil {
+		if err := usage.UpsertAPIKeyForTenant(s.tenantID, row); err != nil {
 			return err
 		}
 	}
@@ -192,13 +199,13 @@ func (s *Service) RenameAllowedChannelRestrictions(oldNameSet map[string]struct{
 }
 
 func (s *Service) RemoveAllowedChannelRestrictions(oldNameSet map[string]struct{}) error {
-	for _, row := range usage.ListAPIKeys() {
+	for _, row := range usage.ListAPIKeysForTenant(s.tenantID) {
 		channels, changed := removeChannelRestrictions(row.AllowedChannels, oldNameSet)
 		if !changed {
 			continue
 		}
 		row.AllowedChannels = channels
-		if err := usage.UpsertAPIKey(row); err != nil {
+		if err := usage.UpsertAPIKeyForTenant(s.tenantID, row); err != nil {
 			return err
 		}
 	}
@@ -206,7 +213,7 @@ func (s *Service) RemoveAllowedChannelRestrictions(oldNameSet map[string]struct{
 }
 
 func (s *Service) RenamePermissionProfileChannelRestrictions(oldNameSet map[string]struct{}, newName string) error {
-	profiles := usage.ListAPIKeyPermissionProfiles()
+	profiles := usage.ListAPIKeyPermissionProfilesForTenant(s.tenantID)
 	changed := false
 	for idx := range profiles {
 		channels, channelsChanged := renameChannelRestrictions(profiles[idx].AllowedChannels, oldNameSet, newName)
@@ -223,7 +230,7 @@ func (s *Service) RenamePermissionProfileChannelRestrictions(oldNameSet map[stri
 }
 
 func (s *Service) RemovePermissionProfileChannelRestrictions(oldNameSet map[string]struct{}) error {
-	profiles := usage.ListAPIKeyPermissionProfiles()
+	profiles := usage.ListAPIKeyPermissionProfilesForTenant(s.tenantID)
 	changed := false
 	for idx := range profiles {
 		channels, channelsChanged := removeChannelRestrictions(profiles[idx].AllowedChannels, oldNameSet)
@@ -240,7 +247,7 @@ func (s *Service) RemovePermissionProfileChannelRestrictions(oldNameSet map[stri
 }
 
 func (s *Service) ListEntries() []config.APIKeyEntry {
-	rows := usage.EffectiveAPIKeyRows(usage.ListAPIKeys())
+	rows := usage.EffectiveAPIKeyRowsForTenant(s.tenantID, usage.ListAPIKeysForTenant(s.tenantID))
 	entries := make([]config.APIKeyEntry, 0, len(rows))
 	for _, row := range rows {
 		entries = append(entries, row.ToConfigEntry())
@@ -257,11 +264,11 @@ func (s *Service) ReplaceEntries(entries []config.APIKeyEntry) error {
 		}
 		rows = append(rows, usage.APIKeyRowFromConfig(normalized))
 	}
-	return usage.ReplaceAllAPIKeys(rows)
+	return usage.ReplaceAllAPIKeysForTenant(s.tenantID, rows)
 }
 
 func (s *Service) PatchEntry(id *string, index *int, match *string, patch EntryPatch) error {
-	existing := resolvePatchTargetRow(id, index, match)
+	existing := s.resolvePatchTargetRow(id, index, match)
 	if existing == nil {
 		return ErrItemNotFound
 	}
@@ -321,23 +328,23 @@ func (s *Service) PatchEntry(id *string, index *int, match *string, patch EntryP
 	}
 	desiredKey := strings.TrimSpace(normalized.Key)
 	if desiredKey != originalKey {
-		if existingKey := usage.GetAPIKey(desiredKey); existingKey != nil && strings.TrimSpace(existingKey.ID) != originalID {
+		if existingKey := usage.GetAPIKeyForTenant(s.tenantID, desiredKey); existingKey != nil && strings.TrimSpace(existingKey.ID) != originalID {
 			return ErrDuplicateKey
 		}
 	}
 	updated := usage.APIKeyRowFromConfig(normalized)
 	updated.ID = originalID
-	return usage.UpdateAPIKeyByID(updated)
+	return usage.UpdateAPIKeyByIDForTenant(s.tenantID, updated)
 }
 
 func (s *Service) DeleteEntry(key string, id *string, index *int, deleteLogs bool) (DeleteEntryResult, error) {
 	targetKey := strings.TrimSpace(key)
-	row := resolvePatchTargetRow(id, index, &targetKey)
+	row := s.resolvePatchTargetRow(id, index, &targetKey)
 	if row == nil {
 		return DeleteEntryResult{}, ErrMissingKeyOrIndex
 	}
 	targetKey = row.Key
-	if err := usage.DeleteAPIKeyByID(row.ID); err != nil {
+	if err := usage.DeleteAPIKeyByIDForTenant(s.tenantID, row.ID); err != nil {
 		return DeleteEntryResult{}, err
 	}
 
@@ -382,21 +389,21 @@ func (s *Service) prepareEntryForSave(entry config.APIKeyEntry) (config.APIKeyEn
 	return entry, nil
 }
 
-func resolvePatchTargetRow(id *string, index *int, match *string) *usage.APIKeyRow {
+func (s *Service) resolvePatchTargetRow(id *string, index *int, match *string) *usage.APIKeyRow {
 	if id != nil {
 		if targetID := strings.TrimSpace(*id); targetID != "" {
-			return usage.GetAPIKeyByID(targetID)
+			return usage.GetAPIKeyByIDForTenant(s.tenantID, targetID)
 		}
 	}
 	if match != nil {
 		if targetKey := strings.TrimSpace(*match); targetKey != "" {
-			return usage.GetAPIKey(targetKey)
+			return usage.GetAPIKeyForTenant(s.tenantID, targetKey)
 		}
 	}
 	if index == nil || *index < 0 {
 		return nil
 	}
-	rows := usage.ListAPIKeys()
+	rows := usage.ListAPIKeysForTenant(s.tenantID)
 	if *index >= len(rows) {
 		return nil
 	}

@@ -28,6 +28,20 @@ func (_u *ModelConfigUpdate) Where(ps ...predicate.ModelConfig) *ModelConfigUpda
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *ModelConfigUpdate) SetTenantID(v string) *ModelConfigUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *ModelConfigUpdate) SetNillableTenantID(v *string) *ModelConfigUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetModelID sets the "model_id" field.
 func (_u *ModelConfigUpdate) SetModelID(v string) *ModelConfigUpdate {
 	_u.mutation.SetModelID(v)
@@ -328,6 +342,9 @@ func (_u *ModelConfigUpdate) sqlSave(ctx context.Context) (_node int, err error)
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(modelconfig.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.ModelID(); ok {
 		_spec.SetField(modelconfig.FieldModelID, field.TypeString, value)
 	}
@@ -412,6 +429,20 @@ type ModelConfigUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *ModelConfigMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *ModelConfigUpdateOne) SetTenantID(v string) *ModelConfigUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *ModelConfigUpdateOne) SetNillableTenantID(v *string) *ModelConfigUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetModelID sets the "model_id" field.
@@ -743,6 +774,9 @@ func (_u *ModelConfigUpdateOne) sqlSave(ctx context.Context) (_node *ModelConfig
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(modelconfig.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.ModelID(); ok {
 		_spec.SetField(modelconfig.FieldModelID, field.TypeString, value)

@@ -19,6 +19,20 @@ type IdentityFingerprintAccountPolicyCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *IdentityFingerprintAccountPolicyCreate) SetTenantID(v string) *IdentityFingerprintAccountPolicyCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *IdentityFingerprintAccountPolicyCreate) SetNillableTenantID(v *string) *IdentityFingerprintAccountPolicyCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetProvider sets the "provider" field.
 func (_c *IdentityFingerprintAccountPolicyCreate) SetProvider(v string) *IdentityFingerprintAccountPolicyCreate {
 	_c.mutation.SetProvider(v)
@@ -122,6 +136,10 @@ func (_c *IdentityFingerprintAccountPolicyCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *IdentityFingerprintAccountPolicyCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := identityfingerprintaccountpolicy.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.Strategy(); !ok {
 		v := identityfingerprintaccountpolicy.DefaultStrategy
 		_c.mutation.SetStrategy(v)
@@ -142,6 +160,9 @@ func (_c *IdentityFingerprintAccountPolicyCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *IdentityFingerprintAccountPolicyCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "IdentityFingerprintAccountPolicy.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.Provider(); !ok {
 		return &ValidationError{Name: "provider", err: errors.New(`ent: missing required field "IdentityFingerprintAccountPolicy.provider"`)}
 	}
@@ -186,6 +207,10 @@ func (_c *IdentityFingerprintAccountPolicyCreate) createSpec() (*IdentityFingerp
 		_node = &IdentityFingerprintAccountPolicy{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(identityfingerprintaccountpolicy.Table, sqlgraph.NewFieldSpec(identityfingerprintaccountpolicy.FieldID, field.TypeInt))
 	)
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(identityfingerprintaccountpolicy.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
+	}
 	if value, ok := _c.mutation.Provider(); ok {
 		_spec.SetField(identityfingerprintaccountpolicy.FieldProvider, field.TypeString, value)
 		_node.Provider = value

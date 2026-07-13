@@ -28,6 +28,20 @@ func (_u *AuthFileQuotaSnapshotPointUpdate) Where(ps ...predicate.AuthFileQuotaS
 	return _u
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_u *AuthFileQuotaSnapshotPointUpdate) SetTenantID(v string) *AuthFileQuotaSnapshotPointUpdate {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *AuthFileQuotaSnapshotPointUpdate) SetNillableTenantID(v *string) *AuthFileQuotaSnapshotPointUpdate {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
+}
+
 // SetRecordedAt sets the "recorded_at" field.
 func (_u *AuthFileQuotaSnapshotPointUpdate) SetRecordedAt(v time.Time) *AuthFileQuotaSnapshotPointUpdate {
 	_u.mutation.SetRecordedAt(v)
@@ -221,6 +235,9 @@ func (_u *AuthFileQuotaSnapshotPointUpdate) sqlSave(ctx context.Context) (_node 
 			}
 		}
 	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(authfilequotasnapshotpoint.FieldTenantID, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.RecordedAt(); ok {
 		_spec.SetField(authfilequotasnapshotpoint.FieldRecordedAt, field.TypeTime, value)
 	}
@@ -278,6 +295,20 @@ type AuthFileQuotaSnapshotPointUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *AuthFileQuotaSnapshotPointMutation
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_u *AuthFileQuotaSnapshotPointUpdateOne) SetTenantID(v string) *AuthFileQuotaSnapshotPointUpdateOne {
+	_u.mutation.SetTenantID(v)
+	return _u
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_u *AuthFileQuotaSnapshotPointUpdateOne) SetNillableTenantID(v *string) *AuthFileQuotaSnapshotPointUpdateOne {
+	if v != nil {
+		_u.SetTenantID(*v)
+	}
+	return _u
 }
 
 // SetRecordedAt sets the "recorded_at" field.
@@ -502,6 +533,9 @@ func (_u *AuthFileQuotaSnapshotPointUpdateOne) sqlSave(ctx context.Context) (_no
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TenantID(); ok {
+		_spec.SetField(authfilequotasnapshotpoint.FieldTenantID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.RecordedAt(); ok {
 		_spec.SetField(authfilequotasnapshotpoint.FieldRecordedAt, field.TypeTime, value)

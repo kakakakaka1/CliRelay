@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	managementusagelogs "github.com/router-for-me/CLIProxyAPI/v6/internal/management/usagelogs"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	log "github.com/sirupsen/logrus"
@@ -25,11 +26,19 @@ func (h *Handler) UsageLogs() *UsageLogsHandler {
 	return &UsageLogsHandler{Handler: h}
 }
 
-func (h *UsageLogsHandler) service() *managementusagelogs.Service {
-	if h == nil {
-		return managementusagelogs.New(nil, nil)
+func (h *UsageLogsHandler) service(c *gin.Context) *managementusagelogs.Service {
+	tenantID := identity.SystemTenantID
+	if principal, ok := principalFromContext(c); ok && strings.TrimSpace(principal.EffectiveTenant.ID) != "" {
+		tenantID = principal.EffectiveTenant.ID
 	}
-	return managementusagelogs.New(h.cfg, h.authManager)
+	return h.serviceForTenant(tenantID)
+}
+
+func (h *UsageLogsHandler) serviceForTenant(tenantID string) *managementusagelogs.Service {
+	if h == nil {
+		return managementusagelogs.NewForTenant(tenantID, nil, nil)
+	}
+	return managementusagelogs.NewForTenant(tenantID, h.cfg, h.authManager)
 }
 
 // clearTrendCache remains on the root handler as a narrow compatibility bridge
@@ -70,7 +79,7 @@ func (h *UsageLogsHandler) GetUsageLogs(c *gin.Context) {
 		deduped = append(deduped, v)
 	}
 
-	payload, err := h.service().ManagementLogs(managementusagelogs.ManagementLogQueryInput{
+	payload, err := h.service(c).ManagementLogs(managementusagelogs.ManagementLogQueryInput{
 		Page:            intQueryDefault(c, "page", 1),
 		Size:            intQueryDefault(c, "size", 50),
 		Days:            intQueryDefault(c, "days", 7),
@@ -93,7 +102,7 @@ func (h *UsageLogsHandler) GetUsageLogs(c *gin.Context) {
 
 func (h *UsageLogsHandler) DeleteUsageLogs(c *gin.Context) {
 	if c.Request.ContentLength == 0 {
-		result, err := h.service().ClearAllRequestLogs()
+		result, err := h.service(c).ClearAllRequestLogs()
 		if err != nil {
 			log.Warnf("management usage logs: clear all request logs failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -108,7 +117,7 @@ func (h *UsageLogsHandler) DeleteUsageLogs(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	status, payload, err := h.service().ClearRequestLogs(usage.ClearRequestLogsOptions{
+	status, payload, err := h.service(c).ClearRequestLogs(usage.ClearRequestLogsOptions{
 		ClearBodyContent:    req.ClearBodyContent,
 		ClearDetailContent:  req.ClearDetailContent,
 		ClearRequestRecords: req.ClearRequestRecords,
@@ -126,7 +135,7 @@ func (h *UsageLogsHandler) GetLogContent(c *gin.Context) {
 	if !ok {
 		return
 	}
-	renderLogContentResponse(c, h.service().LogContent(
+	renderLogContentResponse(c, h.service(c).LogContent(
 		id,
 		managementusagelogs.NormalizeLogContentPartValue(c.Query("part")),
 		managementusagelogs.NormalizeLogContentFormatValue(c.Query("format")),
@@ -144,7 +153,7 @@ func (h *UsageLogsHandler) GetPublicUsageLogs(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "api_key parameter is required"})
 		return
 	}
-	payload, err := h.service().PublicUsageLogs(managementusagelogs.PublicLogQueryInput{
+	payload, err := h.serviceForTenant(usage.ResolveAPIKeyTenant(req.APIKey)).PublicUsageLogs(managementusagelogs.PublicLogQueryInput{
 		APIKey:          req.APIKey,
 		Models:          req.Models,
 		Channels:        req.Channels,
@@ -175,7 +184,7 @@ func (h *UsageLogsHandler) GetPublicUsageChartData(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "api_key parameter is required"})
 		return
 	}
-	payload, err := h.service().PublicChartData(req.APIKey, req.Days)
+	payload, err := h.serviceForTenant(usage.ResolveAPIKeyTenant(req.APIKey)).PublicChartData(req.APIKey, req.Days)
 	if err != nil {
 		log.Warnf("management usage logs: public chart data failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -200,12 +209,12 @@ func (h *UsageLogsHandler) GetPublicLogContent(c *gin.Context) {
 	if !ok {
 		return
 	}
-	renderLogContentResponse(c, h.service().PublicLogContent(id, req.APIKey, req.Part, req.Format))
+	renderLogContentResponse(c, h.serviceForTenant(usage.ResolveAPIKeyTenant(req.APIKey)).PublicLogContent(id, req.APIKey, req.Part, req.Format))
 }
 
 // GetUsageChartData returns pre-aggregated chart data for the management portal.
 func (h *UsageLogsHandler) GetUsageChartData(c *gin.Context) {
-	payload, err := h.service().UsageChartData(strings.TrimSpace(c.Query("api_key")), intQueryDefault(c, "days", 7))
+	payload, err := h.service(c).UsageChartData(strings.TrimSpace(c.Query("api_key")), intQueryDefault(c, "days", 7))
 	if err != nil {
 		log.Warnf("management usage logs: usage chart data failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -216,7 +225,7 @@ func (h *UsageLogsHandler) GetUsageChartData(c *gin.Context) {
 
 // GetEntityUsageStats returns aggregated statistics grouped by source or auth_index
 func (h *UsageLogsHandler) GetEntityUsageStats(c *gin.Context) {
-	payload, err := h.service().EntityUsageStats(
+	payload, err := h.service(c).EntityUsageStats(
 		strings.TrimSpace(c.Query("api_key")),
 		intQueryDefault(c, "days", 7),
 		queryStringList(c, "auth_index"),
@@ -289,13 +298,17 @@ func (h *UsageLogsHandler) GetAuthFileGroupTrend(c *gin.Context) {
 		days = 7
 	}
 
-	cacheKey := group + ":" + strconv.Itoa(days)
+	tenantID := identity.SystemTenantID
+	if principal, ok := principalFromContext(c); ok && strings.TrimSpace(principal.EffectiveTenant.ID) != "" {
+		tenantID = principal.EffectiveTenant.ID
+	}
+	cacheKey := tenantID + ":" + group + ":" + strconv.Itoa(days)
 	if cached, ok := h.getTrendCache(cacheKey); ok {
 		c.JSON(http.StatusOK, cached)
 		return
 	}
 
-	payload, err := h.service().AuthFileGroupTrend(group, days)
+	payload, err := h.service(c).AuthFileGroupTrend(group, days)
 	if err != nil {
 		log.Warnf("management usage logs: auth file group trend failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -318,7 +331,7 @@ func (h *UsageLogsHandler) GetAuthFileTrend(c *gin.Context) {
 	if hours > 24 {
 		hours = 24
 	}
-	status, payload := h.service().AuthFileTrend(authIndex, days, hours)
+	status, payload := h.service(c).AuthFileTrend(authIndex, days, hours)
 	c.JSON(status, payload)
 }
 

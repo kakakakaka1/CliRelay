@@ -6,13 +6,17 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/middleware"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	settingsstore "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/store"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
@@ -112,6 +116,18 @@ func initializeRuntimeDataStack(cfg *config.Config, configPath string, loc *time
 	if err := usage.InitPostgres(cfg.Postgres, cfg.RequestLogStorage, loc); err != nil {
 		return err
 	}
+	bootstrapPassword := strings.TrimSpace(os.Getenv("CLIRELAY_ADMIN_PASSWORD"))
+	if bootstrapPassword == "" {
+		bootstrapPassword = strings.TrimSpace(os.Getenv("MANAGEMENT_PASSWORD"))
+	}
+	if bootstrapPassword == "" {
+		bootstrapPassword = strings.TrimSpace(cfg.RemoteManagement.SecretKey)
+	}
+	identityService := identity.NewService(usage.RuntimeDB())
+	if err := identityService.Bootstrap(context.Background(), bootstrapPassword); err != nil {
+		return fmt.Errorf("identity bootstrap: %w", err)
+	}
+	identity.SetDefault(identityService)
 	usage.MigrateAPIKeysFromConfig(cfg, configPath)
 	usage.MigrateAPIKeyPermissionProfilesFromYAML(configPath)
 	usage.MigrateRoutingConfigFromConfig(cfg, configPath)

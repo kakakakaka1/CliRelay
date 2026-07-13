@@ -20,12 +20,11 @@ type codexOAuthAdmissionRequest struct {
 }
 
 func (h *Handler) GetCodexOAuthAdmission(c *gin.Context) {
-	h.mu.Lock()
+	cfg := h.providerConfigForTenant(c)
 	current := config.CodexOAuthAdmissionConfig{}
-	if h.cfg != nil {
-		current = h.cfg.CodexOAuthAdmission
+	if cfg != nil {
+		current = cfg.CodexOAuthAdmission
 	}
-	h.mu.Unlock()
 
 	current = config.CleanCodexOAuthAdmission(current)
 	c.JSON(http.StatusOK, codexOAuthAdmissionResponse{
@@ -48,20 +47,14 @@ func (h *Handler) PutCodexOAuthAdmission(c *gin.Context) {
 	}
 	next := config.CodexOAuthAdmissionConfig{AllowedClientPresets: allowedClients}
 
-	h.mu.Lock()
-	if h.cfg == nil {
-		h.cfg = &config.Config{}
-	}
-	previous := h.cfg.CodexOAuthAdmission
-	h.cfg.CodexOAuthAdmission = next
-	h.mu.Unlock()
-
-	if !h.persistRuntimeSetting(c, settingsstore.RuntimeSettingCodexOAuthAdmission, next) {
-		h.mu.Lock()
-		if h.cfg != nil {
-			h.cfg.CodexOAuthAdmission = previous
-		}
-		h.mu.Unlock()
+	cfg := h.providerConfigForTenant(c)
+	if cfg == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "config unavailable"})
 		return
+	}
+	previous := cfg.CodexOAuthAdmission
+	cfg.CodexOAuthAdmission = next
+	if !h.persistRuntimeSettingForTenant(c, settingsstore.RuntimeSettingCodexOAuthAdmission, next, cfg) {
+		cfg.CodexOAuthAdmission = previous
 	}
 }

@@ -16,7 +16,7 @@ const (
 	DefaultTaskTTL     = 30 * time.Minute
 )
 
-type ExecuteFunc func(context.Context, []byte, string) ([]byte, error)
+type ExecuteFunc func(context.Context, string, []byte, string) ([]byte, error)
 
 type Service struct {
 	mu           sync.Mutex
@@ -30,6 +30,7 @@ type Service struct {
 
 type task struct {
 	ID        string
+	TenantID  string
 	Status    string
 	Phase     string
 	CreatedAt time.Time
@@ -64,11 +65,12 @@ func NewService(execute ExecuteFunc, systemAPIKey string) *Service {
 	}
 }
 
-func (s *Service) Start(payload []byte, alt string) Snapshot {
+func (s *Service) Start(tenantID string, payload []byte, alt string) Snapshot {
 	s.purgeExpired()
 	now := s.now()
 	item := &task{
 		ID:        uuid.NewString(),
+		TenantID:  strings.TrimSpace(tenantID),
 		Status:    "queued",
 		Phase:     "queued",
 		CreatedAt: now,
@@ -83,22 +85,22 @@ func (s *Service) Start(payload []byte, alt string) Snapshot {
 	snapshot := s.snapshot(item)
 	s.mu.Unlock()
 
-	go s.run(item.ID, payload, alt)
+	go s.run(item.TenantID, item.ID, payload, alt)
 	return snapshot
 }
 
-func (s *Service) Get(taskID string) (Snapshot, bool) {
+func (s *Service) Get(tenantID, taskID string) (Snapshot, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	item := s.tasks[taskID]
-	if item == nil {
+	if item == nil || item.TenantID != strings.TrimSpace(tenantID) {
 		return Snapshot{}, false
 	}
 	return s.snapshot(item), true
 }
 
-func (s *Service) run(taskID string, payload []byte, alt string) {
+func (s *Service) run(tenantID, taskID string, payload []byte, alt string) {
 	s.update(taskID, func(item *task) {
 		item.Status = "running"
 		item.Phase = "queued"
@@ -115,7 +117,7 @@ func (s *Service) run(taskID string, payload []byte, alt string) {
 		})
 	})
 
-	result, err := s.execute(ctx, payload, alt)
+	result, err := s.execute(ctx, tenantID, payload, alt)
 	if err != nil {
 		status := 502
 		if statusErr, ok := err.(statusCoder); ok && statusErr.StatusCode() > 0 {

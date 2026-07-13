@@ -20,6 +20,20 @@ type ModelOwnerPresetCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *ModelOwnerPresetCreate) SetTenantID(v string) *ModelOwnerPresetCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *ModelOwnerPresetCreate) SetNillableTenantID(v *string) *ModelOwnerPresetCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetValue sets the "value" field.
 func (_c *ModelOwnerPresetCreate) SetValue(v string) *ModelOwnerPresetCreate {
 	_c.mutation.SetValue(v)
@@ -109,6 +123,10 @@ func (_c *ModelOwnerPresetCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *ModelOwnerPresetCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := modelownerpreset.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.Label(); !ok {
 		v := modelownerpreset.DefaultLabel
 		_c.mutation.SetLabel(v)
@@ -125,6 +143,9 @@ func (_c *ModelOwnerPresetCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *ModelOwnerPresetCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "ModelOwnerPreset.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.Value(); !ok {
 		return &ValidationError{Name: "value", err: errors.New(`ent: missing required field "ModelOwnerPreset.value"`)}
 	}
@@ -166,6 +187,10 @@ func (_c *ModelOwnerPresetCreate) createSpec() (*ModelOwnerPreset, *sqlgraph.Cre
 		_node = &ModelOwnerPreset{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(modelownerpreset.Table, sqlgraph.NewFieldSpec(modelownerpreset.FieldID, field.TypeInt))
 	)
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(modelownerpreset.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
+	}
 	if value, ok := _c.mutation.Value(); ok {
 		_spec.SetField(modelownerpreset.FieldValue, field.TypeString, value)
 		_node.Value = value

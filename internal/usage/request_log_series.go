@@ -65,7 +65,7 @@ func QueryPublicChartData(apiKey string, days int) (PublicChartData, error) {
 	statsCutoff := CutoffStartUTC(days).Format(time.RFC3339)
 	heatmapCutoff := CutoffStartUTC(heatmapDays).Format(time.RFC3339)
 
-	params := LogQueryParams{APIKey: apiKey, Days: scanDays}
+	params := LogQueryParams{TenantID: ResolveAPIKeyTenant(apiKey), APIKey: apiKey, Days: scanDays}
 	where, args := buildWhereClause(params)
 	queryArgs := make([]interface{}, 0, len(args)+2)
 	queryArgs = append(queryArgs, statsCutoff, heatmapCutoff)
@@ -236,6 +236,10 @@ func sortedModelDistribution(points map[string]*ModelDistributionPoint) []ModelD
 
 // QueryDailySeries returns per-day aggregated request count and token usage for a given API key.
 func QueryDailySeries(apiKey string, days int) ([]DailySeriesPoint, error) {
+	return QueryDailySeriesForTenant(systemTenantID, apiKey, days)
+}
+
+func QueryDailySeriesForTenant(tenantID, apiKey string, days int) ([]DailySeriesPoint, error) {
 	db := getReadDB()
 	if db == nil {
 		return nil, nil
@@ -244,7 +248,7 @@ func QueryDailySeries(apiKey string, days int) ([]DailySeriesPoint, error) {
 		days = 7
 	}
 
-	params := LogQueryParams{APIKey: apiKey, Days: days}
+	params := LogQueryParams{TenantID: tenantID, APIKey: apiKey, Days: days}
 	where, args := buildWhereClause(params)
 
 	// NOTE: timestamps are stored as UTC RFC3339 strings; localtime converts them to the process timezone
@@ -276,6 +280,10 @@ func QueryDailySeries(apiKey string, days int) ([]DailySeriesPoint, error) {
 
 // QueryDailyHeatmapSeries returns sparse daily usage for the calendar heatmap.
 func QueryDailyHeatmapSeries(apiKey string, days int) ([]DailyHeatmapPoint, error) {
+	return QueryDailyHeatmapSeriesForTenant(systemTenantID, apiKey, days)
+}
+
+func QueryDailyHeatmapSeriesForTenant(tenantID, apiKey string, days int) ([]DailyHeatmapPoint, error) {
 	db := getReadDB()
 	if db == nil {
 		return nil, nil
@@ -284,7 +292,7 @@ func QueryDailyHeatmapSeries(apiKey string, days int) ([]DailyHeatmapPoint, erro
 		days = 365
 	}
 
-	params := LogQueryParams{APIKey: apiKey, Days: days}
+	params := LogQueryParams{TenantID: tenantID, APIKey: apiKey, Days: days}
 	where, args := buildWhereClause(params)
 
 	q := `SELECT date(timestamp, 'localtime') as d,
@@ -356,8 +364,8 @@ func querySessionSetsByDate(params LogQueryParams) (map[string]map[string]struct
 	where, args := buildWhereClause(params)
 	rows, err := db.Query(
 		`SELECT date(logs.timestamp, 'localtime'), content.session_id
-		   FROM (SELECT id, timestamp FROM request_logs`+where+`) logs
-		   JOIN request_log_content content ON content.log_id = logs.id
+		   FROM (SELECT tenant_id, id, timestamp FROM request_logs`+where+`) logs
+		   JOIN request_log_content content ON content.tenant_id = logs.tenant_id AND content.log_id = logs.id
 		  WHERE content.session_id <> ''`,
 		args...,
 	)
@@ -451,6 +459,10 @@ func sessionDetailKeyRank(key string) int {
 
 // QueryModelDistribution returns request count and token usage grouped by model for a given API key.
 func QueryModelDistribution(apiKey string, days int) ([]ModelDistributionPoint, error) {
+	return QueryModelDistributionForTenant(systemTenantID, apiKey, days)
+}
+
+func QueryModelDistributionForTenant(tenantID, apiKey string, days int) ([]ModelDistributionPoint, error) {
 	db := getReadDB()
 	if db == nil {
 		return nil, nil
@@ -459,7 +471,7 @@ func QueryModelDistribution(apiKey string, days int) ([]ModelDistributionPoint, 
 		days = 7
 	}
 
-	params := LogQueryParams{APIKey: apiKey, Days: days}
+	params := LogQueryParams{TenantID: tenantID, APIKey: apiKey, Days: days}
 	where, args := buildWhereClause(params)
 
 	q := `SELECT model,
@@ -495,6 +507,10 @@ type APIKeyDistributionPoint struct {
 
 // QueryAPIKeyDistribution returns request count and token usage grouped by api_key.
 func QueryAPIKeyDistribution(days int) ([]APIKeyDistributionPoint, error) {
+	return QueryAPIKeyDistributionForTenant(systemTenantID, days)
+}
+
+func QueryAPIKeyDistributionForTenant(tenantID string, days int) ([]APIKeyDistributionPoint, error) {
 	db := getReadDB()
 	if db == nil {
 		return nil, nil
@@ -503,9 +519,9 @@ func QueryAPIKeyDistribution(days int) ([]APIKeyDistributionPoint, error) {
 		days = 7
 	}
 
-	params := LogQueryParams{Days: days}
+	params := LogQueryParams{TenantID: tenantID, Days: days}
 	where, args := buildWhereClause(params)
-	currentByID := currentAPIKeyRowsByID()
+	currentByID := currentAPIKeyRowsByIDForTenant(tenantID)
 
 	q := `SELECT
 	             CASE
@@ -574,6 +590,11 @@ type HourlyModelPoint struct {
 
 // QueryHourlySeries returns per-hour token and model aggregates for the last N hours.
 func QueryHourlySeries(apiKey string, hours int) ([]HourlyTokenPoint, []HourlyModelPoint, error) {
+	return QueryHourlySeriesForTenant(systemTenantID, apiKey, hours)
+}
+
+func QueryHourlySeriesForTenant(tenantID, apiKey string, hours int) ([]HourlyTokenPoint, []HourlyModelPoint, error) {
+	tenantID = normalizeTenantID(tenantID)
 	db := getReadDB()
 	if db == nil {
 		return nil, nil, nil
@@ -588,10 +609,10 @@ func QueryHourlySeries(apiKey string, hours int) ([]HourlyTokenPoint, []HourlyMo
 	// Previously this used buildWhereClause + strings.Replace, but that failed
 	// because buildWhereClause uses parameterised queries (? placeholders)
 	// so the time value lives in args, not in the where string.
-	conditions := []string{"timestamp >= ?"}
-	args := []interface{}{cutoff}
+	conditions := []string{"tenant_id = ?", "timestamp >= ?"}
+	args := []interface{}{tenantID, cutoff}
 	if apiKey != "" {
-		if identity := ResolveAPIKeyIdentity(apiKey); identity != nil {
+		if identity := GetAPIKeyForTenant(tenantID, apiKey); identity != nil {
 			conditions = append(conditions, "(api_key_id = ? OR (trim(coalesce(api_key_id, '')) = '' AND api_key = ?))")
 			args = append(args, identity.ID, identity.Key)
 		} else {
@@ -654,6 +675,10 @@ type EntityStatPoint struct {
 // QueryEntityStats returns aggregates grouped by a given column (e.g. "source" or "auth_index").
 // Time range is derived from days logic.
 func QueryEntityStats(apiKey string, days int, groupColumn string, entityNames []string) ([]EntityStatPoint, error) {
+	return QueryEntityStatsForTenant(systemTenantID, apiKey, days, groupColumn, entityNames)
+}
+
+func QueryEntityStatsForTenant(tenantID, apiKey string, days int, groupColumn string, entityNames []string) ([]EntityStatPoint, error) {
 	db := getReadDB()
 	if db == nil {
 		return nil, nil
@@ -665,7 +690,7 @@ func QueryEntityStats(apiKey string, days int, groupColumn string, entityNames [
 		return nil, fmt.Errorf("usage: invalid group column")
 	}
 
-	params := LogQueryParams{APIKey: apiKey, Days: days}
+	params := LogQueryParams{TenantID: tenantID, APIKey: apiKey, Days: days}
 	where, args := buildWhereClause(params)
 	entityNames = normalizeEntityStatFilters(entityNames)
 	if len(entityNames) > 0 {

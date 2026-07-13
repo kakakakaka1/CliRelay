@@ -262,12 +262,12 @@ func (_q *ProxyPoolQuery) Clone() *ProxyPoolQuery {
 // Example:
 //
 //	var v []struct {
-//		Name string `json:"name,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.ProxyPool.Query().
-//		GroupBy(proxypool.FieldName).
+//		GroupBy(proxypool.FieldTenantID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *ProxyPoolQuery) GroupBy(field string, fields ...string) *ProxyPoolGroupBy {
@@ -285,11 +285,11 @@ func (_q *ProxyPoolQuery) GroupBy(field string, fields ...string) *ProxyPoolGrou
 // Example:
 //
 //	var v []struct {
-//		Name string `json:"name,omitempty"`
+//		TenantID string `json:"tenant_id,omitempty"`
 //	}
 //
 //	client.ProxyPool.Query().
-//		Select(proxypool.FieldName).
+//		Select(proxypool.FieldTenantID).
 //		Scan(ctx, &v)
 func (_q *ProxyPoolQuery) Select(fields ...string) *ProxyPoolSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

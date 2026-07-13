@@ -16,6 +16,8 @@ type ProxyPool struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID string `json:"id,omitempty"`
+	// TenantID holds the value of the "tenant_id" field.
+	TenantID string `json:"tenant_id,omitempty"`
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
 	// URL holds the value of the "url" field.
@@ -38,7 +40,7 @@ func (*ProxyPool) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case proxypool.FieldEnabled:
 			values[i] = new(sql.NullInt64)
-		case proxypool.FieldID, proxypool.FieldName, proxypool.FieldURL, proxypool.FieldDescription, proxypool.FieldCreatedAt, proxypool.FieldUpdatedAt:
+		case proxypool.FieldID, proxypool.FieldTenantID, proxypool.FieldName, proxypool.FieldURL, proxypool.FieldDescription, proxypool.FieldCreatedAt, proxypool.FieldUpdatedAt:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -60,6 +62,12 @@ func (_m *ProxyPool) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", values[i])
 			} else if value.Valid {
 				_m.ID = value.String
+			}
+		case proxypool.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
 			}
 		case proxypool.FieldName:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -133,6 +141,9 @@ func (_m *ProxyPool) String() string {
 	var builder strings.Builder
 	builder.WriteString("ProxyPool(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
 	builder.WriteString("name=")
 	builder.WriteString(_m.Name)
 	builder.WriteString(", ")

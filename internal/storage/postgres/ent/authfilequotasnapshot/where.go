@@ -54,6 +54,11 @@ func IDLTE(id int) predicate.AuthFileQuotaSnapshot {
 	return predicate.AuthFileQuotaSnapshot(sql.FieldLTE(FieldID, id))
 }
 
+// TenantID applies equality check predicate on the "tenant_id" field. It's identical to TenantIDEQ.
+func TenantID(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldEQ(FieldTenantID, v))
+}
+
 // DateKey applies equality check predicate on the "date_key" field. It's identical to DateKeyEQ.
 func DateKey(v string) predicate.AuthFileQuotaSnapshot {
 	return predicate.AuthFileQuotaSnapshot(sql.FieldEQ(FieldDateKey, v))
@@ -87,6 +92,71 @@ func Percent(v float64) predicate.AuthFileQuotaSnapshot {
 // RecordedAt applies equality check predicate on the "recorded_at" field. It's identical to RecordedAtEQ.
 func RecordedAt(v time.Time) predicate.AuthFileQuotaSnapshot {
 	return predicate.AuthFileQuotaSnapshot(sql.FieldEQ(FieldRecordedAt, v))
+}
+
+// TenantIDEQ applies the EQ predicate on the "tenant_id" field.
+func TenantIDEQ(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldEQ(FieldTenantID, v))
+}
+
+// TenantIDNEQ applies the NEQ predicate on the "tenant_id" field.
+func TenantIDNEQ(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldNEQ(FieldTenantID, v))
+}
+
+// TenantIDIn applies the In predicate on the "tenant_id" field.
+func TenantIDIn(vs ...string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldIn(FieldTenantID, vs...))
+}
+
+// TenantIDNotIn applies the NotIn predicate on the "tenant_id" field.
+func TenantIDNotIn(vs ...string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldNotIn(FieldTenantID, vs...))
+}
+
+// TenantIDGT applies the GT predicate on the "tenant_id" field.
+func TenantIDGT(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldGT(FieldTenantID, v))
+}
+
+// TenantIDGTE applies the GTE predicate on the "tenant_id" field.
+func TenantIDGTE(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldGTE(FieldTenantID, v))
+}
+
+// TenantIDLT applies the LT predicate on the "tenant_id" field.
+func TenantIDLT(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldLT(FieldTenantID, v))
+}
+
+// TenantIDLTE applies the LTE predicate on the "tenant_id" field.
+func TenantIDLTE(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldLTE(FieldTenantID, v))
+}
+
+// TenantIDContains applies the Contains predicate on the "tenant_id" field.
+func TenantIDContains(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldContains(FieldTenantID, v))
+}
+
+// TenantIDHasPrefix applies the HasPrefix predicate on the "tenant_id" field.
+func TenantIDHasPrefix(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldHasPrefix(FieldTenantID, v))
+}
+
+// TenantIDHasSuffix applies the HasSuffix predicate on the "tenant_id" field.
+func TenantIDHasSuffix(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldHasSuffix(FieldTenantID, v))
+}
+
+// TenantIDEqualFold applies the EqualFold predicate on the "tenant_id" field.
+func TenantIDEqualFold(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldEqualFold(FieldTenantID, v))
+}
+
+// TenantIDContainsFold applies the ContainsFold predicate on the "tenant_id" field.
+func TenantIDContainsFold(v string) predicate.AuthFileQuotaSnapshot {
+	return predicate.AuthFileQuotaSnapshot(sql.FieldContainsFold(FieldTenantID, v))
 }
 
 // DateKeyEQ applies the EQ predicate on the "date_key" field.

@@ -21,6 +21,10 @@ func routingConfigStore() sqlrouting.Store {
 	return sqlrouting.NewStore(getDB())
 }
 
+func routingConfigStoreForTenant(tenantID string) sqlrouting.Store {
+	return sqlrouting.NewTenantStore(getDB(), tenantID)
+}
+
 func ApplyStoredRoutingConfig(cfg *config.Config) bool {
 	if cfg == nil || !ConfigStoreAvailable() {
 		return false
@@ -52,6 +56,14 @@ func GetRoutingConfig() *config.RoutingConfig {
 	return routingConfigStore().Get()
 }
 
+func GetRoutingConfigForTenant(tenantID string) *config.RoutingConfig {
+	return routingConfigStoreForTenant(tenantID).Get()
+}
+
 func UpsertRoutingConfig(cfg config.RoutingConfig) error {
 	return routingConfigStore().Upsert(cfg)
+}
+
+func UpsertRoutingConfigForTenant(tenantID string, cfg config.RoutingConfig) error {
+	return routingConfigStoreForTenant(tenantID).Upsert(cfg)
 }

@@ -10,10 +10,26 @@ import (
 // SetConfig updates the runtime config snapshot used by request-time helpers.
 // Callers should provide the latest config on reload so per-credential alias mapping stays in sync.
 func (m *Manager) SetConfig(cfg *sdkconfig.Config) {
+	m.SetConfigForTenant(defaultTenantID, cfg)
+}
+
+func (m *Manager) SetConfigForTenant(tenantID string, cfg *sdkconfig.Config) {
 	if m == nil {
 		return
 	}
-	m.runtimeConfig.Store(newRuntimeConfigSnapshot(cfg))
+	tenantID = normalizedTenantID(tenantID)
+	current, _ := m.runtimeConfig.Load().(runtimeConfigSnapshotSet)
+	next := make(runtimeConfigSnapshotSet, len(current)+1)
+	for id, snapshot := range current {
+		next[id] = snapshot
+	}
+	next[tenantID] = newRuntimeConfigSnapshot(cfg)
+	m.runtimeConfig.Store(next)
+	if cfg != nil {
+		m.SetOAuthModelAliasForTenant(tenantID, cfg.OAuthModelAlias)
+	} else {
+		m.SetOAuthModelAliasForTenant(tenantID, nil)
+	}
 	m.rebuildAPIKeyModelAliasFromRuntimeConfig()
 }
 
@@ -60,20 +76,15 @@ func (m *Manager) rebuildAPIKeyModelAliasFromRuntimeConfig() {
 	if m == nil {
 		return
 	}
-	cfg := m.currentRuntimeConfig()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.rebuildAPIKeyModelAliasLocked(cfg)
+	m.rebuildAPIKeyModelAliasLocked()
 }
 
-func (m *Manager) rebuildAPIKeyModelAliasLocked(cfg *runtimeConfigSnapshot) {
+func (m *Manager) rebuildAPIKeyModelAliasLocked() {
 	if m == nil {
 		return
 	}
-	if cfg == nil {
-		cfg = emptyRuntimeConfigSnapshot
-	}
-
 	out := make(apiKeyModelAliasTable)
 	for _, auth := range m.auths {
 		if auth == nil {
@@ -88,6 +99,7 @@ func (m *Manager) rebuildAPIKeyModelAliasLocked(cfg *runtimeConfigSnapshot) {
 		}
 
 		byAlias := make(map[string]string)
+		cfg := m.currentRuntimeConfigForTenant(auth.TenantID)
 		provider := strings.ToLower(strings.TrimSpace(auth.Provider))
 		switch provider {
 		case "gemini":

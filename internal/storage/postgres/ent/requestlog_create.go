@@ -20,6 +20,20 @@ type RequestLogCreate struct {
 	hooks    []Hook
 }
 
+// SetTenantID sets the "tenant_id" field.
+func (_c *RequestLogCreate) SetTenantID(v string) *RequestLogCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *RequestLogCreate) SetNillableTenantID(v *string) *RequestLogCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
 // SetTimestamp sets the "timestamp" field.
 func (_c *RequestLogCreate) SetTimestamp(v time.Time) *RequestLogCreate {
 	_c.mutation.SetTimestamp(v)
@@ -383,6 +397,10 @@ func (_c *RequestLogCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *RequestLogCreate) defaults() {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		v := requestlog.DefaultTenantID
+		_c.mutation.SetTenantID(v)
+	}
 	if _, ok := _c.mutation.Timestamp(); !ok {
 		v := requestlog.DefaultTimestamp()
 		_c.mutation.SetTimestamp(v)
@@ -479,6 +497,9 @@ func (_c *RequestLogCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *RequestLogCreate) check() error {
+	if _, ok := _c.mutation.TenantID(); !ok {
+		return &ValidationError{Name: "tenant_id", err: errors.New(`ent: missing required field "RequestLog.tenant_id"`)}
+	}
 	if _, ok := _c.mutation.Timestamp(); !ok {
 		return &ValidationError{Name: "timestamp", err: errors.New(`ent: missing required field "RequestLog.timestamp"`)}
 	}
@@ -579,6 +600,10 @@ func (_c *RequestLogCreate) createSpec() (*RequestLog, *sqlgraph.CreateSpec) {
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = id
+	}
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(requestlog.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
 	}
 	if value, ok := _c.mutation.Timestamp(); ok {
 		_spec.SetField(requestlog.FieldTimestamp, field.TypeTime, value)
