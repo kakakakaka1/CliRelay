@@ -2,10 +2,15 @@ package executor
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	xaiauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/xai"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	sdkmodelcatalog "github.com/router-for-me/CLIProxyAPI/v6/sdk/modelcatalog"
 )
@@ -100,5 +105,118 @@ func TestFetchXAIModelsFallsBackToCachedCatalog(t *testing.T) {
 	}, nil)
 	if len(models) != 1 || models[0].ID != "cached-xai-model" {
 		t.Fatalf("fallback models = %+v, want cached-xai-model", models)
+	}
+}
+
+type captureRoundTripper struct {
+	req *http.Request
+}
+
+func (c *captureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.req = req
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"grok-4.5","object":"model","owned_by":"xai"}]}`)),
+		Request:    req,
+	}, nil
+}
+
+func TestFetchXAIModelsUsesCLIChatProxyWhenUsingAPIFalse(t *testing.T) {
+	resetXAIModelsCacheForTest()
+	t.Cleanup(resetXAIModelsCacheForTest)
+
+	rt := &captureRoundTripper{}
+	ctx := context.WithValue(context.Background(), util.ContextKeyRoundTripper, rt)
+
+	models := FetchXAIModels(ctx, &cliproxyauth.Auth{
+		Provider: "xai",
+		Attributes: map[string]string{
+			"auth_kind": "oauth",
+			"api_key":   "oauth-token",
+			"base_url":  xaiauth.DefaultAPIBaseURL,
+			"using_api": "false",
+		},
+	}, nil)
+
+	if rt.req == nil {
+		t.Fatal("expected models request to be issued")
+	}
+	wantURL := strings.TrimRight(xaiauth.CLIChatProxyBaseURL, "/") + xaiModelsPath
+	if got := rt.req.URL.String(); got != wantURL {
+		t.Fatalf("models URL = %q, want %q", got, wantURL)
+	}
+	if got := rt.req.Header.Get("Authorization"); got != "Bearer oauth-token" {
+		t.Fatalf("Authorization = %q, want Bearer oauth-token", got)
+	}
+	if got := rt.req.Header.Get(xaiTokenAuthHeader); got != xaiTokenAuthValue {
+		t.Fatalf("%s = %q, want %q", xaiTokenAuthHeader, got, xaiTokenAuthValue)
+	}
+	if got := rt.req.Header.Get("X-Grok-Client-Version"); got != config.DefaultXAIFingerprintClientVersion {
+		t.Fatalf("X-Grok-Client-Version = %q, want %q", got, config.DefaultXAIFingerprintClientVersion)
+	}
+	if len(models) == 0 || models[0].ID != "grok-4.5" {
+		t.Fatalf("models = %+v, want grok-4.5", models)
+	}
+}
+
+func TestFetchXAIModelsKeepsOfficialAPIWhenUsingAPITrue(t *testing.T) {
+	resetXAIModelsCacheForTest()
+	t.Cleanup(resetXAIModelsCacheForTest)
+
+	rt := &captureRoundTripper{}
+	ctx := context.WithValue(context.Background(), util.ContextKeyRoundTripper, rt)
+
+	_ = FetchXAIModels(ctx, &cliproxyauth.Auth{
+		Provider: "xai",
+		Attributes: map[string]string{
+			"auth_kind": "oauth",
+			"api_key":   "oauth-token",
+			"base_url":  xaiauth.DefaultAPIBaseURL,
+			"using_api": "true",
+		},
+	}, nil)
+
+	if rt.req == nil {
+		t.Fatal("expected models request to be issued")
+	}
+	wantURL := strings.TrimRight(xaiauth.DefaultAPIBaseURL, "/") + xaiModelsPath
+	if got := rt.req.URL.String(); got != wantURL {
+		t.Fatalf("models URL = %q, want %q", got, wantURL)
+	}
+	if got := rt.req.Header.Get(xaiTokenAuthHeader); got != "" {
+		t.Fatalf("%s = %q, want empty for official API", xaiTokenAuthHeader, got)
+	}
+	if got := rt.req.Header.Get("X-Grok-Client-Version"); got != "" {
+		t.Fatalf("X-Grok-Client-Version = %q, want empty for official API", got)
+	}
+}
+
+func TestFetchXAIModelsKeepsCustomGatewayBaseURL(t *testing.T) {
+	resetXAIModelsCacheForTest()
+	t.Cleanup(resetXAIModelsCacheForTest)
+
+	rt := &captureRoundTripper{}
+	ctx := context.WithValue(context.Background(), util.ContextKeyRoundTripper, rt)
+	customBase := "https://gateway.example.com/v1"
+
+	_ = FetchXAIModels(ctx, &cliproxyauth.Auth{
+		Provider: "xai",
+		Attributes: map[string]string{
+			"api_key":   "oauth-token",
+			"base_url":  customBase,
+			"using_api": "false",
+		},
+	}, nil)
+
+	if rt.req == nil {
+		t.Fatal("expected models request to be issued")
+	}
+	wantURL := strings.TrimRight(customBase, "/") + xaiModelsPath
+	if got := rt.req.URL.String(); got != wantURL {
+		t.Fatalf("models URL = %q, want %q", got, wantURL)
+	}
+	if got := rt.req.Header.Get(xaiTokenAuthHeader); got != "" {
+		t.Fatalf("%s = %q, want empty for custom gateway", xaiTokenAuthHeader, got)
 	}
 }

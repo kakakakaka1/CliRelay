@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	xaiauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/xai"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	sdkmodelcatalog "github.com/router-for-me/CLIProxyAPI/v6/sdk/modelcatalog"
@@ -97,24 +96,25 @@ func fallbackXAIModels() []*sdkmodelcatalog.ModelInfo {
 }
 
 // FetchXAIModels retrieves the OAuth account's live model list from xAI.
+// Base URL follows the same using_api routing as chat/Responses traffic so
+// Grok Build OAuth (using_api=false) discovers models via CLIChatProxyBaseURL
+// instead of api.x.ai, which may reject personal-team tokens with 403.
 func FetchXAIModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.Config) []*sdkmodelcatalog.ModelInfo {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	token, baseURL := xaiCreds(auth)
+	token, _ := xaiCreds(auth)
 	if strings.TrimSpace(token) == "" {
 		return fallbackXAIModels()
 	}
-	if baseURL == "" {
-		baseURL = xaiauth.DefaultAPIBaseURL
-	}
-	baseURL = strings.TrimRight(baseURL, "/")
+	baseURL := strings.TrimRight(xaiChatBaseURL(auth), "/")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+xaiModelsPath, nil)
 	if err != nil {
 		return fallbackXAIModels()
 	}
-	applyXAIHeaders(req, cfg, auth, token, false)
+	// CLI chat proxy needs the same identity headers as Responses; official API keeps plain Bearer.
+	applyXAIChatHeaders(req, cfg, auth, token, false)
 
 	resp, err := newProxyAwareHTTPClient(ctx, cfg, auth, 0).Do(req)
 	if err != nil {

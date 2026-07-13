@@ -403,8 +403,9 @@ func xaiUsingAPI(auth *cliproxyauth.Auth) bool {
 	return !strings.EqualFold(xaiMetadataString(auth.Metadata, "auth_kind"), "oauth")
 }
 
-// xaiChatBaseURL switches only Responses HTTP traffic. Model listing and generic
-// HTTP requests continue using the configured API base URL.
+// xaiChatBaseURL selects the base URL for non-media HTTP chat and model listing.
+// using_api=false (Grok Build OAuth) uses CLIChatProxyBaseURL; using_api=true
+// and generic media/PrepareRequest paths keep the configured API base URL.
 func xaiChatBaseURL(auth *cliproxyauth.Auth) string {
 	_, baseURL := xaiCreds(auth)
 	if xaiUsingAPI(auth) {
