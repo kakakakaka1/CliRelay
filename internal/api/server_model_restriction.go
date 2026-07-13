@@ -7,7 +7,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/bodyutil"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	internalrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 )
 
 func (s *Server) modelRestrictionMiddleware() gin.HandlerFunc {
@@ -49,7 +52,8 @@ func (s *Server) modelRestrictionMiddleware() gin.HandlerFunc {
 			}
 		}
 
-		hasScopedRestriction := s.hasScopedRoutingModelRestriction(routeGroup, allowedGroups)
+		tenantID := requestTenantID(c)
+		hasScopedRestriction := s.hasScopedRoutingModelRestrictionForTenant(tenantID, routeGroup, allowedGroups)
 		if allowedStr == "" && !hasScopedRestriction && ccSwitchAllowed == nil {
 			c.Next()
 			return
@@ -104,7 +108,7 @@ func (s *Server) modelRestrictionMiddleware() gin.HandlerFunc {
 			abortModelNotAllowed(c, requestedModel)
 			return
 		}
-		if !s.modelAllowedByScopedRoutingGroups(routingModel, routeGroup, allowedGroups) {
+		if !s.modelAllowedByScopedRoutingGroupsForTenant(tenantID, routingModel, routeGroup, allowedGroups) {
 			abortModelNotAllowed(c, requestedModel)
 			return
 		}
@@ -149,11 +153,19 @@ func mapCcSwitchRequestModelForRestriction(model string, route *internalrouting.
 }
 
 func (s *Server) hasScopedRoutingModelRestriction(routeGroup string, allowedGroups map[string]struct{}) bool {
-	return s.scopedRoutingAllowedModels(routeGroup, allowedGroups) != nil
+	return s.hasScopedRoutingModelRestrictionForTenant(identity.SystemTenantID, routeGroup, allowedGroups)
+}
+
+func (s *Server) hasScopedRoutingModelRestrictionForTenant(tenantID, routeGroup string, allowedGroups map[string]struct{}) bool {
+	return s.scopedRoutingAllowedModelsForTenant(tenantID, routeGroup, allowedGroups) != nil
 }
 
 func (s *Server) modelAllowedByScopedRoutingGroups(model string, routeGroup string, allowedGroups map[string]struct{}) bool {
-	allowedModels := s.scopedRoutingAllowedModels(routeGroup, allowedGroups)
+	return s.modelAllowedByScopedRoutingGroupsForTenant(identity.SystemTenantID, model, routeGroup, allowedGroups)
+}
+
+func (s *Server) modelAllowedByScopedRoutingGroupsForTenant(tenantID, model, routeGroup string, allowedGroups map[string]struct{}) bool {
+	allowedModels := s.scopedRoutingAllowedModelsForTenant(tenantID, routeGroup, allowedGroups)
 	if allowedModels == nil {
 		return true
 	}
@@ -161,7 +173,12 @@ func (s *Server) modelAllowedByScopedRoutingGroups(model string, routeGroup stri
 }
 
 func (s *Server) scopedRoutingAllowedModels(routeGroup string, allowedGroups map[string]struct{}) []string {
-	if s == nil || s.cfg == nil {
+	return s.scopedRoutingAllowedModelsForTenant(identity.SystemTenantID, routeGroup, allowedGroups)
+}
+
+func (s *Server) scopedRoutingAllowedModelsForTenant(tenantID, routeGroup string, allowedGroups map[string]struct{}) []string {
+	routing := s.routingConfigForTenant(tenantID)
+	if routing == nil {
 		return nil
 	}
 	scopedGroups := make(map[string]struct{})
@@ -175,7 +192,7 @@ func (s *Server) scopedRoutingAllowedModels(routeGroup string, allowedGroups map
 		}
 	}
 	if len(scopedGroups) == 0 {
-		if s.cfg.Routing.IncludeDefaultGroup {
+		if routing.IncludeDefaultGroup {
 			scopedGroups["default"] = struct{}{}
 		}
 	}
@@ -184,7 +201,7 @@ func (s *Server) scopedRoutingAllowedModels(routeGroup string, allowedGroups map
 	}
 
 	var allowedModels []string
-	for _, group := range s.cfg.Routing.ChannelGroups {
+	for _, group := range routing.ChannelGroups {
 		groupName := internalrouting.NormalizeGroupName(group.Name)
 		if _, ok := scopedGroups[groupName]; !ok {
 			continue
@@ -198,6 +215,23 @@ func (s *Server) scopedRoutingAllowedModels(routeGroup string, allowedGroups map
 		return nil
 	}
 	return allowedModels
+}
+
+// routingConfigForTenant prefers the tenant's DB-backed routing config so
+// channel-group allowed-models apply per tenant, not only on the system cfg.
+func (s *Server) routingConfigForTenant(tenantID string) *config.RoutingConfig {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = identity.SystemTenantID
+	}
+	if stored := usage.GetRoutingConfigForTenant(tenantID); stored != nil {
+		return stored
+	}
+	if tenantID == identity.SystemTenantID && s != nil && s.cfg != nil {
+		routing := s.cfg.Routing
+		return &routing
+	}
+	return nil
 }
 
 func routeAllowedModelMatches(model string, allowedModels []string) bool {

@@ -51,7 +51,12 @@ func (s *Service) ConfiguredAvailability(allowedChannelsRaw, allowedGroupsRaw st
 	// Mapped-owner config rows can re-introduce the full openai/anthropic library;
 	// drop stale rows again, then append the live discovery list.
 	allModels = dropStaticDiscoveryProviderModels(allModels, modelRegistry, discoveryByProvider, authByID, ownerMappings)
-	allModels = appendSharedDiscoveryModels(allModels, discoveryByProvider)
+	// Live discovery models skip CanServe (not registry-backed). Still honor the
+	// tenant channel-group allowed-models list so plaza/catalog match the editor.
+	allModels = s.filterModelsByRoutingAllowedModels(
+		appendSharedDiscoveryModels(allModels, discoveryByProvider),
+		allowedGroupsRaw,
+	)
 
 	allConfigRows := modelconfigsettings.ListAllConfigsForTenant(s.tenantID)
 	configByID := make(map[string]usage.ModelConfigRow, len(allConfigRows))
@@ -137,7 +142,10 @@ func (s *Service) Models(allowedChannelsRaw, allowedGroupsRaw string) map[string
 	)
 	allModels := s.effectiveModels(baseModels, allowedChannelsRaw, allowedGroupsRaw)
 	allModels = dropStaticDiscoveryProviderModels(allModels, modelRegistry, discoveryByProvider, authByID, ownerMappings)
-	allModels = appendSharedDiscoveryModels(allModels, discoveryByProvider)
+	allModels = s.filterModelsByRoutingAllowedModels(
+		appendSharedDiscoveryModels(allModels, discoveryByProvider),
+		allowedGroupsRaw,
+	)
 
 	pricingMap := usage.GetAllModelPricingForTenant(s.tenantID)
 	filteredModels := make([]map[string]any, len(allModels))
@@ -956,8 +964,8 @@ func (s *Service) modelOwnerScope(channels []string, groups map[string]struct{})
 			addOwnersForChannel(channel)
 		}
 	}
-	if s.cfg != nil {
-		for _, group := range s.cfg.Routing.ChannelGroups {
+	if routing := tenantRoutingConfig(s.tenantID, s.cfg); routing != nil {
+		for _, group := range routing.ChannelGroups {
 			groupName := internalrouting.NormalizeGroupName(group.Name)
 			if _, ok := groups[groupName]; !ok {
 				continue

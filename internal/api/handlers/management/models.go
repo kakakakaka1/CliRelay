@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/management/modelcatalog"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
@@ -29,7 +30,20 @@ func (h *ModelsHandler) service(c *gin.Context) *modelcatalog.Service {
 	if h == nil {
 		return modelcatalog.NewForTenant(tenantID, nil, nil)
 	}
-	return modelcatalog.NewForTenant(tenantID, h.cfg, h.authManager)
+	// Overlay the effective tenant's routing onto the process cfg so channel-group
+	// allowed-models apply on plaza/catalog. Non-system tenants store routing in DB;
+	// system keeps h.cfg.Routing when no DB row exists.
+	cfgCopy := &config.Config{}
+	if h.cfg != nil {
+		copied := *h.cfg
+		cfgCopy = &copied
+	}
+	if routing := usage.GetRoutingConfigForTenant(tenantID); routing != nil {
+		cfgCopy.Routing = *routing
+	} else if tenantID != "" && tenantID != identity.SystemTenantID {
+		cfgCopy.Routing = config.RoutingConfig{IncludeDefaultGroup: true}
+	}
+	return modelcatalog.NewForTenant(tenantID, cfgCopy, h.authManager)
 }
 
 func modelConfigScope(c *gin.Context) string {

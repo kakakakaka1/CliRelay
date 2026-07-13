@@ -57,7 +57,8 @@ func (s *Server) unifiedModelsHandler(openaiHandler *openai.OpenAIAPIHandler, cl
 			}
 		}
 
-		scopedRoutingRestricted := s.hasScopedRoutingModelRestriction(routeGroup, allowedChannelGroups)
+		tenantID := requestTenantID(c)
+		scopedRoutingRestricted := s.hasScopedRoutingModelRestrictionForTenant(tenantID, routeGroup, allowedChannelGroups)
 		if allowedModels == nil && allowedChannels == nil && allowedChannelGroups == nil && routeGroup == "" && !scopedRoutingRestricted {
 			userAgent := c.GetHeader("User-Agent")
 			if strings.HasPrefix(userAgent, "claude-cli") {
@@ -100,11 +101,11 @@ func (s *Server) unifiedModelsHandler(openaiHandler *openai.OpenAIAPIHandler, cl
 					}
 				}
 				if allowedChannels != nil || allowedChannelGroups != nil || routeGroup != "" {
-					if s.handlers == nil || s.handlers.AuthManager == nil || !s.handlers.AuthManager.CanServeModelWithScopes(id, allowedChannels, allowedChannelGroups, routeGroup) {
+					if s.handlers == nil || s.handlers.AuthManager == nil || !s.handlers.AuthManager.CanServeModelWithScopesForTenant(tenantID, id, allowedChannels, allowedChannelGroups, routeGroup) {
 						continue
 					}
 				}
-				if scopedRoutingRestricted && !s.modelAllowedByScopedRoutingGroups(id, routeGroup, allowedChannelGroups) {
+				if scopedRoutingRestricted && !s.modelAllowedByScopedRoutingGroupsForTenant(tenantID, id, routeGroup, allowedChannelGroups) {
 					continue
 				}
 				filtered = append(filtered, model)

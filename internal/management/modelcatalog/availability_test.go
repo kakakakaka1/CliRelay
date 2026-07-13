@@ -465,3 +465,63 @@ func TestDropStaticDiscoveryProviderModelsDropsMappedOwnerLibrary(t *testing.T) 
 		t.Fatalf("unrelated owner model should remain; got=%v", ids)
 	}
 }
+
+func TestFilterModelsByRoutingAllowedModelsHonorsDefaultGroupList(t *testing.T) {
+	// Live discovery models are merged after CanServe and must still be filtered
+	// by the channel-group allowed-models list (default group when unscoped).
+	svc := NewForTenant("", &config.Config{
+		Routing: config.RoutingConfig{
+			IncludeDefaultGroup: true,
+			ChannelGroups: []config.RoutingChannelGroup{
+				{
+					Name:          "default",
+					AllowedModels: []string{"grok-4.5"},
+				},
+			},
+		},
+	}, nil)
+
+	models := []map[string]any{
+		{"id": "grok-4.5", "object": "model", "owned_by": "xAI"},
+		{"id": "grok-composer-2.5-fast", "object": "model", "owned_by": "xAI"},
+		{"id": "gpt-5.4", "object": "model", "owned_by": "openai"},
+	}
+	filtered := svc.filterModelsByRoutingAllowedModels(models, "")
+	if len(filtered) != 1 || filtered[0]["id"] != "grok-4.5" {
+		t.Fatalf("filtered = %#v, want only grok-4.5", filtered)
+	}
+}
+
+func TestFilterModelsByRoutingAllowedModelsEmptyMeansUnrestricted(t *testing.T) {
+	svc := NewForTenant("", &config.Config{
+		Routing: config.RoutingConfig{
+			IncludeDefaultGroup: true,
+			ChannelGroups: []config.RoutingChannelGroup{
+				{Name: "default", AllowedModels: nil},
+			},
+		},
+	}, nil)
+	models := []map[string]any{{"id": "a"}, {"id": "b"}}
+	filtered := svc.filterModelsByRoutingAllowedModels(models, "")
+	if len(filtered) != 2 {
+		t.Fatalf("filtered = %#v, want unrestricted", filtered)
+	}
+}
+
+func TestFilterModelsByRoutingAllowedModelsHonorsNamedGroup(t *testing.T) {
+	svc := NewForTenant("", &config.Config{
+		Routing: config.RoutingConfig{
+			ChannelGroups: []config.RoutingChannelGroup{
+				{
+					Name:          "team",
+					AllowedModels: []string{"gpt-5"},
+				},
+			},
+		},
+	}, nil)
+	models := []map[string]any{{"id": "gpt-5"}, {"id": "claude-opus"}}
+	filtered := svc.filterModelsByRoutingAllowedModels(models, "team")
+	if len(filtered) != 1 || filtered[0]["id"] != "gpt-5" {
+		t.Fatalf("filtered = %#v, want only gpt-5", filtered)
+	}
+}
