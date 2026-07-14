@@ -17,10 +17,12 @@ func TestDeployWorkflowOnlyPublishesBackendBinary(t *testing.T) {
 	content := string(data)
 
 	for _, want := range []string{
-		`Upload binary and deploy scripts`,
-		`source: "cli-proxy-api-new,scripts/deploy-blue-green.sh,scripts/cleanup-drained-slot.sh"`,
-		`scripts/deploy-blue-green.sh`,
-		`target: "/opt/clirelay2/"`,
+		`Upload binary to staging`,
+		`/opt/clirelay2/incoming/cli-proxy-api-new`,
+		`User deploy`,
+		`/usr/local/sbin/clirelay-gha-deploy`,
+		`StrictHostKeyChecking yes`,
+		`DEPLOY_SSH_KNOWN_HOSTS`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("deploy workflow missing backend binary deployment marker %q", want)
@@ -36,9 +38,13 @@ func TestDeployWorkflowOnlyPublishesBackendBinary(t *testing.T) {
 		`PANEL_DIR=`,
 		`relay-panel`,
 		`/home/web/html`,
+		`appleboy/scp-action`,
+		`appleboy/ssh-action`,
+		`username: root`,
+		`StrictHostKeyChecking accept-new`,
 	} {
 		if strings.Contains(content, forbidden) {
-			t.Fatalf("backend deploy workflow must not publish frontend panel assets, found %q", forbidden)
+			t.Fatalf("backend deploy workflow must not publish frontend panel assets or use insecure deploy markers, found %q", forbidden)
 		}
 	}
 }
@@ -51,13 +57,14 @@ func TestDeployWorkflowUsesBlueGreenDeployment(t *testing.T) {
 	content := string(data)
 
 	for _, want := range []string{
-		`Blue-green deploy`,
-		`SERVICE_CPU_QUOTA="${{ vars.CLIRELAY_SERVICE_CPU_QUOTA || '170%' }}"`,
-		`SERVICE_MEMORY_HIGH="${{ vars.CLIRELAY_SERVICE_MEMORY_HIGH || '1400M' }}"`,
-		`SERVICE_MEMORY_MAX="${{ vars.CLIRELAY_SERVICE_MEMORY_MAX || '1600M' }}"`,
-		`SERVICE_TASKS_MAX="${{ vars.CLIRELAY_SERVICE_TASKS_MAX || '512' }}"`,
-		`COMMIT_SHA="${{ github.sha }}"`,
-		`bash /opt/clirelay2/scripts/deploy-blue-green.sh`,
+		`Blue-green deploy via fixed root entrypoint`,
+		`SERVICE_CPU_QUOTA: ${{ vars.CLIRELAY_SERVICE_CPU_QUOTA || '170%' }}`,
+		`SERVICE_MEMORY_HIGH: ${{ vars.CLIRELAY_SERVICE_MEMORY_HIGH || '1400M' }}`,
+		`SERVICE_MEMORY_MAX: ${{ vars.CLIRELAY_SERVICE_MEMORY_MAX || '1600M' }}`,
+		`SERVICE_TASKS_MAX: ${{ vars.CLIRELAY_SERVICE_TASKS_MAX || '512' }}`,
+		`COMMIT_SHA: ${{ github.sha }}`,
+		`/usr/local/sbin/clirelay-gha-deploy`,
+		`EXPECTED_SCRIPT_VERSION`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("deploy workflow missing blue-green marker %q", want)
@@ -92,10 +99,15 @@ func TestBlueGreenDeployScriptSyntaxAndGuards(t *testing.T) {
 	}
 	content := string(data)
 	for _, want := range []string{
+		`/readyz`,
 		`/healthz`,
 		`CLIRELAY_PORT=`,
 		`.active-port`,
 		`HEALTH_TIMEOUT_SECONDS`,
+		`SMOKE_TIMEOUT_SECONDS`,
+		`PUBLIC_BASE_URL`,
+		`external smoke failed`,
+		`rolling nginx back`,
 		`MIN_AVAILABLE_MB`,
 		`NGINX_CONTAINER`,
 		`EnvironmentFile=`,
@@ -105,6 +117,7 @@ func TestBlueGreenDeployScriptSyntaxAndGuards(t *testing.T) {
 		`systemd-run`,
 		`scripts/cleanup-drained-slot.sh`,
 		`grep -v '\.bak\.'`,
+		`SCRIPT_VERSION`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("deploy script missing guard %q", want)
@@ -187,10 +200,13 @@ func TestDeployCompletesBeforeDispatchingDevDockerBuild(t *testing.T) {
 		t.Fatalf("read deploy workflow: %v", err)
 	}
 	content := string(data)
-	deployIndex := strings.Index(content, `name: Blue-green deploy`)
+	deployIndex := strings.Index(content, `name: Blue-green deploy via fixed root entrypoint`)
 	dockerIndex := strings.Index(content, `name: Trigger dev Docker image build`)
 	if deployIndex < 0 || dockerIndex < 0 || dockerIndex <= deployIndex {
 		t.Fatalf("dev Docker build must be dispatched only after blue-green deployment")
+	}
+	if !strings.Contains(content, `if: success() && env.SHOULD_DEPLOY == 'true'`) {
+		t.Fatalf("docker publish must only run after a real deploy attempt")
 	}
 	for _, want := range []string{
 		`actions: write`,
