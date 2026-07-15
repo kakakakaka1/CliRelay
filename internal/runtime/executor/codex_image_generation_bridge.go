@@ -441,7 +441,7 @@ func (n *codexImageStreamNormalizer) rewriteAssistantMarkdown(payload []byte) []
 	switch eventType {
 	case "response.output_text.done":
 		text := gjson.GetBytes(body, "text").String()
-		if next, ok := rewriteCodexMntDataImageMarkdown(text, n.images); ok {
+		if next, ok := ensureCodexAssistantImageMarkdown(text, n.images); ok {
 			var err error
 			updated, err = sjson.SetBytes(updated, "text", next)
 			if err != nil {
@@ -453,7 +453,7 @@ func (n *codexImageStreamNormalizer) rewriteAssistantMarkdown(payload []byte) []
 		partType := strings.TrimSpace(gjson.GetBytes(body, "part.type").String())
 		if partType == "output_text" || partType == "text" {
 			text := gjson.GetBytes(body, "part.text").String()
-			if next, ok := rewriteCodexMntDataImageMarkdown(text, n.images); ok {
+			if next, ok := ensureCodexAssistantImageMarkdown(text, n.images); ok {
 				var err error
 				updated, err = sjson.SetBytes(updated, "part.text", next)
 				if err != nil {
@@ -467,6 +467,17 @@ func (n *codexImageStreamNormalizer) rewriteAssistantMarkdown(payload []byte) []
 		if strings.TrimSpace(item.Get("type").String()) != "message" {
 			return payload
 		}
+		// Skip our synthetic display item; Desktop ignores it and we must not recurse on it.
+		if isCodexSyntheticImageDisplayMessageID(item.Get("id").String()) {
+			return payload
+		}
+		// Only rewrite completed assistant messages Desktop persists as agent text.
+		role := strings.TrimSpace(item.Get("role").String())
+		if role != "" && role != "assistant" {
+			return payload
+		}
+		// output_item.added is often empty; only rewrite/append on done so deltas stay coherent.
+		appendOK := eventType == "response.output_item.done"
 		content := item.Get("content")
 		if !content.IsArray() {
 			return payload
@@ -477,7 +488,13 @@ func (n *codexImageStreamNormalizer) rewriteAssistantMarkdown(payload []byte) []
 				continue
 			}
 			text := part.Get("text").String()
-			next, ok := rewriteCodexMntDataImageMarkdown(text, n.images)
+			var next string
+			var ok bool
+			if appendOK {
+				next, ok = ensureCodexAssistantImageMarkdown(text, n.images)
+			} else {
+				next, ok = rewriteCodexMntDataImageMarkdown(text, n.images)
+			}
 			if !ok {
 				continue
 			}
@@ -498,6 +515,13 @@ func (n *codexImageStreamNormalizer) rewriteAssistantMarkdown(payload []byte) []
 			if strings.TrimSpace(item.Get("type").String()) != "message" {
 				continue
 			}
+			if isCodexSyntheticImageDisplayMessageID(item.Get("id").String()) {
+				continue
+			}
+			role := strings.TrimSpace(item.Get("role").String())
+			if role != "" && role != "assistant" {
+				continue
+			}
 			content := item.Get("content")
 			if !content.IsArray() {
 				continue
@@ -508,7 +532,7 @@ func (n *codexImageStreamNormalizer) rewriteAssistantMarkdown(payload []byte) []
 					continue
 				}
 				text := part.Get("text").String()
-				next, ok := rewriteCodexMntDataImageMarkdown(text, n.images)
+				next, ok := ensureCodexAssistantImageMarkdown(text, n.images)
 				if !ok {
 					continue
 				}
@@ -528,6 +552,25 @@ func (n *codexImageStreamNormalizer) rewriteAssistantMarkdown(payload []byte) []
 		return payload
 	}
 	return maybeWrapSSEData(hadSSEPrefix, updated)
+}
+
+// ensureCodexAssistantImageMarkdown makes Desktop-visible assistant text show hosted images.
+//  1. Rewrite ChatGPT sandbox refs: ![x](/mnt/data/0.png) -> data URL
+//  2. If the model only wrote plain text (no /mnt/data, no data:image), append markdown data URLs
+//     for every cached hosted image from this response.
+func ensureCodexAssistantImageMarkdown(text string, images []codexHostedImage) (string, bool) {
+	if len(images) == 0 {
+		return text, false
+	}
+	if next, ok := rewriteCodexMntDataImageMarkdown(text, images); ok {
+		return next, true
+	}
+	// Already has an inline data image (ours or model-produced).
+	if strings.Contains(text, "data:image/") {
+		return text, false
+	}
+	// No sandbox path either: append images so Desktop markdown renderer can show them.
+	return appendCodexHostedImageMarkdown(text, images), true
 }
 
 func rewriteCodexMntDataImageMarkdown(text string, images []codexHostedImage) (string, bool) {
@@ -564,6 +607,36 @@ func rewriteCodexMntDataImageMarkdown(text string, images []codexHostedImage) (s
 		return text, false
 	}
 	return out, true
+}
+
+func appendCodexHostedImageMarkdown(text string, images []codexHostedImage) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(text, " \t\r\n"))
+	for i, img := range images {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		alt := "generated image"
+		if len(images) > 1 {
+			alt = fmt.Sprintf("generated image %d", i+1)
+		}
+		b.WriteString("![")
+		b.WriteString(alt)
+		b.WriteString("](data:")
+		b.WriteString(img.MIME)
+		b.WriteString(";base64,")
+		b.WriteString(img.Result)
+		b.WriteByte(')')
+	}
+	return b.String()
+}
+
+func isCodexSyntheticImageDisplayMessageID(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	return strings.HasSuffix(id, "_display") || strings.HasPrefix(id, "msg_ig_")
 }
 
 func codexHostedImageByIndex(images []codexHostedImage, idxStr string) (codexHostedImage, bool) {

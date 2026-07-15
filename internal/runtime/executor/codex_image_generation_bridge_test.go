@@ -218,6 +218,45 @@ func TestRewriteCodexMntDataImageMarkdownClampsIndex(t *testing.T) {
 	}
 }
 
+func TestCodexImageStreamAppendsDataURLWhenModelOmitsMntPath(t *testing.T) {
+	// Real Desktop failure mode after #699: model writes plain text "给你一只小猫。" with no /mnt/data.
+	n := newCodexImageStreamNormalizer()
+	ig := []byte(`data: {"type":"response.output_item.done","item":{"id":"ig_1","type":"image_generation_call","status":"completed","result":"iVBORw0KGgo=","output_format":"png"}}`)
+	_ = normalizeCodexImageGenerationOutboundEventWithState(n, ig)
+
+	textDone := []byte(`data: {"type":"response.output_text.done","item_id":"msg_1","text":"给你一只小猫。\n\n如果你要，我还能继续改。"}`)
+	out := normalizeCodexImageGenerationOutboundEventWithState(n, textDone)
+	body := bytes.TrimSpace(out[0][len(dataTag):])
+	got := gjson.GetBytes(body, "text").String()
+	if !strings.Contains(got, "给你一只小猫。") {
+		t.Fatalf("original text lost: %s", got)
+	}
+	if !strings.Contains(got, "data:image/png;base64,iVBORw0KGgo=") {
+		t.Fatalf("expected appended data url: %s", got)
+	}
+
+	msgDone := []byte(`data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"给你一只小猫。"}]}}`)
+	out = normalizeCodexImageGenerationOutboundEventWithState(n, msgDone)
+	body = bytes.TrimSpace(out[0][len(dataTag):])
+	got = gjson.GetBytes(body, "item.content.0.text").String()
+	if !strings.Contains(got, "data:image/png;base64,iVBORw0KGgo=") {
+		t.Fatalf("message item missing appended image: %s", got)
+	}
+}
+
+func TestCodexImageStreamDoesNotDoubleAppendWhenDataURLPresent(t *testing.T) {
+	n := newCodexImageStreamNormalizer()
+	ig := []byte(`data: {"type":"response.output_item.done","item":{"id":"ig_1","type":"image_generation_call","status":"completed","result":"iVBORw0KGgo=","output_format":"png"}}`)
+	_ = normalizeCodexImageGenerationOutboundEventWithState(n, ig)
+	in := []byte(`data: {"type":"response.output_text.done","text":"done\n\n![x](data:image/png;base64,iVBORw0KGgo=)"}`)
+	out := normalizeCodexImageGenerationOutboundEventWithState(n, in)
+	body := bytes.TrimSpace(out[0][len(dataTag):])
+	got := gjson.GetBytes(body, "text").String()
+	if strings.Count(got, "data:image/png;base64,iVBORw0KGgo=") != 1 {
+		t.Fatalf("double-appended image: %s", got)
+	}
+}
+
 func TestMaybeEnsureForcesToolChoiceOnImageIntent(t *testing.T) {
 	auth := &cliproxyauth.Auth{
 		Provider: "codex",
