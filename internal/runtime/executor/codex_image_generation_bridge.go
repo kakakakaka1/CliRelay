@@ -35,9 +35,20 @@ var (
 	// Inbound history hygiene: Desktop re-sends prior assistant text that may contain multi-MB
 	// data:image URLs from our outbound display rewrite. Strip pixels, keep a short placeholder
 	// so the model still knows an image existed — zero server-side image storage.
-	codexMarkdownDataURLImage = regexp.MustCompile(`!\[([^\]]*)\]\(data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]{256,}\)`)
+	codexMarkdownDataURLImage = regexp.MustCompile(`!\[([^\]]*)\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]{256,})\)`)
 	codexBareDataURLImage     = regexp.MustCompile(`data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]{256,}`)
+
+	// Any markdown image whose target is not a browser-renderable URL (data:/http:/https:).
+	// Models often invent ~/.codex/generated_images/... paths under custom providers.
+	codexMarkdownAnyImageRef = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
 )
+
+// codexHistoryImage is a single image extracted from the current request body only.
+// Never written to disk or process-global cache — lives only for this sanitize call.
+type codexHistoryImage struct {
+	MIME   string
+	Result string
+}
 
 // codexHostedImage is one completed hosted image_generation_call payload for Desktop rewrite.
 type codexHostedImage struct {
@@ -562,20 +573,25 @@ func (n *codexImageStreamNormalizer) rewriteAssistantMarkdown(payload []byte) []
 
 // ensureCodexAssistantImageMarkdown makes Desktop-visible assistant text show hosted images.
 //  1. Rewrite ChatGPT sandbox refs: ![x](/mnt/data/0.png) -> data URL
-//  2. If the model only wrote plain text (no /mnt/data, no data:image), append markdown data URLs
-//     for every cached hosted image from this response.
+//  2. Rewrite non-renderable local paths: ![x](/Users/.../generated_images/a.png) -> data URL
+//  3. Only if still no data:image, append one markdown data URL (never stack on top of a fake path).
 func ensureCodexAssistantImageMarkdown(text string, images []codexHostedImage) (string, bool) {
 	if len(images) == 0 {
 		return text, false
 	}
+	changed := false
 	if next, ok := rewriteCodexMntDataImageMarkdown(text, images); ok {
-		return next, true
+		text = next
+		changed = true
 	}
-	// Already has an inline data image (ours or model-produced).
+	if next, ok := rewriteCodexNonRenderableImageMarkdown(text, images); ok {
+		text = next
+		changed = true
+	}
+	// Already has a renderable data image — do not append a second copy (double-thumbnail bug).
 	if strings.Contains(text, "data:image/") {
-		return text, false
+		return text, changed
 	}
-	// No sandbox path either: append images so Desktop markdown renderer can show them.
 	return appendCodexHostedImageMarkdown(text, images), true
 }
 
@@ -635,6 +651,51 @@ func appendCodexHostedImageMarkdown(text string, images []codexHostedImage) stri
 		b.WriteByte(')')
 	}
 	return b.String()
+}
+
+// rewriteCodexNonRenderableImageMarkdown replaces ![alt](local-or-fake-path) with data URLs.
+// Leaves data:/http(s):/cliproxy-image: targets alone.
+func rewriteCodexNonRenderableImageMarkdown(text string, images []codexHostedImage) (string, bool) {
+	if text == "" || len(images) == 0 || !strings.Contains(text, "![") {
+		return text, false
+	}
+	seq := 0
+	out := codexMarkdownAnyImageRef.ReplaceAllStringFunc(text, func(match string) string {
+		sub := codexMarkdownAnyImageRef.FindStringSubmatch(match)
+		if len(sub) != 3 {
+			return match
+		}
+		alt, target := sub[1], strings.TrimSpace(sub[2])
+		if target == "" || isCodexRenderableImageTarget(target) {
+			return match
+		}
+		img := images[0]
+		if seq < len(images) {
+			img = images[seq]
+		} else {
+			img = images[len(images)-1]
+		}
+		seq++
+		return fmt.Sprintf("![%s](data:%s;base64,%s)", alt, img.MIME, img.Result)
+	})
+	if out == text {
+		return text, false
+	}
+	return out, true
+}
+
+func isCodexRenderableImageTarget(target string) bool {
+	lower := strings.ToLower(strings.TrimSpace(target))
+	switch {
+	case strings.HasPrefix(lower, "data:image/"):
+		return true
+	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"):
+		return true
+	case strings.HasPrefix(lower, "cliproxy-image:"):
+		return true
+	default:
+		return false
+	}
 }
 
 func isCodexSyntheticImageDisplayMessageID(id string) bool {
@@ -816,8 +877,13 @@ func maybeWrapSSEData(hadSSEPrefix bool, body []byte) []byte {
 
 // stripCodexHistoryDataURLImages removes multi-MB data:image payloads from request history
 // before upstream. Desktop keeps outbound data-url markdown for display, then re-sends it
-// on the next turn — that blows the model context (context_length_exceeded). Replace with
-// short placeholders only; do not cache image bytes on the server.
+// on the next turn as text — that blows the model context (context_length_exceeded).
+//
+// Strategy (no server storage / no global cache):
+//  1. Replace huge data URLs in history text with short cliproxy-image:N placeholders
+//  2. Re-attach at most the last extracted image as a structured input_image on the latest
+//     user turn so the model can re-identify / edit without keeping base64-as-text history
+//  3. All image bytes come from the current request body and die with the request
 func stripCodexHistoryDataURLImages(body []byte) []byte {
 	if len(body) == 0 {
 		return body
@@ -830,6 +896,14 @@ func stripCodexHistoryDataURLImages(body []byte) []byte {
 		return body
 	}
 	seq := 0
+	var lastImage *codexHistoryImage
+	remember := func(dataURL string) {
+		if img, ok := parseCodexDataURLImage(dataURL); ok {
+			// Keep only the latest image from this request (bounded: 1).
+			cp := img
+			lastImage = &cp
+		}
+	}
 	nextPlaceholder := func(alt string) string {
 		seq++
 		alt = strings.TrimSpace(alt)
@@ -842,9 +916,10 @@ func stripCodexHistoryDataURLImages(body []byte) []byte {
 
 	// Top-level string input (rare for Desktop).
 	if in := gjson.GetBytes(body, "input"); in.Type == gjson.String {
-		if next, ok := replaceCodexDataURLImagesInText(in.String(), nextPlaceholder); ok {
+		if next, ok := replaceCodexDataURLImagesInText(in.String(), nextPlaceholder, remember); ok {
 			body, _ = sjson.SetBytes(body, "input", next)
 		}
+		// Cannot attach input_image to string input safely; placeholders only.
 		return body
 	}
 
@@ -853,9 +928,11 @@ func stripCodexHistoryDataURLImages(body []byte) []byte {
 		return body
 	}
 	for itemIndex, item := range input.Array() {
-		// Drop base64 from any re-sent image_generation_call history items.
+		// Drop base64 from any re-sent image_generation_call history items; remember last.
 		if strings.TrimSpace(item.Get("type").String()) == "image_generation_call" {
 			if result := strings.TrimSpace(item.Get("result").String()); len(result) >= 256 {
+				mime := codexImageMIMEFromFormat(item.Get("output_format").String())
+				remember(fmt.Sprintf("data:%s;base64,%s", mime, result))
 				path := fmt.Sprintf("input.%d.result", itemIndex)
 				body, _ = sjson.DeleteBytes(body, path)
 			}
@@ -866,7 +943,7 @@ func stripCodexHistoryDataURLImages(body []byte) []byte {
 		}
 		// message / content text fields
 		if content := item.Get("content"); content.Type == gjson.String {
-			if next, ok := replaceCodexDataURLImagesInText(content.String(), nextPlaceholder); ok {
+			if next, ok := replaceCodexDataURLImagesInText(content.String(), nextPlaceholder, remember); ok {
 				path := fmt.Sprintf("input.%d.content", itemIndex)
 				body, _ = sjson.SetBytes(body, path, next)
 			}
@@ -882,17 +959,21 @@ func stripCodexHistoryDataURLImages(body []byte) []byte {
 					continue
 				}
 				text := part.Get("text").String()
-				if next, ok := replaceCodexDataURLImagesInText(text, nextPlaceholder); ok {
+				if next, ok := replaceCodexDataURLImagesInText(text, nextPlaceholder, remember); ok {
 					path := fmt.Sprintf("input.%d.content.%d.text", itemIndex, partIndex)
 					body, _ = sjson.SetBytes(body, path, next)
 				}
 			}
 		}
 	}
+	// Re-identify / edit: move last history image into structured input_image (not text tokens).
+	if lastImage != nil {
+		body = attachCodexHistoryImageToLastUser(body, *lastImage)
+	}
 	return body
 }
 
-func replaceCodexDataURLImagesInText(text string, nextPlaceholder func(alt string) string) (string, bool) {
+func replaceCodexDataURLImagesInText(text string, nextPlaceholder func(alt string) string, remember func(dataURL string)) (string, bool) {
 	if text == "" || !strings.Contains(text, "data:image/") {
 		return text, false
 	}
@@ -903,11 +984,17 @@ func replaceCodexDataURLImagesInText(text string, nextPlaceholder func(alt strin
 		if len(sub) >= 2 {
 			alt = sub[1]
 		}
+		if len(sub) >= 3 && remember != nil {
+			remember(sub[2])
+		}
 		return nextPlaceholder(alt)
 	})
 	// Remaining bare data URLs (not wrapped in markdown).
 	if strings.Contains(out, "data:image/") {
-		out = codexBareDataURLImage.ReplaceAllStringFunc(out, func(string) string {
+		out = codexBareDataURLImage.ReplaceAllStringFunc(out, func(match string) string {
+			if remember != nil {
+				remember(match)
+			}
 			return nextPlaceholder("generated image")
 		})
 	}
@@ -915,4 +1002,86 @@ func replaceCodexDataURLImagesInText(text string, nextPlaceholder func(alt strin
 		return text, false
 	}
 	return out, true
+}
+
+func parseCodexDataURLImage(dataURL string) (codexHistoryImage, bool) {
+	dataURL = strings.TrimSpace(dataURL)
+	if !strings.HasPrefix(dataURL, "data:image/") {
+		return codexHistoryImage{}, false
+	}
+	// data:image/png;base64,<payload>
+	rest := strings.TrimPrefix(dataURL, "data:")
+	parts := strings.SplitN(rest, ",", 2)
+	if len(parts) != 2 {
+		return codexHistoryImage{}, false
+	}
+	meta, payload := parts[0], strings.TrimSpace(parts[1])
+	if !strings.Contains(meta, "base64") || len(payload) < 256 {
+		return codexHistoryImage{}, false
+	}
+	// Soft cap: refuse absurd single images to protect request path (no store, but still RAM).
+	// 8MB base64 ≈ ~6MB binary — enough for normal Codex outputs, blocks pathological payloads.
+	if len(payload) > 8<<20 {
+		return codexHistoryImage{}, false
+	}
+	mime := strings.TrimSpace(strings.Split(meta, ";")[0])
+	if mime == "" {
+		mime = "image/png"
+	}
+	return codexHistoryImage{MIME: mime, Result: payload}, true
+}
+
+// attachCodexHistoryImageToLastUser adds at most one input_image to the latest user message.
+// Image bytes are already in this request; we only restructure them for vision-capable models.
+func attachCodexHistoryImageToLastUser(body []byte, img codexHistoryImage) []byte {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body
+	}
+	items := input.Array()
+	lastUser := -1
+	for i := len(items) - 1; i >= 0; i-- {
+		if strings.TrimSpace(items[i].Get("role").String()) == "user" {
+			lastUser = i
+			break
+		}
+	}
+	if lastUser < 0 {
+		return body
+	}
+	item := items[lastUser]
+	// Skip if this user turn already has an input_image (user-uploaded).
+	if content := item.Get("content"); content.IsArray() {
+		for _, part := range content.Array() {
+			if strings.TrimSpace(part.Get("type").String()) == "input_image" {
+				return body
+			}
+		}
+	}
+	dataURL := fmt.Sprintf("data:%s;base64,%s", img.MIME, img.Result)
+	imagePart := map[string]any{
+		"type":      "input_image",
+		"image_url": dataURL,
+	}
+
+	content := item.Get("content")
+	if content.Type == gjson.String {
+		// Promote string content to multipart so we can attach the image.
+		parts := []any{
+			map[string]any{"type": "input_text", "text": content.String()},
+			imagePart,
+		}
+		path := fmt.Sprintf("input.%d.content", lastUser)
+		body, _ = sjson.SetBytes(body, path, parts)
+		return body
+	}
+	if content.IsArray() {
+		path := fmt.Sprintf("input.%d.content.-1", lastUser)
+		body, _ = sjson.SetBytes(body, path, imagePart)
+		return body
+	}
+	// No content yet — create multipart.
+	path := fmt.Sprintf("input.%d.content", lastUser)
+	body, _ = sjson.SetBytes(body, path, []any{imagePart})
+	return body
 }

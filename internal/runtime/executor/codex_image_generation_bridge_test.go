@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -257,6 +258,35 @@ func TestCodexImageStreamDoesNotDoubleAppendWhenDataURLPresent(t *testing.T) {
 	}
 }
 
+func TestCodexImageStreamRewritesLocalGeneratedImagesPathWithoutDouble(t *testing.T) {
+	// Real Desktop bug: model invents ~/.codex/generated_images/... then we used to APPEND a second data-url.
+	n := newCodexImageStreamNormalizer()
+	ig := []byte(`data: {"type":"response.output_item.done","item":{"id":"ig_1","type":"image_generation_call","status":"completed","result":"iVBORw0KGgo=","output_format":"png"}}`)
+	_ = normalizeCodexImageGenerationOutboundEventWithState(n, ig)
+	text := "给你画好了：\n\n![可爱的小鱼](/Users/kittors/.codex/generated_images/abc.png)\n\n如果你要，我还能继续改。"
+	in := []byte(`data: {"type":"response.output_text.done","text":` + mustJSONString(text) + `}`)
+	out := normalizeCodexImageGenerationOutboundEventWithState(n, in)
+	body := bytes.TrimSpace(out[0][len(dataTag):])
+	got := gjson.GetBytes(body, "text").String()
+	if strings.Contains(got, "generated_images/") {
+		t.Fatalf("local path should be rewritten: %s", got)
+	}
+	if strings.Count(got, "data:image/png;base64,iVBORw0KGgo=") != 1 {
+		t.Fatalf("want exactly one data url, got %q", got)
+	}
+	if !strings.Contains(got, "![可爱的小鱼](data:image/png;base64,iVBORw0KGgo=)") {
+		t.Fatalf("alt/path rewrite failed: %s", got)
+	}
+}
+
+func mustJSONString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
 func TestMaybeEnsureForcesToolChoiceOnImageIntent(t *testing.T) {
 	auth := &cliproxyauth.Auth{
 		Provider: "codex",
@@ -354,5 +384,72 @@ func TestStripCodexHistoryDataURLImagesDropsImageGenerationCallResult(t *testing
 	}
 	if got := gjson.GetBytes(out, "input.0.id").String(); got != "ig_1" {
 		t.Fatalf("id should remain, got %q", got)
+	}
+}
+
+func TestStripCodexHistoryDataURLImagesReattachesLastAsInputImage(t *testing.T) {
+	// Follow-up "描述一下" must still see pixels via structured input_image, not text base64.
+	b64 := strings.Repeat("D", 400)
+	body := []byte(`{
+		"model":"gpt-5.4",
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"画小鱼"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"好了\n\n![generated image](data:image/png;base64,` + b64 + `)"}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"你画的是啥，详细描述"}]}
+		]
+	}`)
+	out := stripCodexHistoryDataURLImages(body)
+	asst := gjson.GetBytes(out, "input.1.content.0.text").String()
+	if strings.Contains(asst, "base64,") {
+		t.Fatalf("assistant text still has base64")
+	}
+	if !strings.Contains(asst, "cliproxy-image:1") {
+		t.Fatalf("placeholder missing: %q", asst)
+	}
+	// Latest user turn should gain input_image with the extracted bytes.
+	parts := gjson.GetBytes(out, "input.2.content")
+	if !parts.IsArray() || parts.Get("#").Int() < 2 {
+		t.Fatalf("user content should be multipart with image; %s", parts.Raw)
+	}
+	found := false
+	for _, part := range parts.Array() {
+		if part.Get("type").String() != "input_image" {
+			continue
+		}
+		url := part.Get("image_url").String()
+		if strings.Contains(url, "base64,"+b64) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected input_image with history bytes; content=%s", parts.Raw)
+	}
+	// User text preserved.
+	if got := gjson.GetBytes(out, "input.2.content.0.text").String(); got != "你画的是啥，详细描述" {
+		t.Fatalf("user text lost: %q", got)
+	}
+}
+
+func TestStripCodexHistoryDoesNotDuplicateInputImage(t *testing.T) {
+	b64 := strings.Repeat("E", 400)
+	body := []byte(`{
+		"input":[
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"![x](data:image/png;base64,` + b64 + `)"}]},
+			{"type":"message","role":"user","content":[
+				{"type":"input_text","text":"看这张"},
+				{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}
+			]}
+		]
+	}`)
+	out := stripCodexHistoryDataURLImages(body)
+	// Existing user input_image means we must not attach another.
+	count := 0
+	for _, part := range gjson.GetBytes(out, "input.1.content").Array() {
+		if part.Get("type").String() == "input_image" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("input_image count = %d, want 1; %s", count, gjson.GetBytes(out, "input.1.content").Raw)
 	}
 }
