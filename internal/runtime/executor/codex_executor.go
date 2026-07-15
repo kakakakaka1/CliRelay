@@ -221,6 +221,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 			continue
 		}
 		line = mergeCodexResponsesCompletedOutput(line, pendingOutputItems, pendingOutputKeys)
+		line = normalizeCodexImageGenerationCallStatus(line)
 
 		if detail, ok := parseCodexUsage(line); ok {
 			reporter.publishWithContent(execCtx.Context, detail, string(req.Payload), string(data))
@@ -399,13 +400,14 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 		completed := false
 		for scanner.Scan() {
 			line := scanner.Bytes()
+			line = normalizeCodexImageGenerationCallStatus(bytes.Clone(line))
 			recorder.AppendResponseChunk(line)
 			reporter.appendOutputChunk(line)
 
 			var terminalErr error
 
 			if bytes.HasPrefix(line, dataTag) {
-				data := bytes.TrimSpace(line[5:])
+				data := bytes.TrimSpace(line[len(dataTag):])
 				switch gjson.GetBytes(data, "type").String() {
 				case "response.completed":
 					completed = true
@@ -417,7 +419,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				}
 			}
 
-			chunks := sdktranslator.TranslateStream(execCtx.Context, to, execCtx.SourceFormat, req.Model, execCtx.OriginalPayload, body, bytes.Clone(line), &param)
+			chunks := sdktranslator.TranslateStream(execCtx.Context, to, execCtx.SourceFormat, req.Model, execCtx.OriginalPayload, body, line, &param)
 			for i := range chunks {
 				out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunks[i])}
 			}

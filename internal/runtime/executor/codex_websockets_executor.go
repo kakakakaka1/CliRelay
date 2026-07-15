@@ -510,6 +510,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			}
 
 			payload = normalizeCodexWebsocketCompletion(payload)
+			payload = normalizeCodexImageGenerationCallStatus(payload)
 			eventType := gjson.GetBytes(payload, "type").String()
 			if eventType == "response.completed" || eventType == "response.done" {
 				if detail, ok := parseCodexUsage(payload); ok {
