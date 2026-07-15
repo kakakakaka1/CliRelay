@@ -286,3 +286,73 @@ func TestMaybeEnsureDoesNotForceToolChoiceWithoutIntent(t *testing.T) {
 		t.Fatalf("tool_choice should not force image_generation without intent; body=%s", out)
 	}
 }
+
+func TestStripCodexHistoryDataURLImagesReplacesHugeMarkdown(t *testing.T) {
+	// ~2KB base64 payload (still above 256 threshold); real Desktop history is multi-MB.
+	b64 := strings.Repeat("A", 400)
+	body := []byte(`{
+		"model":"gpt-5.4",
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"画小猫"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"给你画好了。\n\n![generated image](data:image/png;base64,` + b64 + `)"}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"长什么样？"}]}
+		]
+	}`)
+	out := stripCodexHistoryDataURLImages(body)
+	asst := gjson.GetBytes(out, "input.1.content.0.text").String()
+	if strings.Contains(asst, "base64,") || strings.Contains(asst, strings.Repeat("A", 50)) {
+		preview := asst
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		t.Fatalf("base64 should be stripped; text_len=%d text=%q", len(asst), preview)
+	}
+	if !strings.Contains(asst, "![generated image](cliproxy-image:1)") {
+		t.Fatalf("want placeholder, got %q", asst)
+	}
+	if !strings.Contains(asst, "给你画好了") {
+		t.Fatalf("caption lost: %q", asst)
+	}
+	// Follow-up user text untouched.
+	if got := gjson.GetBytes(out, "input.2.content.0.text").String(); got != "长什么样？" {
+		t.Fatalf("user follow-up changed: %q", got)
+	}
+}
+
+func TestStripCodexHistoryDataURLImagesLeavesSmallDataURL(t *testing.T) {
+	// Tiny icons / test fixtures must not become placeholders.
+	body := []byte(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"see ![x](data:image/png;base64,aGVsbG8=)"}]}]}`)
+	out := stripCodexHistoryDataURLImages(body)
+	got := gjson.GetBytes(out, "input.0.content.0.text").String()
+	if !strings.Contains(got, "data:image/png;base64,aGVsbG8=") {
+		t.Fatalf("small data url should be kept: %q", got)
+	}
+}
+
+func TestSanitizeCodexResponsesRequestStripsHistoryDataURL(t *testing.T) {
+	b64 := strings.Repeat("B", 400)
+	body := []byte(`{"model":"gpt-5.4","max_tokens":99,"input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"![cat](data:image/png;base64,` + b64 + `)"}]}]}`)
+	out := sanitizeCodexResponsesRequest(body)
+	if gjson.GetBytes(out, "max_tokens").Exists() {
+		t.Fatalf("max_tokens should still be stripped")
+	}
+	text := gjson.GetBytes(out, "input.0.content.0.text").String()
+	if strings.Contains(text, "base64,") {
+		t.Fatalf("history data url survived sanitize: %q", text)
+	}
+	if !strings.Contains(text, "cliproxy-image:") {
+		t.Fatalf("missing placeholder: %q", text)
+	}
+}
+
+func TestStripCodexHistoryDataURLImagesDropsImageGenerationCallResult(t *testing.T) {
+	b64 := strings.Repeat("C", 400)
+	body := []byte(`{"input":[{"type":"image_generation_call","id":"ig_1","result":"` + b64 + `","status":"completed"}]}`)
+	out := stripCodexHistoryDataURLImages(body)
+	if gjson.GetBytes(out, "input.0.result").Exists() {
+		t.Fatalf("image_generation_call.result should be deleted; payload=%s", out)
+	}
+	if got := gjson.GetBytes(out, "input.0.id").String(); got != "ig_1" {
+		t.Fatalf("id should remain, got %q", got)
+	}
+}

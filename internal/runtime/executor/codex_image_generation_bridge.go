@@ -31,6 +31,12 @@ var (
 	// Only rewrite these when the same response already produced a hosted image_generation_call.
 	codexMntDataMarkdownRef = regexp.MustCompile(`!\[([^\]]*)\]\((?:sandbox:)?(/mnt/data/(\d+)\.([A-Za-z0-9]+))\)`)
 	codexMntDataBareRef     = regexp.MustCompile(`(?:sandbox:)?/mnt/data/(\d+)\.([A-Za-z0-9]+)`)
+
+	// Inbound history hygiene: Desktop re-sends prior assistant text that may contain multi-MB
+	// data:image URLs from our outbound display rewrite. Strip pixels, keep a short placeholder
+	// so the model still knows an image existed — zero server-side image storage.
+	codexMarkdownDataURLImage = regexp.MustCompile(`!\[([^\]]*)\]\(data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]{256,}\)`)
+	codexBareDataURLImage     = regexp.MustCompile(`data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]{256,}`)
 )
 
 // codexHostedImage is one completed hosted image_generation_call payload for Desktop rewrite.
@@ -806,4 +812,107 @@ func maybeWrapSSEData(hadSSEPrefix bool, body []byte) []byte {
 	out = append(out, ' ')
 	out = append(out, body...)
 	return out
+}
+
+// stripCodexHistoryDataURLImages removes multi-MB data:image payloads from request history
+// before upstream. Desktop keeps outbound data-url markdown for display, then re-sends it
+// on the next turn — that blows the model context (context_length_exceeded). Replace with
+// short placeholders only; do not cache image bytes on the server.
+func stripCodexHistoryDataURLImages(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	// Fast path: nothing to do when payload has neither markdown data URLs nor a large
+	// image_generation_call.result (Desktop usually only re-sends markdown data URLs).
+	hasDataURL := bytes.Contains(body, []byte("data:image/"))
+	hasIGResult := bytes.Contains(body, []byte(`"image_generation_call"`)) && bytes.Contains(body, []byte(`"result"`))
+	if !hasDataURL && !hasIGResult {
+		return body
+	}
+	seq := 0
+	nextPlaceholder := func(alt string) string {
+		seq++
+		alt = strings.TrimSpace(alt)
+		if alt == "" {
+			alt = "generated image"
+		}
+		// Keep alt for model semantics; URL is a stable non-pixel ref.
+		return fmt.Sprintf("![%s](cliproxy-image:%d)", alt, seq)
+	}
+
+	// Top-level string input (rare for Desktop).
+	if in := gjson.GetBytes(body, "input"); in.Type == gjson.String {
+		if next, ok := replaceCodexDataURLImagesInText(in.String(), nextPlaceholder); ok {
+			body, _ = sjson.SetBytes(body, "input", next)
+		}
+		return body
+	}
+
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body
+	}
+	for itemIndex, item := range input.Array() {
+		// Drop base64 from any re-sent image_generation_call history items.
+		if strings.TrimSpace(item.Get("type").String()) == "image_generation_call" {
+			if result := strings.TrimSpace(item.Get("result").String()); len(result) >= 256 {
+				path := fmt.Sprintf("input.%d.result", itemIndex)
+				body, _ = sjson.DeleteBytes(body, path)
+			}
+			continue
+		}
+		if !hasDataURL {
+			continue
+		}
+		// message / content text fields
+		if content := item.Get("content"); content.Type == gjson.String {
+			if next, ok := replaceCodexDataURLImagesInText(content.String(), nextPlaceholder); ok {
+				path := fmt.Sprintf("input.%d.content", itemIndex)
+				body, _ = sjson.SetBytes(body, path, next)
+			}
+			continue
+		}
+		if content := item.Get("content"); content.IsArray() {
+			for partIndex, part := range content.Array() {
+				partType := strings.TrimSpace(part.Get("type").String())
+				// Only rewrite text parts. Do not touch structured input_image (user uploads /
+				// vision) — those are intentional pixels, not Desktop session replay of our
+				// outbound markdown data URLs.
+				if partType != "input_text" && partType != "output_text" && partType != "text" {
+					continue
+				}
+				text := part.Get("text").String()
+				if next, ok := replaceCodexDataURLImagesInText(text, nextPlaceholder); ok {
+					path := fmt.Sprintf("input.%d.content.%d.text", itemIndex, partIndex)
+					body, _ = sjson.SetBytes(body, path, next)
+				}
+			}
+		}
+	}
+	return body
+}
+
+func replaceCodexDataURLImagesInText(text string, nextPlaceholder func(alt string) string) (string, bool) {
+	if text == "" || !strings.Contains(text, "data:image/") {
+		return text, false
+	}
+	out := text
+	out = codexMarkdownDataURLImage.ReplaceAllStringFunc(out, func(match string) string {
+		sub := codexMarkdownDataURLImage.FindStringSubmatch(match)
+		alt := ""
+		if len(sub) >= 2 {
+			alt = sub[1]
+		}
+		return nextPlaceholder(alt)
+	})
+	// Remaining bare data URLs (not wrapped in markdown).
+	if strings.Contains(out, "data:image/") {
+		out = codexBareDataURLImage.ReplaceAllStringFunc(out, func(string) string {
+			return nextPlaceholder("generated image")
+		})
+	}
+	if out == text {
+		return text, false
+	}
+	return out, true
 }
