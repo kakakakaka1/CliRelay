@@ -825,6 +825,11 @@ func initOpenedDBLocked(db, readDB *sql.DB, dbPath, driver string, storageCfg co
 		ensureRequestLogDetailIndexes(db)
 	}
 	bootstrapAIAccountStatusReadModels(db, loc)
+	if err := bootstrapAPIKeyDailySpendingResets(db); err != nil {
+		_ = db.Close()
+		usageDB, usageReadDB = nil, nil
+		return err
+	}
 	log.Debugf("usage: initializing pricing table")
 	initPricingTable(db)
 	log.Debugf("usage: initializing model config tables")
@@ -846,7 +851,6 @@ func initOpenedDBLocked(db, readDB *sql.DB, dbPath, driver string, storageCfg co
 	log.Debugf("usage: initializing identity_fingerprints table")
 	initIdentityFingerprintsTable(db)
 	startRequestLogMaintenance(db, driver)
-	log.Debugf("usage: request log content session_id backfill disabled during startup")
 	startRequestLogContentSessionIDBackfill(db)
 	log.Infof("usage: %s database initialised at %s", driver, dbPath)
 	return nil

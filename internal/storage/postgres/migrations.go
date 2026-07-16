@@ -17,8 +17,24 @@ func RuntimeMigrations() []Migration {
 		{Version: "202607160001_request_logs_auth_lookup_indexes", SQL: requestLogsAuthLookupIndexesSQL},
 		// Latest AI-account status + daily usage projection so cards stop scanning request_logs.
 		{Version: "202607160002_ai_account_status_read_model", SQL: aiAccountStatusReadModelSQL},
+		// Manual same-day daily spending reset baseline per API key (does not delete request_logs).
+		{Version: "202607160003_api_key_daily_spending_resets", SQL: apiKeyDailySpendingResetsSQL},
 	}
 }
+
+// TIMESTAMPTZ matches other PG runtime tables; SQLite bootstrap uses TIMESTAMP (see usage package).
+const apiKeyDailySpendingResetsSQL = `
+CREATE TABLE IF NOT EXISTS api_key_daily_spending_resets (
+  tenant_id     UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+  api_key_id    TEXT NOT NULL,
+  day_key       TEXT NOT NULL DEFAULT '',
+  cost_baseline DOUBLE PRECISION NOT NULL DEFAULT 0,
+  reset_at      TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (tenant_id, api_key_id)
+);
+CREATE INDEX IF NOT EXISTS idx_api_key_daily_spending_resets_day
+  ON api_key_daily_spending_resets(tenant_id, day_key);
+`
 
 const requestLogsAuthLookupIndexesSQL = `
 CREATE INDEX IF NOT EXISTS idx_request_logs_tenant_auth_index_time

@@ -7,10 +7,21 @@ import (
 
 func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	migrations := RuntimeMigrations()
-	if len(migrations) != 12 {
-		t.Fatalf("RuntimeMigrations len = %d, want 12", len(migrations))
+	if len(migrations) != 13 {
+		t.Fatalf("RuntimeMigrations len = %d, want 13", len(migrations))
 	}
-	// Latest migration: AI account status read model tables.
+	// Latest migration: API key daily spending reset baselines.
+	resetSQL := migrations[12].SQL
+	for _, fragment := range []string{
+		"CREATE TABLE IF NOT EXISTS api_key_daily_spending_resets",
+		"cost_baseline",
+		"day_key",
+	} {
+		if !strings.Contains(resetSQL, fragment) {
+			t.Fatalf("daily spending reset migration missing %q", fragment)
+		}
+	}
+	// Prior migration: AI account status read model tables.
 	statusSQL := migrations[11].SQL
 	for _, fragment := range []string{
 		"CREATE TABLE IF NOT EXISTS ai_account_status",
