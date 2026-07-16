@@ -317,7 +317,7 @@ func ensureRequestLogLookupIndexes(db *sql.DB) {
 		"CREATE INDEX IF NOT EXISTS idx_logs_api_key_id_timestamp ON request_logs(api_key_id, timestamp DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_logs_api_key_chart_cover ON request_logs(api_key, api_key_id, timestamp DESC, model, failed, input_tokens, output_tokens, total_tokens, cost, cached_tokens)",
 		"CREATE INDEX IF NOT EXISTS idx_logs_api_key_id_chart_cover ON request_logs(api_key_id, timestamp DESC, model, failed, input_tokens, output_tokens, total_tokens, cost, cached_tokens)",
-		// AI Accounts entity-stats / auth-file-trend: tenant + auth identity + time.
+		// AI Accounts entity-stats / auth-file-trend: tenant + auth identity + time (SQLite-only path).
 		"CREATE INDEX IF NOT EXISTS idx_logs_tenant_auth_index_timestamp ON request_logs(tenant_id, auth_index, timestamp DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_logs_tenant_auth_subject_timestamp ON request_logs(tenant_id, auth_subject_id, timestamp DESC)",
 	} {
@@ -824,6 +824,7 @@ func initOpenedDBLocked(db, readDB *sql.DB, dbPath, driver string, storageCfg co
 		log.Debugf("usage: ensuring request log detail indexes")
 		ensureRequestLogDetailIndexes(db)
 	}
+	bootstrapAIAccountStatusReadModels(db, loc)
 	log.Debugf("usage: initializing pricing table")
 	initPricingTable(db)
 	log.Debugf("usage: initializing model config tables")
@@ -1005,7 +1006,7 @@ func insertLogIdentity(apiKey, apiKeyID, authSubjectID, apiKeyName, model, upstr
 		return
 	}
 
-	if errCommit := tx.Commit(); errCommit != nil {
+	if errCommit := commitLogWithAuthSubjectUsageDaily(tx, tenantID, authSubjectID, failed, cost, timestamp); errCommit != nil {
 		log.Errorf("usage: commit log insert: %v", errCommit)
 		return
 	}

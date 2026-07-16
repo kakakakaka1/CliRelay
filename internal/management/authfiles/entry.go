@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
@@ -73,6 +74,10 @@ func BuildEntry(auth *coreauth.Auth, opts EntryOptions) map[string]any {
 		"runtime_only":   runtimeOnly,
 		"source":         "memory",
 		"size":           int64(0),
+	}
+	// Canonical identity for status/usage read models (server-computed; never client-supplied).
+	if identity := usage.ResolveAuthSubjectIdentity(auth); identity != nil && identity.ID != "" {
+		entry["auth_subject_id"] = identity.ID
 	}
 	if email := Email(auth); email != "" {
 		entry["email"] = email
