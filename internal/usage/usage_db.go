@@ -317,6 +317,9 @@ func ensureRequestLogLookupIndexes(db *sql.DB) {
 		"CREATE INDEX IF NOT EXISTS idx_logs_api_key_id_timestamp ON request_logs(api_key_id, timestamp DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_logs_api_key_chart_cover ON request_logs(api_key, api_key_id, timestamp DESC, model, failed, input_tokens, output_tokens, total_tokens, cost, cached_tokens)",
 		"CREATE INDEX IF NOT EXISTS idx_logs_api_key_id_chart_cover ON request_logs(api_key_id, timestamp DESC, model, failed, input_tokens, output_tokens, total_tokens, cost, cached_tokens)",
+		// AI Accounts entity-stats / auth-file-trend: tenant + auth identity + time.
+		"CREATE INDEX IF NOT EXISTS idx_logs_tenant_auth_index_timestamp ON request_logs(tenant_id, auth_index, timestamp DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_logs_tenant_auth_subject_timestamp ON request_logs(tenant_id, auth_subject_id, timestamp DESC)",
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			log.Warnf("usage: create request log lookup index: %v", err)

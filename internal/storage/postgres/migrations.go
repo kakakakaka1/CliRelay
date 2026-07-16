@@ -12,8 +12,19 @@ func RuntimeMigrations() []Migration {
 		{Version: "202607120001_dynamic_menus", SQL: dynamicMenusSQL},
 		{Version: "202607120002_menu_management_v2", SQL: menuManagementV2SQL},
 		{Version: "202607130001_model_config_openrouter_metadata", SQL: modelConfigOpenRouterMetadataSQL},
+		// AI Accounts page fans out entity-stats + per-card auth-file-trend over
+		// request_logs; composite indexes avoid sequential scans under concurrent load.
+		{Version: "202607160001_request_logs_auth_lookup_indexes", SQL: requestLogsAuthLookupIndexesSQL},
 	}
 }
+
+const requestLogsAuthLookupIndexesSQL = `
+CREATE INDEX IF NOT EXISTS idx_request_logs_tenant_auth_index_time
+  ON request_logs(tenant_id, auth_index, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_request_logs_tenant_auth_subject_time_cost
+  ON request_logs(tenant_id, auth_subject_id, timestamp DESC)
+  INCLUDE (cost);
+`
 
 const runtimeSchemaSQL = `
 CREATE TABLE IF NOT EXISTS request_logs (

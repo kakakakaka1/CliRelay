@@ -7,8 +7,18 @@ import (
 
 func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	migrations := RuntimeMigrations()
-	if len(migrations) != 10 {
-		t.Fatalf("RuntimeMigrations len = %d, want 10", len(migrations))
+	if len(migrations) != 11 {
+		t.Fatalf("RuntimeMigrations len = %d, want 11", len(migrations))
+	}
+	// Latest migration: AI Accounts request_logs auth lookup indexes.
+	authLookupSQL := migrations[10].SQL
+	for _, fragment := range []string{
+		"idx_request_logs_tenant_auth_index_time",
+		"idx_request_logs_tenant_auth_subject_time_cost",
+	} {
+		if !strings.Contains(authLookupSQL, fragment) {
+			t.Fatalf("auth lookup index migration missing %q", fragment)
+		}
 	}
 	sqlText := migrations[0].SQL
 	for _, table := range []string{
