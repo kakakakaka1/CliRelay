@@ -49,6 +49,12 @@ func TestListEntriesBuildsAndSortsAuthEntries(t *testing.T) {
 	if got[0]["name"] != "alpha.json" || got[1]["name"] != "zeta.json" {
 		t.Fatalf("sorted names = %#v, want alpha then zeta", []any{got[0]["name"], got[1]["name"]})
 	}
+	if _, ok := got[0]["auth_subject_id"].(string); !ok || got[0]["auth_subject_id"] == "" {
+		t.Fatalf("alpha missing auth_subject_id: %#v", got[0])
+	}
+	if _, ok := got[1]["auth_subject_id"].(string); !ok || got[1]["auth_subject_id"] == "" {
+		t.Fatalf("zeta missing auth_subject_id: %#v", got[1])
+	}
 }
 
 func TestBuildEntryAllowsRuntimeOnlyAuthWithoutPath(t *testing.T) {

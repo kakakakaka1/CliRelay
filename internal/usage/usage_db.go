@@ -243,6 +243,51 @@ CREATE TABLE IF NOT EXISTS auth_subject_quota_cycles (
 
 CREATE INDEX IF NOT EXISTS idx_auth_subject_quota_cycles_subject_window
   ON auth_subject_quota_cycles(subject_id, window_seconds, last_verified_at);
+
+CREATE TABLE IF NOT EXISTS auth_subject_usage_daily (
+  tenant_id       TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+  auth_subject_id TEXT NOT NULL,
+  day_key         TEXT NOT NULL,
+  request_count   INTEGER NOT NULL DEFAULT 0,
+  success_count   INTEGER NOT NULL DEFAULT 0,
+  failure_count   INTEGER NOT NULL DEFAULT 0,
+  cost_total      REAL NOT NULL DEFAULT 0,
+  updated_at      DATETIME NOT NULL,
+  PRIMARY KEY (tenant_id, auth_subject_id, day_key)
+);
+CREATE INDEX IF NOT EXISTS idx_auth_subject_usage_daily_tenant_day
+  ON auth_subject_usage_daily(tenant_id, day_key);
+
+CREATE TABLE IF NOT EXISTS ai_account_status (
+  tenant_id                 TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+  auth_subject_id           TEXT NOT NULL,
+  auth_index                TEXT NOT NULL DEFAULT '',
+  provider                  TEXT NOT NULL DEFAULT '',
+  refresh_state             TEXT NOT NULL DEFAULT 'idle',
+  health_status             TEXT NOT NULL DEFAULT '',
+  plan_type                 TEXT NOT NULL DEFAULT '',
+  restriction_summary       TEXT NOT NULL DEFAULT '',
+  error_summary             TEXT NOT NULL DEFAULT '',
+  error_code                TEXT NOT NULL DEFAULT '',
+  error_message             TEXT NOT NULL DEFAULT '',
+  quota_json                TEXT NOT NULL DEFAULT '[]',
+  reset_credit_count        INTEGER,
+  reset_credit_expirations  TEXT NOT NULL DEFAULT '[]',
+  upstream_checked_at       DATETIME,
+  usage_updated_at          DATETIME,
+  expires_at                DATETIME,
+  version                   INTEGER NOT NULL DEFAULT 0,
+  updated_at                DATETIME NOT NULL,
+  PRIMARY KEY (tenant_id, auth_subject_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_account_status_tenant_auth_index
+  ON ai_account_status(tenant_id, auth_index);
+
+CREATE TABLE IF NOT EXISTS usage_projection_markers (
+  marker_key   TEXT NOT NULL PRIMARY KEY,
+  marker_value TEXT NOT NULL DEFAULT '',
+  updated_at   DATETIME NOT NULL
+);
 `
 
 // migrateContentColumns adds input_content/output_content columns to an
@@ -823,6 +868,14 @@ func initOpenedDBLocked(db, readDB *sql.DB, dbPath, driver string, storageCfg co
 		migrateRequestLogContentSessionIDColumn(db)
 		log.Debugf("usage: ensuring request log detail indexes")
 		ensureRequestLogDetailIndexes(db)
+		log.Debugf("usage: ensuring ai account status read models")
+		ensureAIAccountStatusReadModels(db)
+	}
+	if !runSQLiteBootstrap {
+		ensureAIAccountStatusReadModels(db)
+	}
+	if err := runAuthSubjectUsageDailyBackfillAtInitDB(db, authSubjectUsageDailyBackfillDays, loc); err != nil {
+		log.Warnf("usage: auth subject usage daily backfill: %v", err)
 	}
 	log.Debugf("usage: initializing pricing table")
 	initPricingTable(db)
@@ -1003,6 +1056,15 @@ func insertLogIdentity(apiKey, apiKeyID, authSubjectID, apiKeyName, model, upstr
 		_ = tx.Rollback()
 		log.Errorf("usage: insert log: %v", err)
 		return
+	}
+
+	// Same-tx projection: one commit for request_log + daily card summary.
+	if authSubjectID != "" {
+		if errProj := projectAuthSubjectUsageDailyTx(tx, tenantID, authSubjectID, failed, cost, timestamp); errProj != nil {
+			_ = tx.Rollback()
+			log.Errorf("usage: project auth subject usage daily: %v", errProj)
+			return
+		}
 	}
 
 	if errCommit := tx.Commit(); errCommit != nil {
