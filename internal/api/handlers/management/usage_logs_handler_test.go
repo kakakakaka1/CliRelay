@@ -153,15 +153,17 @@ func TestGetUsageLogsKeepsStoredChannelNameWhenCurrentAuthNameDiffers(t *testing
 
 	var payload struct {
 		Items []struct {
-			ChannelName string `json:"channel_name"`
-			AuthIndex   string `json:"auth_index"`
+			ChannelName   string `json:"channel_name"`
+			AuthIndex     string `json:"auth_index"`
+			AuthSubjectID string `json:"auth_subject_id"`
 		} `json:"items"`
 		Filters struct {
 			Channels       []string `json:"channels"`
 			ChannelOptions []struct {
-				Value     string `json:"value"`
-				Label     string `json:"label"`
-				AuthIndex string `json:"auth_index"`
+				Value         string `json:"value"`
+				Label         string `json:"label"`
+				AuthIndex     string `json:"auth_index"`
+				AuthSubjectID string `json:"auth_subject_id"`
 			} `json:"channel_options"`
 		} `json:"filters"`
 	}
@@ -175,8 +177,8 @@ func TestGetUsageLogsKeepsStoredChannelNameWhenCurrentAuthNameDiffers(t *testing
 	if payload.Items[0].ChannelName != "tabcode-plus" {
 		t.Fatalf("channel_name = %q, want %q", payload.Items[0].ChannelName, "tabcode-plus")
 	}
-	// Filter facets use the live auth label / auth_index so renamed channels stay
-	// selectable as one account, while still matching historical rows by index.
+	// Filter facets use the live auth label / account subject so renamed channels
+	// stay selectable as one account, while still matching historical rows.
 	if len(payload.Filters.ChannelOptions) != 1 {
 		t.Fatalf("channel_options = %#v, want one option", payload.Filters.ChannelOptions)
 	}
@@ -184,8 +186,11 @@ func TestGetUsageLogsKeepsStoredChannelNameWhenCurrentAuthNameDiffers(t *testing
 	if opt.Label != "tabcode-pro" {
 		t.Fatalf("channel_options[0].label = %q, want tabcode-pro", opt.Label)
 	}
-	if opt.Value != auth.Index || opt.AuthIndex != auth.Index {
-		t.Fatalf("channel_options[0] value/auth_index = %#v, want auth index %q", opt, auth.Index)
+	if opt.AuthIndex != auth.Index {
+		t.Fatalf("channel_options[0].auth_index = %q, want %q", opt.AuthIndex, auth.Index)
+	}
+	if !strings.HasPrefix(opt.Value, "authsub_") || opt.AuthSubjectID != opt.Value {
+		t.Fatalf("channel_options[0] value/subject = %#v, want authsub_* subject", opt)
 	}
 	if len(payload.Filters.Channels) != 1 || payload.Filters.Channels[0] != "tabcode-pro" {
 		t.Fatalf("filters.channels = %#v, want [tabcode-pro]", payload.Filters.Channels)
@@ -1900,11 +1905,12 @@ func TestGetUsageLogsFiltersByOrphanAuthIndexWithoutLiveMeta(t *testing.T) {
 	var listPayload struct {
 		Filters struct {
 			ChannelOptions []struct {
-				Value     string `json:"value"`
-				Label     string `json:"label"`
-				Provider  string `json:"provider"`
-				AuthType  string `json:"auth_type"`
-				AuthIndex string `json:"auth_index"`
+				Value         string `json:"value"`
+				Label         string `json:"label"`
+				Provider      string `json:"provider"`
+				AuthType      string `json:"auth_type"`
+				AuthIndex     string `json:"auth_index"`
+				AuthSubjectID string `json:"auth_subject_id"`
 			} `json:"channel_options"`
 		} `json:"filters"`
 	}
@@ -1915,8 +1921,11 @@ func TestGetUsageLogsFiltersByOrphanAuthIndexWithoutLiveMeta(t *testing.T) {
 		t.Fatalf("channel_options = %#v, want one merged option", listPayload.Filters.ChannelOptions)
 	}
 	option := listPayload.Filters.ChannelOptions[0]
-	if option.Value != liveAuth.Index || option.AuthIndex != liveAuth.Index {
-		t.Fatalf("merged option value/auth_index = %#v, want live index %q", option, liveAuth.Index)
+	if option.AuthIndex != liveAuth.Index {
+		t.Fatalf("merged option auth_index = %q, want live index %q", option.AuthIndex, liveAuth.Index)
+	}
+	if !strings.HasPrefix(option.Value, "authsub_") || option.AuthSubjectID != option.Value {
+		t.Fatalf("merged option value/subject = %#v, want authsub_* subject", option)
 	}
 	if option.Label != "asherandersenloqv@outlook.com" || option.Provider != "xai" || option.AuthType != "oauth" {
 		t.Fatalf("merged option metadata = %#v", option)

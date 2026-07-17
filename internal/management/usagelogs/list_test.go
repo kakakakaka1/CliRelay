@@ -57,14 +57,20 @@ func TestChannelFilterSelectorsTreatsOrphanAuthIndexAsAuthIndex(t *testing.T) {
 
 	// Selecting the orphan facet value must stay on AuthIndexes. The previous
 	// bug fell through to ChannelNames and queried channel_name = <hash>.
-	authIndexes, channelNames, _ := channelFilterSelectors(
+	subjects, authIndexes, channelNames, _ := channelFilterSelectors(
 		[]string{orphanIndex},
 		nil,
 		authIndexChannelMap,
 		nil,
 		authMetaByIndex,
 		nil,
+		nil,
+		nil,
+		nil,
 	)
+	if len(subjects) != 0 {
+		t.Fatalf("subjects = %#v, want empty for unmapped orphan", subjects)
+	}
 	if !reflect.DeepEqual(authIndexes, []string{orphanIndex}) {
 		t.Fatalf("authIndexes = %#v, want [%s]", authIndexes, orphanIndex)
 	}
@@ -73,14 +79,20 @@ func TestChannelFilterSelectorsTreatsOrphanAuthIndexAsAuthIndex(t *testing.T) {
 	}
 
 	// Live index still resolves normally.
-	authIndexes, channelNames, _ = channelFilterSelectors(
+	subjects, authIndexes, channelNames, _ = channelFilterSelectors(
 		[]string{liveIndex},
 		nil,
 		authIndexChannelMap,
 		nil,
 		authMetaByIndex,
 		nil,
+		nil,
+		nil,
+		nil,
 	)
+	if len(subjects) != 0 {
+		t.Fatalf("live subjects = %#v, want empty without subject map", subjects)
+	}
 	if !reflect.DeepEqual(authIndexes, []string{liveIndex}) {
 		t.Fatalf("live authIndexes = %#v, want [%s]", authIndexes, liveIndex)
 	}
@@ -90,14 +102,20 @@ func TestChannelFilterSelectorsTreatsOrphanAuthIndexAsAuthIndex(t *testing.T) {
 
 	// Email/display labels still use the legacy channel_name path (and may also
 	// expand to live auth indexes via authIndexChannelMap label matching).
-	authIndexes, channelNames, _ = channelFilterSelectors(
+	subjects, authIndexes, channelNames, _ = channelFilterSelectors(
 		[]string{label},
 		map[string]string{label: label},
 		authIndexChannelMap,
 		nil,
 		authMetaByIndex,
 		nil,
+		nil,
+		nil,
+		nil,
 	)
+	if len(subjects) != 0 {
+		t.Fatalf("label subjects = %#v, want empty without subject map", subjects)
+	}
 	if !reflect.DeepEqual(authIndexes, []string{liveIndex}) {
 		t.Fatalf("label authIndexes = %#v, want [%s]", authIndexes, liveIndex)
 	}
@@ -144,21 +162,33 @@ func TestXaiOAuthAuthIndexGroupMergesIDAndFileSeeds(t *testing.T) {
 	}
 }
 
-func TestXaiOAuthAuthIndexGroupSkipsNonXAI(t *testing.T) {
+func TestAuthIndexAliasGroupIncludesBasenameAndTenantRelative(t *testing.T) {
 	t.Parallel()
 
-	fileName := "codex-yuan364299311@gmail.com-pro.json"
+	base := "codex-yuan364299311@gmail.com-pro.json"
+	tenantRelative := "9e003dfb-751f-4898-b186-45f765c763a6/" + base
 	auth := &coreauth.Auth{
 		Provider: "codex",
-		FileName: fileName,
-		ID:       fileName,
+		FileName: tenantRelative,
+		ID:       tenantRelative,
 		Label:    "yuan364299311@gmail.com",
 		Metadata: map[string]any{"email": "yuan364299311@gmail.com"},
 	}
-	group := xaiOAuthAuthIndexGroup(auth)
-	live := seedIndex("file:" + fileName)
-	if !reflect.DeepEqual(group, []string{live}) {
-		t.Fatalf("codex group = %#v, want only live [%s]", group, live)
+	group := authIndexAliasGroup(auth)
+	live := seedIndex("file:" + tenantRelative)
+	basename := seedIndex("file:" + base)
+	if group[0] != live {
+		t.Fatalf("canonical = %s, want live %s", group[0], live)
+	}
+	foundBase := false
+	for _, member := range group {
+		if member == basename {
+			foundBase = true
+			break
+		}
+	}
+	if !foundBase {
+		t.Fatalf("group %#v missing basename index %s", group, basename)
 	}
 }
 
@@ -184,14 +214,20 @@ func TestChannelFilterSelectorsExpandsXaiOAuthIndexGroup(t *testing.T) {
 	}
 
 	// Selecting the live option expands to both historical indexes.
-	authIndexes, channelNames, _ := channelFilterSelectors(
+	subjects, authIndexes, channelNames, _ := channelFilterSelectors(
 		[]string{liveIndex},
 		nil,
 		authIndexChannelMap,
 		nil,
 		authMetaByIndex,
 		authIndexGroup,
+		nil,
+		nil,
+		nil,
 	)
+	if len(subjects) != 0 {
+		t.Fatalf("subjects = %#v, want empty without subject map", subjects)
+	}
 	sort.Strings(authIndexes)
 	want := []string{liveIndex, orphanIndex}
 	sort.Strings(want)
@@ -203,14 +239,20 @@ func TestChannelFilterSelectorsExpandsXaiOAuthIndexGroup(t *testing.T) {
 	}
 
 	// Selecting the orphan index also expands (old clients / deep links).
-	authIndexes, _, _ = channelFilterSelectors(
+	subjects, authIndexes, _, _ = channelFilterSelectors(
 		[]string{orphanIndex},
 		nil,
 		authIndexChannelMap,
 		nil,
 		authMetaByIndex,
 		authIndexGroup,
+		nil,
+		nil,
+		nil,
 	)
+	if len(subjects) != 0 {
+		t.Fatalf("orphan subjects = %#v, want empty without subject map", subjects)
+	}
 	sort.Strings(authIndexes)
 	if !reflect.DeepEqual(authIndexes, want) {
 		t.Fatalf("orphan expand authIndexes = %#v, want %#v", authIndexes, want)
@@ -259,7 +301,7 @@ func TestEnrichChannelFilterOptionsCollapsesXaiOAuthAliases(t *testing.T) {
 		authType: "oauth",
 	}
 
-	got := enrichChannelFilterOptions(options, nil, authIndexChannelMap, authMetaByIndex, authIndexGroup)
+	got := enrichChannelFilterOptions(options, nil, authIndexChannelMap, authMetaByIndex, authIndexGroup, nil, nil)
 
 	var asher *usage.ChannelFilterOption
 	var codex *usage.ChannelFilterOption
@@ -291,5 +333,152 @@ func TestEnrichChannelFilterOptionsCollapsesXaiOAuthAliases(t *testing.T) {
 	}
 	if codex == nil {
 		t.Fatalf("codex option was dropped: %#v", got)
+	}
+}
+
+func TestChannelFilterSelectorsPrefersAuthSubject(t *testing.T) {
+	t.Parallel()
+
+	liveIndex := "c84aac6579358b75"
+	oldIndex := "a9757e6dce652490"
+	subject := "authsub_29b975703f03bde1"
+	label := "yuan364299311@gmail.com"
+
+	authIndexChannelMap := map[string]string{
+		liveIndex: label,
+		oldIndex:  label,
+	}
+	authMetaByIndex := map[string]authChannelMeta{
+		liveIndex: {label: label, provider: "codex", authType: "oauth"},
+		oldIndex:  {label: label, provider: "codex", authType: "oauth"},
+	}
+	authSubjectByIndex := map[string]string{
+		liveIndex: subject,
+		oldIndex:  subject,
+	}
+	authIndexesBySubject := map[string][]string{
+		subject: {liveIndex, oldIndex},
+	}
+	authMetaBySubject := map[string]authChannelMeta{
+		subject: {label: label, provider: "codex", authType: "oauth"},
+	}
+
+	// New clients send subject value.
+	subjects, authIndexes, channelNames, _ := channelFilterSelectors(
+		[]string{subject},
+		nil,
+		authIndexChannelMap,
+		nil,
+		authMetaByIndex,
+		nil,
+		authSubjectByIndex,
+		authIndexesBySubject,
+		authMetaBySubject,
+	)
+	if !reflect.DeepEqual(subjects, []string{subject}) {
+		t.Fatalf("subjects = %#v, want [%s]", subjects, subject)
+	}
+	sort.Strings(authIndexes)
+	wantIndexes := []string{liveIndex, oldIndex}
+	sort.Strings(wantIndexes)
+	if !reflect.DeepEqual(authIndexes, wantIndexes) {
+		t.Fatalf("authIndexes = %#v, want subject alias indexes %#v", authIndexes, wantIndexes)
+	}
+	if len(channelNames) != 0 {
+		t.Fatalf("channelNames = %#v, want empty", channelNames)
+	}
+
+	// Old clients / deep links still send historical auth_index; map to subject.
+	subjects, authIndexes, _, _ = channelFilterSelectors(
+		[]string{oldIndex},
+		nil,
+		authIndexChannelMap,
+		nil,
+		authMetaByIndex,
+		nil,
+		authSubjectByIndex,
+		authIndexesBySubject,
+		authMetaBySubject,
+	)
+	if !reflect.DeepEqual(subjects, []string{subject}) {
+		t.Fatalf("old index subjects = %#v, want [%s]", subjects, subject)
+	}
+	sort.Strings(authIndexes)
+	if !reflect.DeepEqual(authIndexes, wantIndexes) {
+		t.Fatalf("old index authIndexes = %#v, want %#v", authIndexes, wantIndexes)
+	}
+}
+
+func TestEnrichChannelFilterOptionsCollapsesByAuthSubject(t *testing.T) {
+	t.Parallel()
+
+	liveIndex := "c84aac6579358b75"
+	oldIndex := "a9757e6dce652490"
+	xaiIndex := "b789c5a3171aeaff"
+	codexSubject := "authsub_29b975703f03bde1"
+	xaiSubject := "authsub_50d3fdc60cf66318"
+	label := "yuan364299311@gmail.com"
+
+	options := []usage.ChannelFilterOption{
+		{Value: oldIndex, Label: label, AuthIndex: oldIndex, AuthSubjectID: codexSubject},
+		{Value: liveIndex, Label: label, AuthIndex: liveIndex, AuthSubjectID: codexSubject},
+		{Value: xaiIndex, Label: label, AuthIndex: xaiIndex, AuthSubjectID: xaiSubject},
+	}
+	authIndexChannelMap := map[string]string{
+		liveIndex: label,
+		oldIndex:  label,
+		xaiIndex:  label,
+	}
+	authMetaByIndex := map[string]authChannelMeta{
+		liveIndex: {label: label, provider: "codex", authType: "oauth"},
+		oldIndex:  {label: label, provider: "codex", authType: "oauth"},
+		xaiIndex:  {label: label, provider: "xai", authType: "oauth"},
+	}
+	authSubjectByIndex := map[string]string{
+		liveIndex: codexSubject,
+		oldIndex:  codexSubject,
+		xaiIndex:  xaiSubject,
+	}
+	authMetaBySubject := map[string]authChannelMeta{
+		codexSubject: {label: label, provider: "codex", authType: "oauth"},
+		xaiSubject:   {label: label, provider: "xai", authType: "oauth"},
+	}
+
+	got := enrichChannelFilterOptions(
+		options,
+		nil,
+		authIndexChannelMap,
+		authMetaByIndex,
+		nil,
+		authSubjectByIndex,
+		authMetaBySubject,
+	)
+	if len(got) != 2 {
+		t.Fatalf("options = %#v, want 2 (codex+xai)", got)
+	}
+
+	var codex, xai *usage.ChannelFilterOption
+	for i := range got {
+		switch got[i].AuthSubjectID {
+		case codexSubject:
+			codex = &got[i]
+		case xaiSubject:
+			xai = &got[i]
+		}
+	}
+	if codex == nil || xai == nil {
+		t.Fatalf("missing subject options: %#v", got)
+	}
+	if codex.Value != codexSubject {
+		t.Fatalf("codex value = %s, want %s", codex.Value, codexSubject)
+	}
+	if codex.Provider != "codex" {
+		t.Fatalf("codex provider = %q, want codex", codex.Provider)
+	}
+	if xai.Value != xaiSubject {
+		t.Fatalf("xai value = %s, want %s", xai.Value, xaiSubject)
+	}
+	if xai.Provider != "xai" {
+		t.Fatalf("xai provider = %q, want xai", xai.Provider)
 	}
 }

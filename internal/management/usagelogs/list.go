@@ -16,8 +16,18 @@ import (
 )
 
 func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any, error) {
-	keyNameMap, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex, authIndexGroup := s.buildNameMaps()
-	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex, authIndexGroup)
+	maps := s.buildNameMaps()
+	authSubjectIDs, authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(
+		input.Channels,
+		maps.channelNameMap,
+		maps.authIndexChannelMap,
+		maps.ambiguousAuthIndexChannelMap,
+		maps.authMetaByIndex,
+		maps.authIndexGroup,
+		maps.authSubjectByIndex,
+		maps.authIndexesBySubject,
+		maps.authMetaBySubject,
+	)
 
 	params := usage.LogQueryParams{
 		TenantID:              s.tenantID,
@@ -31,6 +41,7 @@ func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any,
 		MatchNoModels:         input.MatchNoModels,
 		MatchNoStatuses:       input.MatchNoStatuses,
 		MatchNoChannels:       input.MatchNoChannels,
+		AuthSubjectIDs:        authSubjectIDs,
 		AuthIndexes:           authIndexes,
 		ChannelNames:          channelNames,
 		AuthIndexChannelNames: authIndexChannelNames,
@@ -52,25 +63,33 @@ func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any,
 	for i := range result.Items {
 		item := &result.Items[i]
 		if item.APIKeyName == "" {
-			if name, ok := keyNameMap[item.APIKey]; ok {
+			if name, ok := maps.keyNameMap[item.APIKey]; ok {
 				item.APIKeyName = name
 			}
 		}
-		if channelName := displayChannelNameForLog(*item, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap); channelName != "" {
+		if channelName := displayChannelNameForLog(*item, maps.channelNameMap, maps.authIndexChannelMap, maps.ambiguousAuthIndexChannelMap); channelName != "" {
 			item.ChannelName = channelName
 		}
-		enrichLogRowChannelMeta(item, authMetaByIndex)
+		enrichLogRowChannelMeta(item, maps.authMetaByIndex, maps.authMetaBySubject)
 	}
 
 	if filters.APIKeyNames == nil {
 		filters.APIKeyNames = make(map[string]string, len(filters.APIKeys))
 	}
 	for _, key := range filters.APIKeys {
-		if name, ok := keyNameMap[key]; ok {
+		if name, ok := maps.keyNameMap[key]; ok {
 			filters.APIKeyNames[key] = name
 		}
 	}
-	filters.ChannelOptions = enrichChannelFilterOptions(filters.ChannelOptions, channelNameMap, authIndexChannelMap, authMetaByIndex, authIndexGroup)
+	filters.ChannelOptions = enrichChannelFilterOptions(
+		filters.ChannelOptions,
+		maps.channelNameMap,
+		maps.authIndexChannelMap,
+		maps.authMetaByIndex,
+		maps.authIndexGroup,
+		maps.authSubjectByIndex,
+		maps.authMetaBySubject,
+	)
 	filters.Channels = channelLabelsFromOptions(filters.ChannelOptions)
 
 	if result.Items == nil {
@@ -122,8 +141,18 @@ func (s *Service) ClearRequestLogs(options usage.ClearRequestLogsOptions) (int, 
 }
 
 func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, error) {
-	_, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex, authIndexGroup := s.buildNameMaps()
-	authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(input.Channels, channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap, authMetaByIndex, authIndexGroup)
+	maps := s.buildNameMaps()
+	authSubjectIDs, authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(
+		input.Channels,
+		maps.channelNameMap,
+		maps.authIndexChannelMap,
+		maps.ambiguousAuthIndexChannelMap,
+		maps.authMetaByIndex,
+		maps.authIndexGroup,
+		maps.authSubjectByIndex,
+		maps.authIndexesBySubject,
+		maps.authMetaBySubject,
+	)
 	params := usage.LogQueryParams{
 		TenantID:              usage.ResolveAPIKeyTenant(input.APIKey),
 		Page:                  input.Page,
@@ -135,6 +164,7 @@ func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, er
 		MatchNoModels:         input.MatchNoModels,
 		MatchNoChannels:       input.MatchNoChannels,
 		MatchNoStatuses:       input.MatchNoStatuses,
+		AuthSubjectIDs:        authSubjectIDs,
 		AuthIndexes:           authIndexes,
 		ChannelNames:          channelNames,
 		AuthIndexChannelNames: authIndexChannelNames,
@@ -158,22 +188,33 @@ func (s *Service) PublicUsageLogs(input PublicLogQueryInput) (map[string]any, er
 		if apiKeyName == "" {
 			apiKeyName = strings.TrimSpace(result.Items[i].APIKeyName)
 		}
-		channelName := displayChannelNameForLog(result.Items[i], channelNameMap, authIndexChannelMap, ambiguousAuthIndexChannelMap)
+		channelName := displayChannelNameForLog(result.Items[i], maps.channelNameMap, maps.authIndexChannelMap, maps.ambiguousAuthIndexChannelMap)
 		result.Items[i].Source = ""
 		result.Items[i].AuthIndex = ""
+		result.Items[i].AuthSubjectID = ""
 		result.Items[i].ChannelName = channelName
 		result.Items[i].APIKey = ""
 		result.Items[i].APIKeyName = ""
 		// Keep provider/auth_type for public UI badges, but strip identity keys above.
-		enrichLogRowChannelMeta(&result.Items[i], authMetaByIndex)
+		enrichLogRowChannelMeta(&result.Items[i], maps.authMetaByIndex, maps.authMetaBySubject)
 		result.Items[i].AuthIndex = ""
+		result.Items[i].AuthSubjectID = ""
 	}
 
-	filters.ChannelOptions = enrichChannelFilterOptions(filters.ChannelOptions, channelNameMap, authIndexChannelMap, authMetaByIndex, authIndexGroup)
-	// Public responses keep opaque filter values (auth_index) so same-email
-	// multi-provider accounts stay selectable, but strip the auth_index field.
+	filters.ChannelOptions = enrichChannelFilterOptions(
+		filters.ChannelOptions,
+		maps.channelNameMap,
+		maps.authIndexChannelMap,
+		maps.authMetaByIndex,
+		maps.authIndexGroup,
+		maps.authSubjectByIndex,
+		maps.authMetaBySubject,
+	)
+	// Public responses keep opaque filter values so same-email multi-provider
+	// accounts stay selectable, but strip explicit identity fields.
 	for i := range filters.ChannelOptions {
 		filters.ChannelOptions[i].AuthIndex = ""
+		filters.ChannelOptions[i].AuthSubjectID = ""
 	}
 	filters.Channels = channelLabelsFromOptions(filters.ChannelOptions)
 	if result.Items == nil {
@@ -214,13 +255,28 @@ type authChannelMeta struct {
 	authType string
 }
 
+type nameMaps struct {
+	keyNameMap                   map[string]string
+	channelNameMap               map[string]string
+	authIndexChannelMap          map[string]string
+	ambiguousAuthIndexChannelMap map[string][]string
+	authMetaByIndex              map[string]authChannelMeta
+	authIndexGroup               map[string][]string
+	authSubjectByIndex           map[string]string
+	authIndexesBySubject         map[string][]string
+	authMetaBySubject            map[string]authChannelMeta
+}
+
 func channelFilterSelectors(
 	channels []string,
 	channelNameMap, authIndexChannelMap map[string]string,
 	ambiguousAuthIndexChannelMap map[string][]string,
 	authMetaByIndex map[string]authChannelMeta,
 	authIndexGroup map[string][]string,
-) ([]string, []string, map[string][]string) {
+	authSubjectByIndex map[string]string,
+	authIndexesBySubject map[string][]string,
+	authMetaBySubject map[string]authChannelMeta,
+) ([]string, []string, []string, map[string][]string) {
 	// Preserve original selected values. Only use lower-case keys for label matching.
 	selectedRaw := make([]string, 0, len(channels))
 	selectedLabelKeys := make(map[string]struct{})
@@ -233,12 +289,14 @@ func channelFilterSelectors(
 		selectedLabelKeys[strings.ToLower(raw)] = struct{}{}
 	}
 	if len(selectedRaw) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
+	var authSubjectIDs []string
 	var authIndexes []string
 	var channelNames []string
 	authIndexChannelNames := make(map[string][]string)
+	seenSubject := make(map[string]struct{})
 	seenAuthIndex := make(map[string]struct{})
 	seenChannelName := make(map[string]struct{})
 
@@ -253,15 +311,38 @@ func channelFilterSelectors(
 		seenAuthIndex[idx] = struct{}{}
 		authIndexes = append(authIndexes, idx)
 	}
-	// Expand xAI OAuth historical aliases (id: vs file: seed) so one UI option
-	// returns logs written under either index.
-	appendAuthIndexGroup := func(idx string) {
+	appendSubject := func(subjectID string) {
+		subjectID = strings.TrimSpace(subjectID)
+		if subjectID == "" {
+			return
+		}
+		if _, ok := seenSubject[subjectID]; ok {
+			return
+		}
+		seenSubject[subjectID] = struct{}{}
+		authSubjectIDs = append(authSubjectIDs, subjectID)
+		// Also match historical credential-instance rows that predate subject
+		// population or still only carry auth_index.
+		for _, member := range authIndexesBySubject[subjectID] {
+			appendAuthIndex(member)
+		}
+	}
+	// Prefer subject when the index maps uniquely; otherwise expand known index groups.
+	appendAuthIndexOrSubject := func(idx string) {
 		idx = strings.TrimSpace(idx)
 		if idx == "" {
 			return
 		}
+		if subjectID := strings.TrimSpace(authSubjectByIndex[idx]); subjectID != "" {
+			appendSubject(subjectID)
+			return
+		}
 		if group := authIndexGroup[idx]; len(group) > 0 {
 			for _, member := range group {
+				if subjectID := strings.TrimSpace(authSubjectByIndex[member]); subjectID != "" {
+					appendSubject(subjectID)
+					continue
+				}
 				appendAuthIndex(member)
 			}
 			return
@@ -280,34 +361,46 @@ func channelFilterSelectors(
 		seenChannelName[key] = struct{}{}
 		channelNames = append(channelNames, name)
 	}
-
-	for _, raw := range selectedRaw {
-		// Prefer exact auth_index matches so multi-provider same-email accounts
-		// filter independently when clients send auth_index as the value.
-		if _, ok := authIndexChannelMap[raw]; ok {
-			appendAuthIndexGroup(raw)
-			if legacyChannels := ambiguousAuthIndexChannelMap[raw]; len(legacyChannels) > 0 {
-				authIndexChannelNames[raw] = append(authIndexChannelNames[raw], legacyChannels...)
+	attachLegacyNames := func(idx string) {
+		if legacyChannels := ambiguousAuthIndexChannelMap[idx]; len(legacyChannels) > 0 {
+			authIndexChannelNames[idx] = append(authIndexChannelNames[idx], legacyChannels...)
+		}
+		for _, member := range authIndexGroup[idx] {
+			if legacyChannels := ambiguousAuthIndexChannelMap[member]; len(legacyChannels) > 0 {
+				authIndexChannelNames[member] = append(authIndexChannelNames[member], legacyChannels...)
 			}
-			// Also attach legacy channel names for every expanded group member.
-			for _, member := range authIndexGroup[raw] {
+		}
+		if subjectID := strings.TrimSpace(authSubjectByIndex[idx]); subjectID != "" {
+			for _, member := range authIndexesBySubject[subjectID] {
 				if legacyChannels := ambiguousAuthIndexChannelMap[member]; len(legacyChannels) > 0 {
 					authIndexChannelNames[member] = append(authIndexChannelNames[member], legacyChannels...)
 				}
 			}
+		}
+	}
+
+	for _, raw := range selectedRaw {
+		// Account-level subject token from channel_options.value.
+		if _, ok := authMetaBySubject[raw]; ok || looksLikeAuthSubjectID(raw) {
+			appendSubject(raw)
+			continue
+		}
+		// Prefer exact auth_index matches so multi-provider same-email accounts
+		// filter independently when clients send auth_index as the value.
+		if _, ok := authIndexChannelMap[raw]; ok {
+			appendAuthIndexOrSubject(raw)
+			attachLegacyNames(raw)
 			continue
 		}
 		if _, ok := authMetaByIndex[raw]; ok {
-			appendAuthIndexGroup(raw)
+			appendAuthIndexOrSubject(raw)
 			continue
 		}
 		matchedAuthIndex := false
 		for idx := range authIndexChannelMap {
 			if strings.EqualFold(strings.TrimSpace(idx), raw) {
-				appendAuthIndexGroup(idx)
-				if legacyChannels := ambiguousAuthIndexChannelMap[idx]; len(legacyChannels) > 0 {
-					authIndexChannelNames[idx] = append(authIndexChannelNames[idx], legacyChannels...)
-				}
+				appendAuthIndexOrSubject(idx)
+				attachLegacyNames(idx)
 				matchedAuthIndex = true
 			}
 		}
@@ -316,7 +409,7 @@ func channelFilterSelectors(
 		}
 		for idx := range authMetaByIndex {
 			if strings.EqualFold(strings.TrimSpace(idx), raw) {
-				appendAuthIndexGroup(idx)
+				appendAuthIndexOrSubject(idx)
 				matchedAuthIndex = true
 			}
 		}
@@ -328,7 +421,7 @@ func channelFilterSelectors(
 		// stable auth_index tokens as AuthIndexes; never fall back to
 		// channel_name matching for them (that path yields 0 rows).
 		if looksLikeAuthIndex(raw) {
-			appendAuthIndexGroup(raw)
+			appendAuthIndexOrSubject(raw)
 			continue
 		}
 		// Legacy clients still send display labels / emails.
@@ -350,16 +443,14 @@ func channelFilterSelectors(
 			continue
 		}
 		if _, ok := selectedLabelKeys[key]; ok {
-			appendAuthIndexGroup(idx)
-			if legacyChannels := ambiguousAuthIndexChannelMap[idx]; len(legacyChannels) > 0 {
-				authIndexChannelNames[idx] = append(authIndexChannelNames[idx], legacyChannels...)
-			}
+			appendAuthIndexOrSubject(idx)
+			attachLegacyNames(idx)
 		}
 	}
-	if len(authIndexes) == 0 && len(channelNames) == 0 {
+	if len(authSubjectIDs) == 0 && len(authIndexes) == 0 && len(channelNames) == 0 {
 		authIndexes = []string{""}
 	}
-	return authIndexes, channelNames, authIndexChannelNames
+	return authSubjectIDs, authIndexes, channelNames, authIndexChannelNames
 }
 
 // looksLikeAuthIndex reports whether value matches the stable auth index format
@@ -384,19 +475,44 @@ func looksLikeAuthIndex(value string) bool {
 	return true
 }
 
+// looksLikeAuthSubjectID reports whether value matches stableAuthSubjectID output.
+func looksLikeAuthSubjectID(value string) bool {
+	value = strings.TrimSpace(value)
+	const prefix = "authsub_"
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	hexPart := value[len(prefix):]
+	if len(hexPart) != 16 {
+		return false
+	}
+	for i := 0; i < len(hexPart); i++ {
+		c := hexPart[i]
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func enrichChannelFilterOptions(
 	options []usage.ChannelFilterOption,
 	channelNameMap, authIndexChannelMap map[string]string,
 	authMetaByIndex map[string]authChannelMeta,
 	authIndexGroup map[string][]string,
+	authSubjectByIndex map[string]string,
+	authMetaBySubject map[string]authChannelMeta,
 ) []usage.ChannelFilterOption {
 	if len(options) == 0 {
 		return make([]usage.ChannelFilterOption, 0)
 	}
 
-	// Prefer one option per live auth_index. Collapse pure name-only rows when
-	// the same label already has auth-backed options. For xAI OAuth, also
-	// collapse historical id:/file: seed aliases onto the canonical live index.
+	// Prefer one option per auth_subject_id. Fall back to auth_index for orphans.
+	// Collapse pure name-only rows when the same label already has auth-backed options.
 	out := make([]usage.ChannelFilterOption, 0, len(options))
 	seenValue := make(map[string]struct{}, len(options))
 	authBackedLabels := make(map[string]struct{})
@@ -412,38 +528,58 @@ func enrichChannelFilterOptions(
 		}
 		return authIndex
 	}
+	resolveSubject := func(option usage.ChannelFilterOption, authIndex string) string {
+		if subjectID := strings.TrimSpace(option.AuthSubjectID); subjectID != "" {
+			return subjectID
+		}
+		if subjectID := strings.TrimSpace(authSubjectByIndex[authIndex]); subjectID != "" {
+			return subjectID
+		}
+		if value := strings.TrimSpace(option.Value); looksLikeAuthSubjectID(value) {
+			return value
+		}
+		return ""
+	}
 
 	for _, option := range options {
 		authIndex := strings.TrimSpace(option.AuthIndex)
-		if authIndex == "" {
+		if authIndex == "" && !looksLikeAuthSubjectID(option.Value) {
 			authIndex = strings.TrimSpace(option.Value)
 		}
 		authIndex = canonicalAuthIndex(authIndex)
-		if authIndex == "" {
-			continue
+		subjectID := resolveSubject(option, authIndex)
+		if subjectID != "" {
+			if meta, ok := authMetaBySubject[subjectID]; ok && meta.label != "" {
+				authBackedLabels[strings.ToLower(meta.label)] = struct{}{}
+			}
 		}
-		if _, ok := authIndexChannelMap[authIndex]; ok {
+		if authIndex != "" {
 			if name := strings.TrimSpace(authIndexChannelMap[authIndex]); name != "" {
 				authBackedLabels[strings.ToLower(name)] = struct{}{}
 			}
-		}
-		if meta, ok := authMetaByIndex[authIndex]; ok && meta.label != "" {
-			authBackedLabels[strings.ToLower(meta.label)] = struct{}{}
+			if meta, ok := authMetaByIndex[authIndex]; ok && meta.label != "" {
+				authBackedLabels[strings.ToLower(meta.label)] = struct{}{}
+			}
 		}
 	}
 
 	for _, option := range options {
 		label := strings.TrimSpace(option.Label)
 		authIndex := strings.TrimSpace(option.AuthIndex)
-		if authIndex == "" {
+		if authIndex == "" && !looksLikeAuthSubjectID(option.Value) {
 			authIndex = strings.TrimSpace(option.Value)
 		}
-		// Fold xAI OAuth historical aliases onto the live index so the UI shows
-		// one Grok OAuth option with provider/auth_type badges.
 		authIndex = canonicalAuthIndex(authIndex)
+		subjectID := resolveSubject(option, authIndex)
+
 		if label == "" && authIndex != "" {
 			if name, ok := authIndexChannelMap[authIndex]; ok && strings.TrimSpace(name) != "" {
 				label = strings.TrimSpace(name)
+			}
+		}
+		if label == "" && subjectID != "" {
+			if meta, ok := authMetaBySubject[subjectID]; ok && meta.label != "" {
+				label = meta.label
 			}
 		}
 		if label == "" {
@@ -461,22 +597,31 @@ func enrichChannelFilterOptions(
 		provider := strings.TrimSpace(option.Provider)
 		authType := strings.TrimSpace(option.AuthType)
 		value := strings.TrimSpace(option.Value)
-		if value == "" {
-			value = authIndex
-		}
-		if value == "" {
-			value = label
-		}
-		// When we rewrote authIndex to the group canonical, filter value must
-		// match so clients select the live index (which expands server-side).
-		if authIndex != "" {
-			if group := authIndexGroup[authIndex]; len(group) > 0 {
-				value = authIndex
-			}
-		}
-
 		hasLiveMeta := false
-		if meta, ok := authMetaByIndex[authIndex]; ok {
+
+		if subjectID != "" {
+			value = subjectID
+			if meta, ok := authMetaBySubject[subjectID]; ok {
+				hasLiveMeta = true
+				if meta.label != "" {
+					label = meta.label
+				}
+				if meta.provider != "" {
+					provider = meta.provider
+				}
+				if meta.authType != "" {
+					authType = meta.authType
+				}
+			}
+			if authIndex == "" {
+				// keep representative from option if any
+			} else if meta, ok := authMetaByIndex[authIndex]; ok {
+				// Prefer live representative index for display/compat field.
+				if meta.label != "" && label == "" {
+					label = meta.label
+				}
+			}
+		} else if meta, ok := authMetaByIndex[authIndex]; ok {
 			hasLiveMeta = true
 			if meta.label != "" {
 				label = meta.label
@@ -499,9 +644,16 @@ func enrichChannelFilterOptions(
 			label = strings.TrimSpace(mapped)
 		}
 
+		if value == "" {
+			value = authIndex
+		}
+		if value == "" {
+			value = label
+		}
+
 		// Drop name-only rows that would re-merge same-email multi-provider
-		// accounts already represented by auth_index-backed options.
-		if !hasLiveMeta && authIndex == "" {
+		// accounts already represented by subject/index-backed options.
+		if !hasLiveMeta && subjectID == "" && authIndex == "" {
 			if _, ok := authBackedLabels[strings.ToLower(label)]; ok {
 				continue
 			}
@@ -514,11 +666,12 @@ func enrichChannelFilterOptions(
 		seenValue[dedupeKey] = struct{}{}
 
 		out = append(out, usage.ChannelFilterOption{
-			Value:     value,
-			Label:     label,
-			Provider:  provider,
-			AuthType:  normalizeAuthType(authType),
-			AuthIndex: authIndex,
+			Value:         value,
+			Label:         label,
+			Provider:      provider,
+			AuthType:      normalizeAuthType(authType),
+			AuthIndex:     authIndex,
+			AuthSubjectID: subjectID,
 		})
 	}
 
@@ -564,8 +717,17 @@ func channelLabelsFromOptions(options []usage.ChannelFilterOption) []string {
 	return labels
 }
 
-func enrichLogRowChannelMeta(item *usage.LogRow, authMetaByIndex map[string]authChannelMeta) {
+func enrichLogRowChannelMeta(item *usage.LogRow, authMetaByIndex, authMetaBySubject map[string]authChannelMeta) {
 	if item == nil {
+		return
+	}
+	if meta, ok := authMetaBySubject[strings.TrimSpace(item.AuthSubjectID)]; ok {
+		if meta.provider != "" {
+			item.Provider = meta.provider
+		}
+		if meta.authType != "" {
+			item.AuthType = normalizeAuthType(meta.authType)
+		}
 		return
 	}
 	if meta, ok := authMetaByIndex[strings.TrimSpace(item.AuthIndex)]; ok {
@@ -630,22 +792,22 @@ func displayChannelNameForLog(item usage.LogRow, channelNameMap, authIndexChanne
 	return ""
 }
 
-func (s *Service) buildNameMaps() (
-	keyNameMap, channelNameMap, authIndexChannelMap map[string]string,
-	ambiguousAuthIndexChannelMap map[string][]string,
-	authMetaByIndex map[string]authChannelMeta,
-	authIndexGroup map[string][]string,
-) {
-	keyNameMap = make(map[string]string)
-	channelNameMap = make(map[string]string)
-	authIndexChannelMap = make(map[string]string)
-	ambiguousAuthIndexChannelMap = make(map[string][]string)
-	authMetaByIndex = make(map[string]authChannelMeta)
-	authIndexGroup = make(map[string][]string)
+func (s *Service) buildNameMaps() nameMaps {
+	maps := nameMaps{
+		keyNameMap:                   make(map[string]string),
+		channelNameMap:               make(map[string]string),
+		authIndexChannelMap:          make(map[string]string),
+		ambiguousAuthIndexChannelMap: make(map[string][]string),
+		authMetaByIndex:              make(map[string]authChannelMeta),
+		authIndexGroup:               make(map[string][]string),
+		authSubjectByIndex:           make(map[string]string),
+		authIndexesBySubject:         make(map[string][]string),
+		authMetaBySubject:            make(map[string]authChannelMeta),
+	}
 
 	for _, row := range apikeysettings.NewService(nil, apikeysettings.WithTenantID(s.tenantID)).ListRows() {
 		if row.Key != "" && row.Name != "" {
-			keyNameMap[row.Key] = row.Name
+			maps.keyNameMap[row.Key] = row.Name
 		}
 	}
 
@@ -653,17 +815,17 @@ func (s *Service) buildNameMaps() (
 	if cfg != nil {
 		for _, k := range cfg.GeminiKey {
 			if k.APIKey != "" && k.Name != "" {
-				channelNameMap[k.APIKey] = k.Name
+				maps.channelNameMap[k.APIKey] = k.Name
 			}
 		}
 		for _, k := range cfg.ClaudeKey {
 			if k.APIKey != "" && k.Name != "" {
-				channelNameMap[k.APIKey] = k.Name
+				maps.channelNameMap[k.APIKey] = k.Name
 			}
 		}
 		for _, k := range cfg.CodexKey {
 			if k.APIKey != "" && k.Name != "" {
-				channelNameMap[k.APIKey] = k.Name
+				maps.channelNameMap[k.APIKey] = k.Name
 			}
 		}
 		for _, provider := range cfg.OpenAICompatibility {
@@ -672,7 +834,7 @@ func (s *Service) buildNameMaps() (
 			}
 			for _, entry := range provider.APIKeyEntries {
 				if entry.APIKey != "" {
-					channelNameMap[entry.APIKey] = provider.Name
+					maps.channelNameMap[entry.APIKey] = provider.Name
 				}
 			}
 		}
@@ -701,11 +863,16 @@ func (s *Service) buildNameMaps() (
 				provider: normalizeProviderKey(auth.Provider),
 				authType: resolveAuthType(auth),
 			}
+			subjectID := ""
+			if identity := usage.ResolveAuthSubjectIdentity(auth); identity != nil {
+				subjectID = strings.TrimSpace(identity.ID)
+			}
 			// xAI/Grok OAuth historically flipped between id: and file: seeds for
 			// the same credential. Register the full index group so filters and
 			// channel_options collapse onto one live option while still matching
-			// historical rows.
-			group := xaiOAuthAuthIndexGroup(auth)
+			// historical rows. Also expand basename/tenant-relative file seeds for
+			// all providers so path-format churn does not split one account.
+			group := authIndexAliasGroup(auth)
 			if len(group) == 0 && idx != "" {
 				group = []string{idx}
 			}
@@ -714,9 +881,25 @@ func (s *Service) buildNameMaps() (
 				if member == "" {
 					continue
 				}
-				authIndexChannelMap[member] = channel
-				authMetaByIndex[member] = meta
-				authIndexGroup[member] = group
+				maps.authIndexChannelMap[member] = channel
+				maps.authMetaByIndex[member] = meta
+				maps.authIndexGroup[member] = group
+				if subjectID != "" {
+					maps.authSubjectByIndex[member] = subjectID
+				}
+			}
+			if subjectID != "" {
+				if _, ok := maps.authMetaBySubject[subjectID]; !ok || !auth.Disabled {
+					// Prefer an enabled auth as the subject representative.
+					maps.authMetaBySubject[subjectID] = meta
+				}
+				for _, member := range group {
+					member = strings.TrimSpace(member)
+					if member == "" {
+						continue
+					}
+					maps.authIndexesBySubject[subjectID] = appendUniqueString(maps.authIndexesBySubject[subjectID], member)
+				}
 			}
 			if accountType, account := auth.AccountInfo(); strings.EqualFold(accountType, "oauth") {
 				if source := strings.TrimSpace(account); source != "" {
@@ -748,42 +931,40 @@ func (s *Service) buildNameMaps() (
 		}
 		if len(legacyChannelsByKey[key]) > 1 {
 			if candidate.authIndex != "" {
-				ambiguousAuthIndexChannelMap[candidate.authIndex] = append(ambiguousAuthIndexChannelMap[candidate.authIndex], key)
+				maps.ambiguousAuthIndexChannelMap[candidate.authIndex] = append(maps.ambiguousAuthIndexChannelMap[candidate.authIndex], key)
 			}
 			continue
 		}
-		channelNameMap[key] = strings.TrimSpace(candidate.channel)
+		maps.channelNameMap[key] = strings.TrimSpace(candidate.channel)
 	}
 
-	return
+	return maps
 }
 
-// xaiOAuthAuthIndexGroup returns the live EnsureIndex first, followed by known
-// historical seeds for the same xAI/Grok OAuth credential. Non-xAI auths return
-// only the live index (or nil when empty).
-//
-// Grok OAuth is special: the same account can log under both id:<file> and
-// file:<file> depending on whether FileName was populated at write time.
-func xaiOAuthAuthIndexGroup(auth *coreauth.Auth) []string {
+func appendUniqueString(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+// authIndexAliasGroup returns the live EnsureIndex first, followed by known
+// historical seeds for the same credential file. Path-format churn
+// (basename vs tenant-relative FileName, id: vs file: seed) must not split one
+// account across multiple channel options.
+func authIndexAliasGroup(auth *coreauth.Auth) []string {
 	if auth == nil {
 		return nil
 	}
 	primary := strings.TrimSpace(auth.EnsureIndex())
 	if primary == "" {
 		return nil
-	}
-	if !isXAIProvider(auth.Provider) {
-		return []string{primary}
-	}
-	accountType, _ := auth.AccountInfo()
-	// Only merge OAuth-style xAI credentials; API-key channels stay independent.
-	if !strings.EqualFold(strings.TrimSpace(accountType), "oauth") {
-		// AccountInfo may miss email when metadata shape differs; still merge when
-		// the channel looks like an email (typical OAuth label).
-		channel := strings.TrimSpace(auth.ChannelName())
-		if !strings.Contains(channel, "@") {
-			return []string{primary}
-		}
 	}
 
 	seen := map[string]struct{}{primary: {}}
@@ -807,23 +988,40 @@ func xaiOAuthAuthIndexGroup(auth *coreauth.Auth) []string {
 	fileName := strings.TrimSpace(auth.FileName)
 	if fileName != "" {
 		base := filepath.Base(fileName)
-		// Current seed path.
+		// Current and historical FileName forms.
 		addSeed("file:" + fileName)
 		addSeed("file:" + base)
 		// Historical path: ID was set to the auth file name (including .json)
 		// before FileName was populated, so EnsureIndex used id:<filename>.
 		addSeed("id:" + fileName)
 		addSeed("id:" + base)
+		// Path-format churn: basename <-> tenant-relative.
+		if tenantID := strings.TrimSpace(auth.TenantID); tenantID != "" && base != "" {
+			addSeed("file:" + tenantID + "/" + base)
+			addSeed("id:" + tenantID + "/" + base)
+		}
 	}
 	if id := strings.TrimSpace(auth.ID); id != "" {
 		addSeed("id:" + id)
-		// If ID is a bare filename, also cover file: variants.
-		if strings.HasSuffix(strings.ToLower(id), ".json") {
+		base := filepath.Base(id)
+		addSeed("id:" + base)
+		// If ID is a bare filename / tenant-relative path, also cover file: variants.
+		if strings.HasSuffix(strings.ToLower(base), ".json") {
 			addSeed("file:" + id)
-			addSeed("file:" + filepath.Base(id))
+			addSeed("file:" + base)
+			if tenantID := strings.TrimSpace(auth.TenantID); tenantID != "" {
+				addSeed("file:" + tenantID + "/" + base)
+				addSeed("id:" + tenantID + "/" + base)
+			}
 		}
 	}
 	return out
+}
+
+// xaiOAuthAuthIndexGroup is kept for tests that assert the historical xAI
+// id:/file: seed merge; production uses authIndexAliasGroup for all providers.
+func xaiOAuthAuthIndexGroup(auth *coreauth.Auth) []string {
+	return authIndexAliasGroup(auth)
 }
 
 func isXAIProvider(provider string) bool {

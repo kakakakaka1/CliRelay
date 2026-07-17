@@ -50,7 +50,7 @@ func QueryLogs(params LogQueryParams) (LogQueryResult, error) {
 
 	// Fetch page
 	offset := (params.Page - 1) * params.Size
-	querySQL := "SELECT id, timestamp, api_key, api_key_name, model, upstream_model, vision_fallback_model, source, channel_name, auth_index, " +
+	querySQL := "SELECT id, timestamp, api_key, api_key_name, model, upstream_model, vision_fallback_model, source, channel_name, auth_index, auth_subject_id, " +
 		"failed, streaming, latency_ms, first_token_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, " +
 		"cost, " +
 		"(CASE WHEN EXISTS (SELECT 1 FROM request_log_content content WHERE content.tenant_id = request_logs.tenant_id AND content.log_id = request_logs.id) " +
@@ -73,7 +73,7 @@ func QueryLogs(params LogQueryParams) (LogQueryResult, error) {
 		var failedInt, streamingInt, hasContentInt int
 		if err := rows.Scan(
 			&row.ID, &ts, &row.APIKey, &row.APIKeyName, &row.Model, &row.UpstreamModel, &row.VisionFallbackModel, &row.Source, &row.ChannelName,
-			&row.AuthIndex, &failedInt, &streamingInt, &row.LatencyMs, &row.FirstTokenMs,
+			&row.AuthIndex, &row.AuthSubjectID, &failedInt, &streamingInt, &row.LatencyMs, &row.FirstTokenMs,
 			&row.InputTokens, &row.OutputTokens, &row.ReasoningTokens,
 			&row.CachedTokens, &row.TotalTokens, &row.Cost, &hasContentInt,
 		); err != nil {
@@ -251,6 +251,7 @@ func (params LogQueryParams) withoutFacet(facet string) LogQueryParams {
 		params.Models = nil
 		params.MatchNoModels = false
 	case "channel":
+		params.AuthSubjectIDs = nil
 		params.AuthIndexes = nil
 		params.ChannelNames = nil
 		params.AuthIndexChannelNames = nil
@@ -647,8 +648,22 @@ func buildWhereClause(params LogQueryParams) (string, []interface{}) {
 		}
 		// Both success and failed: no status filter needed (equivalent to "all")
 	}
-	if len(params.AuthIndexes) > 0 || len(params.ChannelNames) > 0 {
-		filterConditions := make([]string, 0, 2)
+	if len(params.AuthSubjectIDs) > 0 || len(params.AuthIndexes) > 0 || len(params.ChannelNames) > 0 {
+		filterConditions := make([]string, 0, 3)
+
+		subjectPlaceholders := make([]string, 0, len(params.AuthSubjectIDs))
+		for _, subjectID := range params.AuthSubjectIDs {
+			trimmed := strings.TrimSpace(subjectID)
+			if trimmed == "" {
+				continue
+			}
+			subjectPlaceholders = append(subjectPlaceholders, "?")
+			args = append(args, trimmed)
+		}
+		if len(subjectPlaceholders) > 0 {
+			// Account-level filter: one subject covers all credential-instance indexes.
+			filterConditions = append(filterConditions, "auth_subject_id IN ("+strings.Join(subjectPlaceholders, ",")+")")
+		}
 
 		authPlaceholders := make([]string, 0, len(params.AuthIndexes))
 		for _, idx := range params.AuthIndexes {
@@ -739,19 +754,31 @@ func queryDistinct(db *sql.DB, column string, params LogQueryParams) ([]string, 
 	return result, nil
 }
 
-// queryDistinctChannelRows returns distinct (channel_name, auth_index) pairs so
-// that two OAuth accounts sharing the same email/label (e.g. codex + xai)
-// remain separate filter options.
+// queryDistinctChannelRows returns account-level channel options.
+// Rows with auth_subject_id collapse onto one option (provider-scoped account).
+// Orphan rows without subject keep auth_index/channel_name legacy options.
 func queryDistinctChannelRows(db *sql.DB, params LogQueryParams) ([]ChannelFilterOption, error) {
 	where, args := buildWhereClause(params)
+	// Aggregate channel_name/auth_index with MAX so PostgreSQL accepts subject-level
+	// collapse (only subject is a real grouping key when subject is non-empty).
 	q := `
 		SELECT
-			trim(coalesce(channel_name, '')) AS channel_name,
-			trim(coalesce(auth_index, '')) AS auth_index,
+			trim(coalesce(auth_subject_id, '')) AS auth_subject_id,
+			MAX(trim(coalesce(channel_name, ''))) AS channel_name,
+			MAX(trim(coalesce(auth_index, ''))) AS auth_index,
 			MAX(trim(coalesce(source, ''))) AS source
 		FROM request_logs` + where + `
-		GROUP BY trim(coalesce(channel_name, '')), trim(coalesce(auth_index, ''))
-		ORDER BY channel_name, auth_index`
+		GROUP BY
+			trim(coalesce(auth_subject_id, '')),
+			CASE
+				WHEN trim(coalesce(auth_subject_id, '')) <> '' THEN ''
+				ELSE trim(coalesce(channel_name, ''))
+			END,
+			CASE
+				WHEN trim(coalesce(auth_subject_id, '')) <> '' THEN ''
+				ELSE trim(coalesce(auth_index, ''))
+			END
+		ORDER BY channel_name, auth_subject_id, auth_index`
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		log.Warnf("usage: distinct channel rows query failed: %v", err)
@@ -760,24 +787,43 @@ func queryDistinctChannelRows(db *sql.DB, params LogQueryParams) ([]ChannelFilte
 	defer rows.Close()
 
 	result := make([]ChannelFilterOption, 0)
+	seenSubject := make(map[string]struct{})
 	for rows.Next() {
-		var channelName, authIndex, source string
-		if err := rows.Scan(&channelName, &authIndex, &source); err != nil {
+		var subjectID, channelName, authIndex, source string
+		if err := rows.Scan(&subjectID, &channelName, &authIndex, &source); err != nil {
 			log.Warnf("usage: distinct channel rows scan failed: %v", err)
 			return nil, err
 		}
+		subjectID = strings.TrimSpace(subjectID)
 		channelName = strings.TrimSpace(channelName)
 		authIndex = strings.TrimSpace(authIndex)
 		source = strings.TrimSpace(source)
-		if channelName == "" && authIndex == "" {
+		if subjectID == "" && channelName == "" && authIndex == "" {
+			continue
+		}
+		if subjectID != "" {
+			if _, ok := seenSubject[subjectID]; ok {
+				continue
+			}
+			seenSubject[subjectID] = struct{}{}
+			label := channelName
+			if label == "" {
+				label = subjectID
+			}
+			result = append(result, ChannelFilterOption{
+				Value:         subjectID,
+				Label:         label,
+				AuthIndex:     authIndex,
+				AuthSubjectID: subjectID,
+				// Provider/auth_type filled by management layer from live auth.
+				Provider: guessProviderFromSource(source),
+			})
 			continue
 		}
 		label := channelName
 		if label == "" {
 			label = authIndex
 		}
-		// Prefer auth_index as the stable filter value when available so
-		// same-label multi-provider accounts stay independent.
 		value := authIndex
 		if value == "" {
 			value = channelName
@@ -786,9 +832,7 @@ func queryDistinctChannelRows(db *sql.DB, params LogQueryParams) ([]ChannelFilte
 			Value:     value,
 			Label:     label,
 			AuthIndex: authIndex,
-			// Provider/auth_type are filled by the management layer from live auth state.
-			// Source is a weak fallback only.
-			Provider: guessProviderFromSource(source),
+			Provider:  guessProviderFromSource(source),
 		})
 	}
 	return result, rows.Err()

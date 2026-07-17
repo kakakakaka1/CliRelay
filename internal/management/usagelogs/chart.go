@@ -51,11 +51,11 @@ func (s *Service) UsageChartData(apiKey string, days int) (map[string]any, error
 		if err != nil {
 			return nil, err
 		}
-		keyNameMap, _, _, _, _, _ := s.buildNameMaps()
+		maps := s.buildNameMaps()
 
 		for i := range apikeyDist {
 			if apikeyDist[i].Name == "" {
-				if name, ok := keyNameMap[apikeyDist[i].APIKey]; ok {
+				if name, ok := maps.keyNameMap[apikeyDist[i].APIKey]; ok {
 					apikeyDist[i].Name = name
 				}
 			}

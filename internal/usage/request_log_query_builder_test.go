@@ -15,12 +15,13 @@ func TestBuildWhereClauseUsesParameterizedFilters(t *testing.T) {
 		APIKeys:               []string{" sk-a ", "sk-b", "SK-B"},
 		Models:                []string{" gpt-5 ", "gpt-4"},
 		Statuses:              []string{"failed"},
+		AuthSubjectIDs:        []string{" authsub_29b975703f03bde1 ", ""},
 		AuthIndexes:           []string{" auth-1 ", ""},
 		AuthIndexChannelNames: map[string][]string{" auth-2 ": {" Legacy ", ""}},
 		ChannelNames:          []string{" Codex ", ""},
 	})
 
-	wantWhere := " WHERE tenant_id = ? AND timestamp >= ? AND (api_key = ? OR api_key = ?) AND model IN (?,?) AND failed = 1 AND (auth_index IN (?) OR (auth_index = ? AND lower(trim(channel_name)) IN (?)) OR lower(trim(channel_name)) IN (?))"
+	wantWhere := " WHERE tenant_id = ? AND timestamp >= ? AND (api_key = ? OR api_key = ?) AND model IN (?,?) AND failed = 1 AND (auth_subject_id IN (?) OR auth_index IN (?) OR (auth_index = ? AND lower(trim(channel_name)) IN (?)) OR lower(trim(channel_name)) IN (?))"
 	if where != wantWhere {
 		t.Fatalf("where = %q, want %q", where, wantWhere)
 	}
@@ -38,7 +39,7 @@ func TestBuildWhereClauseUsesParameterizedFilters(t *testing.T) {
 		t.Fatalf("cutoff arg %q is not RFC3339: %v", cutoff, err)
 	}
 
-	wantArgs := []interface{}{"sk-a", "sk-b", "gpt-5", "gpt-4", "auth-1", "auth-2", "legacy", "codex"}
+	wantArgs := []interface{}{"sk-a", "sk-b", "gpt-5", "gpt-4", "authsub_29b975703f03bde1", "auth-1", "auth-2", "legacy", "codex"}
 	if !reflect.DeepEqual(args[2:], wantArgs) {
 		t.Fatalf("args[2:] = %#v, want %#v", args[2:], wantArgs)
 	}
