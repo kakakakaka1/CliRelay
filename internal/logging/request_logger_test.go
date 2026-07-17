@@ -109,13 +109,13 @@ func TestLogRequestWithDiagnosticsUsesOriginalURL(t *testing.T) {
 			Current:      11,
 			ErrorCode:    "rpm_limit_exceeded",
 			ErrorType:    "rate_limit_exceeded",
-			ErrorMessage: "RPM limit (10 requests/min) exceeded for this API key",
+			ErrorMessage: "Requests-per-minute (RPM) limit exceeded: 11/10 requests in the last minute. Slow down, or raise the RPM limit in the permission profile.",
 		},
 		Response: &diagnostics.ResponseSnapshot{
 			Status:       429,
 			ErrorCode:    "rpm_limit_exceeded",
 			ErrorType:    "rate_limit_exceeded",
-			ErrorMessage: "RPM limit (10 requests/min) exceeded for this API key",
+			ErrorMessage: "Requests-per-minute (RPM) limit exceeded: 11/10 requests in the last minute. Slow down, or raise the RPM limit in the permission profile.",
 			Source:       "local_quota",
 		},
 	}

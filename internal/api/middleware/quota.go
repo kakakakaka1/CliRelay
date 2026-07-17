@@ -197,15 +197,9 @@ func QuotaMiddleware() gin.HandlerFunc {
 		if concurrencyLimit > 0 {
 			release, ok := acquireKeyConcurrency(apiKey, concurrencyLimit)
 			if !ok {
-				message := fmt.Sprintf("concurrency limit (%d in-flight requests) exceeded for this API key", concurrencyLimit)
-				diagnostics.SetQuotaRejection(c, "concurrency", float64(concurrencyLimit), float64(keyConcurrencyCount(apiKey)), "concurrency_limit_exceeded", "rate_limit_exceeded", message)
-				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-					"error": map[string]interface{}{
-						"message": message,
-						"type":    "rate_limit_exceeded",
-						"code":    "concurrency_limit_exceeded",
-					},
-				})
+				current := keyConcurrencyCount(apiKey)
+				rejectQuotaLimit(c, "concurrency", float64(concurrencyLimit), float64(current), "concurrency_limit_exceeded",
+					fmt.Sprintf("Concurrent request limit exceeded: %d in-flight requests (limit %d). Wait for running requests to finish, or raise the concurrency limit in the permission profile.", current, concurrencyLimit))
 				return
 			}
 			defer release()
@@ -215,15 +209,8 @@ func QuotaMiddleware() gin.HandlerFunc {
 		if rpmLimit > 0 {
 			currentRPM := rpmTracker.count()
 			if currentRPM > rpmLimit {
-				message := fmt.Sprintf("RPM limit (%d requests/min) exceeded for this API key", rpmLimit)
-				diagnostics.SetQuotaRejection(c, "rpm", float64(rpmLimit), float64(currentRPM), "rpm_limit_exceeded", "rate_limit_exceeded", message)
-				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-					"error": map[string]interface{}{
-						"message": message,
-						"type":    "rate_limit_exceeded",
-						"code":    "rpm_limit_exceeded",
-					},
-				})
+				rejectQuotaLimit(c, "rpm", float64(rpmLimit), float64(currentRPM), "rpm_limit_exceeded",
+					fmt.Sprintf("Requests-per-minute (RPM) limit exceeded: %d/%d requests in the last minute. Slow down, or raise the RPM limit in the permission profile.", currentRPM, rpmLimit))
 				return
 			}
 		}
@@ -233,15 +220,8 @@ func QuotaMiddleware() gin.HandlerFunc {
 			tracker := getTPMTracker(apiKey)
 			currentTPM := tracker.sum()
 			if currentTPM >= int64(tpmLimit) {
-				message := fmt.Sprintf("TPM limit (%d tokens/min) exceeded for this API key", tpmLimit)
-				diagnostics.SetQuotaRejection(c, "tpm", float64(tpmLimit), float64(currentTPM), "tpm_limit_exceeded", "rate_limit_exceeded", message)
-				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-					"error": map[string]interface{}{
-						"message": message,
-						"type":    "rate_limit_exceeded",
-						"code":    "tpm_limit_exceeded",
-					},
-				})
+				rejectQuotaLimit(c, "tpm", float64(tpmLimit), float64(currentTPM), "tpm_limit_exceeded",
+					fmt.Sprintf("Tokens-per-minute (TPM) limit exceeded: %d/%d tokens in the last minute. Slow down, or raise the TPM limit in the permission profile.", currentTPM, tpmLimit))
 				return
 			}
 		}
@@ -252,15 +232,8 @@ func QuotaMiddleware() gin.HandlerFunc {
 			if err != nil {
 				log.Warnf("quota: failed to query daily usage for key %s: %v", maskKey(apiKey), err)
 			} else if todayCount >= int64(dailyLimit) {
-				message := fmt.Sprintf("daily request limit (%d) exceeded for this API key", dailyLimit)
-				diagnostics.SetQuotaRejection(c, "daily", float64(dailyLimit), float64(todayCount), "daily_limit_exceeded", "rate_limit_exceeded", message)
-				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-					"error": map[string]interface{}{
-						"message": message,
-						"type":    "rate_limit_exceeded",
-						"code":    "daily_limit_exceeded",
-					},
-				})
+				rejectQuotaLimit(c, "daily", float64(dailyLimit), float64(todayCount), "daily_limit_exceeded",
+					fmt.Sprintf("Daily request limit exceeded: %d/%d requests used today. Raise the daily request limit in the permission profile, or wait until the next project day.", todayCount, dailyLimit))
 				return
 			}
 		}
@@ -271,15 +244,8 @@ func QuotaMiddleware() gin.HandlerFunc {
 			if err != nil {
 				log.Warnf("quota: failed to query total usage for key %s: %v", maskKey(apiKey), err)
 			} else if totalCount >= int64(totalQuota) {
-				message := fmt.Sprintf("total request quota (%d) exhausted for this API key", totalQuota)
-				diagnostics.SetQuotaRejection(c, "total", float64(totalQuota), float64(totalCount), "total_quota_exceeded", "rate_limit_exceeded", message)
-				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-					"error": map[string]interface{}{
-						"message": message,
-						"type":    "rate_limit_exceeded",
-						"code":    "total_quota_exceeded",
-					},
-				})
+				rejectQuotaLimit(c, "total", float64(totalQuota), float64(totalCount), "total_quota_exceeded",
+					fmt.Sprintf("Total request quota exhausted: %d/%d lifetime requests used. Raise the total request quota in the permission profile to continue.", totalCount, totalQuota))
 				return
 			}
 		}
@@ -290,15 +256,8 @@ func QuotaMiddleware() gin.HandlerFunc {
 			if err != nil {
 				log.Warnf("quota: failed to query total cost for key %s: %v", maskKey(apiKey), err)
 			} else if totalCost >= spendingLimit {
-				message := fmt.Sprintf("spending limit ($%.2f) exceeded for this API key (current: $%.2f)", spendingLimit, totalCost)
-				diagnostics.SetQuotaRejection(c, "spending", spendingLimit, totalCost, "spending_limit_exceeded", "rate_limit_exceeded", message)
-				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-					"error": map[string]interface{}{
-						"message": message,
-						"type":    "rate_limit_exceeded",
-						"code":    "spending_limit_exceeded",
-					},
-				})
+				rejectQuotaLimit(c, "spending", spendingLimit, totalCost, "spending_limit_exceeded",
+					fmt.Sprintf("Lifetime spending limit exceeded: $%.2f of $%.2f used. Raise the spending limit to continue.", totalCost, spendingLimit))
 				return
 			}
 		}
@@ -309,21 +268,39 @@ func QuotaMiddleware() gin.HandlerFunc {
 			if err != nil {
 				log.Warnf("quota: failed to query today cost for key %s: %v", maskKey(apiKey), err)
 			} else if todayCost >= dailySpendingLimit {
-				message := fmt.Sprintf("daily spending limit ($%.2f) exceeded for this API key (today: $%.2f)", dailySpendingLimit, todayCost)
-				diagnostics.SetQuotaRejection(c, "daily_spending", dailySpendingLimit, todayCost, "daily_spending_limit_exceeded", "rate_limit_exceeded", message)
-				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-					"error": map[string]interface{}{
-						"message": message,
-						"type":    "rate_limit_exceeded",
-						"code":    "daily_spending_limit_exceeded",
-					},
-				})
+				rejectQuotaLimit(c, "daily_spending", dailySpendingLimit, todayCost, "daily_spending_limit_exceeded",
+					fmt.Sprintf("Daily spending limit exceeded: $%.2f of $%.2f used today. Raise the daily spending limit in the permission profile, reset today's spending, or wait until the next project day.", todayCost, dailySpendingLimit))
 				return
 			}
 		}
 
 		c.Next()
 	}
+}
+
+// rejectQuotaLimit writes a 429 with a distinct code/message and diagnostic headers.
+// Headers help clients that only surface "429 Too Many Requests" after retries.
+func rejectQuotaLimit(c *gin.Context, rejectedBy string, limit, current float64, code, message string) {
+	const errType = "rate_limit_exceeded"
+	diagnostics.SetQuotaRejection(c, rejectedBy, limit, current, code, errType, message)
+	c.Header("X-CliRelay-Quota-Code", code)
+	c.Header("X-CliRelay-Quota-Limit", formatQuotaNumber(limit))
+	c.Header("X-CliRelay-Quota-Current", formatQuotaNumber(current))
+	c.Header("X-CliRelay-Quota-Rejected-By", rejectedBy)
+	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+		"error": map[string]interface{}{
+			"message": message,
+			"type":    errType,
+			"code":    code,
+		},
+	})
+}
+
+func formatQuotaNumber(v float64) string {
+	if v == float64(int64(v)) {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 // ─── Usage DB query functions (injected to avoid import cycle) ──────────────

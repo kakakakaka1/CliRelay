@@ -322,7 +322,7 @@ func TestRequestLoggingMiddlewarePreservesOriginalURLAcrossRewrite(t *testing.T)
 	r.POST("/v1/responses", func(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 			"error": map[string]any{
-				"message": "RPM limit (10 requests/min) exceeded for this API key",
+				"message": "Requests-per-minute (RPM) limit exceeded: 11/10 requests in the last minute. Slow down, or raise the RPM limit in the permission profile.",
 				"type":    "rate_limit_exceeded",
 				"code":    "rpm_limit_exceeded",
 			},
