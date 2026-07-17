@@ -62,25 +62,39 @@ func (a *Applier) Apply(body []byte, config thinking.ThinkingConfig, modelInfo *
 		return result, nil
 	}
 
-	effort := ""
+	// ModeNone: only wire "none" when the model actually accepts it.
+	// ZeroAllowed alone must not force "none" when Levels omit "none";
+	// fall back to lowest level so upstream does not 400 on "none".
 	support := modelInfo.Thinking
-	if config.Budget == 0 {
-		if support.ZeroAllowed || hasLevel(support.Levels, string(thinking.LevelNone)) {
-			effort = string(thinking.LevelNone)
-		}
-	}
-	if effort == "" && config.Level != "" {
+	effort := ""
+	if supportsNoneEffort(support) {
+		effort = string(thinking.LevelNone)
+	} else if config.Level != "" {
 		effort = string(config.Level)
-	}
-	if effort == "" && len(support.Levels) > 0 {
+	} else if len(support.Levels) > 0 {
 		effort = support.Levels[0]
 	}
 	if effort == "" {
-		return body, nil
+		result, err := sjson.DeleteBytes(body, "reasoning_effort")
+		if err != nil {
+			return body, nil
+		}
+		return result, nil
 	}
-
 	result, _ := sjson.SetBytes(body, "reasoning_effort", effort)
 	return result, nil
+}
+
+// supportsNoneEffort reports whether the model accepts reasoning_effort="none".
+// Explicit Levels win: if the list omits "none", do not emit it even when ZeroAllowed.
+func supportsNoneEffort(support *registry.ThinkingSupport) bool {
+	if support == nil {
+		return false
+	}
+	if hasLevel(support.Levels, string(thinking.LevelNone)) {
+		return true
+	}
+	return support.ZeroAllowed && len(support.Levels) == 0
 }
 
 func applyCompatibleOpenAI(body []byte, config thinking.ThinkingConfig) ([]byte, error) {

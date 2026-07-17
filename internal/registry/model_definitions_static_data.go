@@ -945,7 +945,7 @@ func GetXAIModels() []*ModelInfo {
 			Description:         "SpaceXAI's intelligent coding model for agentic software, engineering, and workflow tasks.",
 			ContextLength:       500000,
 			MaxCompletionTokens: 65536,
-			Thinking:            &ThinkingSupport{ZeroAllowed: true, Levels: []string{"low", "medium", "high"}},
+			Thinking:            &ThinkingSupport{ZeroAllowed: false, Levels: []string{"low", "medium", "high"}},
 		},
 		{
 			ID:                  "grok-4.3",

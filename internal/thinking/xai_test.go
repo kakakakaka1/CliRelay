@@ -31,3 +31,28 @@ func TestXAIThinkingStripsUnsupportedModelConfig(t *testing.T) {
 		t.Fatalf("reasoning.effort should be stripped; body=%s", got)
 	}
 }
+
+// grok-4.5 rejects effort=none; clamp disable to lowest supported level (low).
+func TestXAIGrok45ModeNoneClampsToLowestLevel(t *testing.T) {
+	body := []byte(`{"model":"grok-4.5","input":[{"role":"user","content":"hi"}],"reasoning":{"effort":"none"}}`)
+
+	got, err := thinking.ApplyThinking(body, "grok-4.5", "xai", "xai", "xai")
+	if err != nil {
+		t.Fatalf("ApplyThinking() error = %v", err)
+	}
+	if effort := gjson.GetBytes(got, "reasoning.effort").String(); effort != "low" {
+		t.Fatalf("reasoning.effort = %q, want low; body=%s", effort, got)
+	}
+}
+
+func TestXAIGrok43ModeNoneKeepsNoneEffort(t *testing.T) {
+	body := []byte(`{"model":"grok-4.3","input":[{"role":"user","content":"hi"}],"reasoning":{"effort":"none"}}`)
+
+	got, err := thinking.ApplyThinking(body, "grok-4.3", "xai", "xai", "xai")
+	if err != nil {
+		t.Fatalf("ApplyThinking() error = %v", err)
+	}
+	if effort := gjson.GetBytes(got, "reasoning.effort").String(); effort != "none" {
+		t.Fatalf("reasoning.effort = %q, want none; body=%s", effort, got)
+	}
+}
