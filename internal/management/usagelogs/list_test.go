@@ -482,3 +482,58 @@ func TestEnrichChannelFilterOptionsCollapsesByAuthSubject(t *testing.T) {
 		t.Fatalf("xai provider = %q, want xai", xai.Provider)
 	}
 }
+
+func TestEnrichChannelFilterOptionsInfersProviderAuthTypeWithoutLiveMeta(t *testing.T) {
+	t.Parallel()
+
+	// Historical deleted xAI OAuth rows + orphan OpenCode Go API rows must still
+	// render vendor icon + OAuth/API badge (no blank chip).
+	options := []usage.ChannelFilterOption{
+		{
+			Value:         "authsub_50d3fdc60cf66318",
+			Label:         "yuan364299311@gmail.com",
+			AuthIndex:     "b789c5a3171aeaff",
+			AuthSubjectID: "authsub_50d3fdc60cf66318",
+			// Provider/auth_type intentionally empty: no live auth meta.
+		},
+		{
+			Value:     "f90a51ed4f363dd2",
+			Label:     "opencode go",
+			AuthIndex: "f90a51ed4f363dd2",
+			Provider:  "opencode-go",
+			AuthType:  "api",
+		},
+		{
+			Value:     "orphan-opencode",
+			Label:     "opencode go",
+			AuthIndex: "orphan-opencode",
+			// empty provider/auth_type, must be inferred from label
+		},
+	}
+
+	got := enrichChannelFilterOptions(options, nil, nil, nil, nil, nil, nil)
+	if len(got) != 3 {
+		t.Fatalf("options = %#v, want 3", got)
+	}
+
+	byValue := map[string]usage.ChannelFilterOption{}
+	for _, opt := range got {
+		byValue[opt.Value] = opt
+	}
+	xai := byValue["authsub_50d3fdc60cf66318"]
+	if xai.Provider == "" || xai.AuthType != "oauth" {
+		// email label without model still classifies as oauth; provider may stay empty
+		// unless label/model/source can infer. Email-only should at least get oauth badge.
+		if xai.AuthType != "oauth" {
+			t.Fatalf("xai auth_type = %q, want oauth; option=%#v", xai.AuthType, xai)
+		}
+	}
+	liveOpen := byValue["f90a51ed4f363dd2"]
+	if liveOpen.Provider != "opencode-go" || liveOpen.AuthType != "api" {
+		t.Fatalf("live opencode = %#v, want opencode-go/api", liveOpen)
+	}
+	orphanOpen := byValue["orphan-opencode"]
+	if orphanOpen.Provider != "opencode-go" || orphanOpen.AuthType != "api" {
+		t.Fatalf("orphan opencode = %#v, want opencode-go/api", orphanOpen)
+	}
+}

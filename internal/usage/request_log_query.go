@@ -766,7 +766,8 @@ func queryDistinctChannelRows(db *sql.DB, params LogQueryParams) ([]ChannelFilte
 			trim(coalesce(auth_subject_id, '')) AS auth_subject_id,
 			MAX(trim(coalesce(channel_name, ''))) AS channel_name,
 			MAX(trim(coalesce(auth_index, ''))) AS auth_index,
-			MAX(trim(coalesce(source, ''))) AS source
+			MAX(trim(coalesce(source, ''))) AS source,
+			MAX(trim(coalesce(model, ''))) AS model
 		FROM request_logs` + where + `
 		GROUP BY
 			trim(coalesce(auth_subject_id, '')),
@@ -789,8 +790,8 @@ func queryDistinctChannelRows(db *sql.DB, params LogQueryParams) ([]ChannelFilte
 	result := make([]ChannelFilterOption, 0)
 	seenSubject := make(map[string]struct{})
 	for rows.Next() {
-		var subjectID, channelName, authIndex, source string
-		if err := rows.Scan(&subjectID, &channelName, &authIndex, &source); err != nil {
+		var subjectID, channelName, authIndex, source, model string
+		if err := rows.Scan(&subjectID, &channelName, &authIndex, &source, &model); err != nil {
 			log.Warnf("usage: distinct channel rows scan failed: %v", err)
 			return nil, err
 		}
@@ -798,9 +799,11 @@ func queryDistinctChannelRows(db *sql.DB, params LogQueryParams) ([]ChannelFilte
 		channelName = strings.TrimSpace(channelName)
 		authIndex = strings.TrimSpace(authIndex)
 		source = strings.TrimSpace(source)
+		model = strings.TrimSpace(model)
 		if subjectID == "" && channelName == "" && authIndex == "" {
 			continue
 		}
+		provider, authType := InferChannelDisplayMeta(channelName, source, model, "")
 		if subjectID != "" {
 			if _, ok := seenSubject[subjectID]; ok {
 				continue
@@ -815,8 +818,8 @@ func queryDistinctChannelRows(db *sql.DB, params LogQueryParams) ([]ChannelFilte
 				Label:         label,
 				AuthIndex:     authIndex,
 				AuthSubjectID: subjectID,
-				// Provider/auth_type filled by management layer from live auth.
-				Provider: guessProviderFromSource(source),
+				Provider:      provider,
+				AuthType:      authType,
 			})
 			continue
 		}
@@ -832,10 +835,125 @@ func queryDistinctChannelRows(db *sql.DB, params LogQueryParams) ([]ChannelFilte
 			Value:     value,
 			Label:     label,
 			AuthIndex: authIndex,
-			Provider:  guessProviderFromSource(source),
+			Provider:  provider,
+			AuthType:  authType,
 		})
 	}
 	return result, rows.Err()
+}
+
+// InferChannelDisplayMeta derives provider + auth_type for channel filter chips
+// when live auth metadata is missing (historical / deleted credentials).
+func InferChannelDisplayMeta(label, source, model, providerHint string) (provider, authType string) {
+	provider = normalizeChannelProvider(providerHint)
+	label = strings.TrimSpace(label)
+	source = strings.TrimSpace(source)
+	model = strings.ToLower(strings.TrimSpace(model))
+
+	apiKeySource := looksLikeAPIKeySource(source)
+	if provider == "" && !apiKeySource {
+		// Never treat raw API keys as provider ids.
+		provider = normalizeChannelProvider(guessProviderFromSource(source))
+	}
+	if provider == "" {
+		provider = normalizeChannelProvider(guessProviderFromLabel(label))
+	}
+	if provider == "" {
+		provider = normalizeChannelProvider(guessProviderFromModel(model))
+	}
+
+	switch {
+	case apiKeySource:
+		authType = "api"
+	case strings.Contains(label, "@") || strings.Contains(source, "@"):
+		authType = "oauth"
+	case provider == "opencode-go" || provider == "openai-compatibility":
+		authType = "api"
+	case provider != "":
+		// Named upstream providers default to oauth-style channels when not an API key source.
+		authType = "oauth"
+	default:
+		authType = ""
+	}
+	return provider, authType
+}
+
+func normalizeChannelProvider(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "":
+		return ""
+	case "openai-compatibility", "openai_compat", "openai-compat":
+		return "opencode-go"
+	case "opencode", "opencode go", "opencode_go", "opencodego":
+		return "opencode-go"
+	case "grok":
+		return "xai"
+	case "gemini-cli", "geminicli":
+		return "gemini"
+	default:
+		return value
+	}
+}
+
+func guessProviderFromLabel(label string) string {
+	key := strings.ToLower(strings.TrimSpace(label))
+	switch {
+	case key == "":
+		return ""
+	case key == "opencode go" || strings.HasPrefix(key, "opencode go") || strings.Contains(key, "opencode-go"):
+		return "opencode-go"
+	case strings.Contains(key, "codex"):
+		return "codex"
+	case strings.Contains(key, "claude") || strings.Contains(key, "anthropic"):
+		return "claude"
+	case strings.Contains(key, "gemini") || strings.Contains(key, "antigravity"):
+		return "gemini"
+	case strings.Contains(key, "xai") || strings.Contains(key, "grok"):
+		return "xai"
+	case strings.Contains(key, "kimi"):
+		return "kimi"
+	case strings.Contains(key, "iflow"):
+		return "iflow"
+	default:
+		return ""
+	}
+}
+
+func guessProviderFromModel(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case model == "":
+		return ""
+	case strings.HasPrefix(model, "grok") || strings.Contains(model, "grok-"):
+		return "xai"
+	case strings.HasPrefix(model, "gpt-") || strings.Contains(model, "codex") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3") || strings.HasPrefix(model, "o4"):
+		return "codex"
+	case strings.HasPrefix(model, "claude"):
+		return "claude"
+	case strings.HasPrefix(model, "gemini") || strings.Contains(model, "antigravity"):
+		return "gemini"
+	case strings.HasPrefix(model, "kimi") || strings.Contains(model, "moonshot"):
+		return "kimi"
+	case strings.HasPrefix(model, "deepseek") || strings.HasPrefix(model, "glm") || strings.HasPrefix(model, "qwen") || strings.HasPrefix(model, "minimax") || strings.HasPrefix(model, "mimo"):
+		// Common OpenCode Go / compat model ids when channel label is missing.
+		return "opencode-go"
+	default:
+		return ""
+	}
+}
+
+func looksLikeAPIKeySource(source string) bool {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return false
+	}
+	lower := strings.ToLower(source)
+	return strings.HasPrefix(lower, "sk-") ||
+		strings.HasPrefix(lower, "api-") ||
+		strings.HasPrefix(lower, "key-") ||
+		strings.HasPrefix(lower, "api_key:") ||
+		(len(source) >= 24 && !strings.Contains(source, "@") && !strings.Contains(source, " "))
 }
 
 func guessProviderFromSource(source string) string {

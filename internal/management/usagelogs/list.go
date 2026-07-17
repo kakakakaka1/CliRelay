@@ -613,12 +613,20 @@ func enrichChannelFilterOptions(
 					authType = meta.authType
 				}
 			}
-			if authIndex == "" {
-				// keep representative from option if any
-			} else if meta, ok := authMetaByIndex[authIndex]; ok {
-				// Prefer live representative index for display/compat field.
-				if meta.label != "" && label == "" {
-					label = meta.label
+			if authIndex != "" {
+				if meta, ok := authMetaByIndex[authIndex]; ok {
+					if !hasLiveMeta {
+						hasLiveMeta = true
+					}
+					if provider == "" && meta.provider != "" {
+						provider = meta.provider
+					}
+					if authType == "" && meta.authType != "" {
+						authType = meta.authType
+					}
+					if meta.label != "" && label == "" {
+						label = meta.label
+					}
 				}
 			}
 		} else if meta, ok := authMetaByIndex[authIndex]; ok {
@@ -649,6 +657,17 @@ func enrichChannelFilterOptions(
 		}
 		if value == "" {
 			value = label
+		}
+
+		// Historical / deleted credentials still need provider icon + OAuth/API badge.
+		if provider == "" || authType == "" {
+			inferredProvider, inferredAuthType := usage.InferChannelDisplayMeta(label, "", "", provider)
+			if provider == "" {
+				provider = inferredProvider
+			}
+			if authType == "" {
+				authType = inferredAuthType
+			}
 		}
 
 		// Drop name-only rows that would re-merge same-email multi-provider
@@ -728,28 +747,23 @@ func enrichLogRowChannelMeta(item *usage.LogRow, authMetaByIndex, authMetaBySubj
 		if meta.authType != "" {
 			item.AuthType = normalizeAuthType(meta.authType)
 		}
-		return
-	}
-	if meta, ok := authMetaByIndex[strings.TrimSpace(item.AuthIndex)]; ok {
+	} else if meta, ok := authMetaByIndex[strings.TrimSpace(item.AuthIndex)]; ok {
 		if meta.provider != "" {
 			item.Provider = meta.provider
 		}
 		if meta.authType != "" {
 			item.AuthType = normalizeAuthType(meta.authType)
 		}
-		return
 	}
-	if item.Provider == "" {
-		item.Provider = usageGuessProviderFromSource(item.Source)
+	if item.Provider == "" || item.AuthType == "" {
+		provider, authType := usage.InferChannelDisplayMeta(item.ChannelName, item.Source, item.Model, item.Provider)
+		if item.Provider == "" {
+			item.Provider = provider
+		}
+		if item.AuthType == "" {
+			item.AuthType = normalizeAuthType(authType)
+		}
 	}
-}
-
-func usageGuessProviderFromSource(source string) string {
-	source = strings.ToLower(strings.TrimSpace(source))
-	if source == "" || strings.Contains(source, "@") || strings.Contains(source, " ") || len(source) > 32 {
-		return ""
-	}
-	return source
 }
 
 func normalizeAuthType(value string) string {

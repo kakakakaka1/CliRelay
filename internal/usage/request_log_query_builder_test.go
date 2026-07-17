@@ -107,3 +107,60 @@ func TestBuildSingleAPIKeySelectorClauseUsesStableIdentityWhenAvailable(t *testi
 		t.Fatalf("missing key args = %#v, want %#v", args, wantArgs)
 	}
 }
+
+func TestInferChannelDisplayMeta(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		label        string
+		source       string
+		model        string
+		providerHint string
+		wantProvider string
+		wantAuthType string
+	}{
+		{
+			name:         "opencode go api key",
+			label:        "opencode go",
+			source:       "sk-abc123xyz",
+			model:        "deepseek-v4-flash",
+			wantProvider: "opencode-go",
+			wantAuthType: "api",
+		},
+		{
+			name:         "oauth email codex",
+			label:        "yuan364299311@gmail.com",
+			source:       "yuan364299311@gmail.com",
+			model:        "gpt-5.6-sol",
+			wantProvider: "codex",
+			wantAuthType: "oauth",
+		},
+		{
+			name:         "historical xai by model",
+			label:        "yuan364299311@gmail.com",
+			source:       "yuan364299311@gmail.com",
+			model:        "grok-4.5",
+			wantProvider: "xai",
+			wantAuthType: "oauth",
+		},
+		{
+			name:         "live provider hint wins",
+			label:        "opencode go",
+			source:       "sk-abc",
+			providerHint: "opencode-go",
+			wantProvider: "opencode-go",
+			wantAuthType: "api",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			provider, authType := InferChannelDisplayMeta(tc.label, tc.source, tc.model, tc.providerHint)
+			if provider != tc.wantProvider || authType != tc.wantAuthType {
+				t.Fatalf("got provider/authType = %q/%q, want %q/%q", provider, authType, tc.wantProvider, tc.wantAuthType)
+			}
+		})
+	}
+}
