@@ -58,9 +58,31 @@ func TestTenantScopedManagementPathIncludesProviderRuntimeRoutes(t *testing.T) {
 		"/v0/management/identity-fingerprint/account",
 		"/v0/management/identity-fingerprint/account/policy",
 		"/v0/management/identity-fingerprint/codex/recommendations",
+		// Portal end-user accounts + per-user API keys are tenant business data.
+		"/v0/management/end-users",
+		"/v0/management/end-users/eu-1",
+		"/v0/management/end-users/eu-1/api-keys",
+		"/v0/management/end-users/eu-1/api-keys/k1/default",
 	} {
 		if !isTenantScopedManagementPath(path) {
 			t.Errorf("isTenantScopedManagementPath(%q) = false", path)
+		}
+	}
+}
+
+func TestDeniesTenantResourceScopeAllowsBusinessTenantEndUsers(t *testing.T) {
+	tenantOperator := identity.Principal{
+		PlatformAdmin:   false,
+		EffectiveTenant: identity.Tenant{ID: "tenant-potato"},
+		HomeTenant:      identity.Tenant{ID: "tenant-potato"},
+	}
+	for _, path := range []string{
+		"/v0/management/end-users",
+		"/v0/management/end-users/eu-1",
+		"/v0/management/end-users/eu-1/api-keys",
+	} {
+		if deniesTenantResourceScope(tenantOperator, path) {
+			t.Fatalf("business tenant must reach %s", path)
 		}
 	}
 }

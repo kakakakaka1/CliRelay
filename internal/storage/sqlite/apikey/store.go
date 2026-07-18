@@ -524,47 +524,69 @@ func (s Store) ReplaceAll(entries []APIKeyRow) error {
 		return err
 	}
 
-	// Ensure every previously-owned end user keeps at least one key after replace.
-	incomingIDs := make(map[string]struct{}, len(entries))
-	incomingKeys := make(map[string]struct{}, len(entries))
+	// Resolve ownership for each incoming row first, then verify every previously
+	// owned end user still ends up with >=1 key. Counting by ID and key separately
+	// is unsafe: id=A+key=B would mark both A and B as "kept" while only A survives.
+	type resolvedEntry struct {
+		row APIKeyRow
+	}
+	resolved := make([]resolvedEntry, 0, len(entries))
+	seenIDs := make(map[string]struct{}, len(entries))
+	seenKeys := make(map[string]struct{}, len(entries))
+	finalOwnerCount := make(map[string]int)
 	for _, entry := range entries {
-		if id := strings.TrimSpace(entry.ID); id != "" {
-			incomingIDs[id] = struct{}{}
-		}
-		if k := strings.TrimSpace(entry.Key); k != "" {
-			incomingKeys[k] = struct{}{}
-		}
-	}
-	ownedBefore := make(map[string][]ownership)
-	for _, prev := range byID {
-		if prev.endUserID == "" {
+		entry = normalizeRow(entry)
+		if entry.Key == "" {
 			continue
 		}
-		ownedBefore[prev.endUserID] = append(ownedBefore[prev.endUserID], prev)
-	}
-	// also include key-only rows without id
-	for _, prev := range byKey {
-		if prev.endUserID == "" || prev.id != "" {
-			continue
+		if _, dup := seenKeys[entry.Key]; dup {
+			_ = tx.Rollback()
+			return fmt.Errorf("duplicate api key in replace payload")
 		}
-		ownedBefore[prev.endUserID] = append(ownedBefore[prev.endUserID], prev)
-	}
-	for endUserID, owns := range ownedBefore {
-		kept := 0
-		for _, prev := range owns {
+		seenKeys[entry.Key] = struct{}{}
+		prev, ok := byID[entry.ID]
+		if !ok {
+			prev = byKey[entry.Key]
+		}
+		if entry.ID == "" {
 			if prev.id != "" {
-				if _, ok := incomingIDs[prev.id]; ok {
-					kept++
-					continue
-				}
-			}
-			if prev.key != "" {
-				if _, ok := incomingKeys[prev.key]; ok {
-					kept++
-				}
+				entry.ID = prev.id
+			} else {
+				entry.ID = uuid.NewString()
 			}
 		}
-		if kept < 1 {
+		if _, dup := seenIDs[entry.ID]; dup {
+			_ = tx.Rollback()
+			return fmt.Errorf("duplicate api key id in replace payload")
+		}
+		seenIDs[entry.ID] = struct{}{}
+		// Ownership is not client-authoritative on full replace for existing keys.
+		if prev.endUserID != "" {
+			entry.EndUserID = prev.endUserID
+			entry.IsDefault = prev.isDefault
+		} else {
+			// Brand-new keys may not carry ownership through generic replace.
+			entry.EndUserID = ""
+			entry.IsDefault = false
+		}
+		if entry.EndUserID != "" {
+			finalOwnerCount[entry.EndUserID]++
+		}
+		resolved = append(resolved, resolvedEntry{row: entry})
+	}
+	ownedBefore := make(map[string]struct{})
+	for _, prev := range byID {
+		if prev.endUserID != "" {
+			ownedBefore[prev.endUserID] = struct{}{}
+		}
+	}
+	for _, prev := range byKey {
+		if prev.endUserID != "" {
+			ownedBefore[prev.endUserID] = struct{}{}
+		}
+	}
+	for endUserID := range ownedBefore {
+		if finalOwnerCount[endUserID] < 1 {
 			_ = tx.Rollback()
 			return fmt.Errorf("cannot remove last api key for end user %s", endUserID)
 		}
@@ -587,28 +609,8 @@ func (s Store) ReplaceAll(entries []APIKeyRow) error {
 	defer stmt.Close()
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, entry := range entries {
-		entry = normalizeRow(entry)
-		if entry.Key == "" {
-			continue
-		}
-		prev, ok := byID[entry.ID]
-		if !ok {
-			prev = byKey[entry.Key]
-		}
-		if entry.ID == "" {
-			if prev.id != "" {
-				entry.ID = prev.id
-			} else {
-				entry.ID = uuid.NewString()
-			}
-		}
-		// Ownership is not client-authoritative on full replace: always preserve
-		// previous end_user_id when the row is an update of an existing key.
-		if prev.endUserID != "" {
-			entry.EndUserID = prev.endUserID
-			entry.IsDefault = prev.isDefault
-		}
+	for _, item := range resolved {
+		entry := item.row
 		if entry.CreatedAt == "" {
 			entry.CreatedAt = now
 		}

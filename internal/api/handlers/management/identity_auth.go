@@ -591,7 +591,9 @@ func isTenantScopedManagementPath(path string) bool {
 		return true
 	case strings.HasPrefix(relative, "/api-keys"),
 		strings.HasPrefix(relative, "/api-key-entries"),
-		strings.HasPrefix(relative, "/api-key-permission-profiles"):
+		strings.HasPrefix(relative, "/api-key-permission-profiles"),
+		// Portal end-user accounts + per-user API keys (tenant business data).
+		strings.HasPrefix(relative, "/end-users"):
 		return true
 	case strings.HasPrefix(relative, "/gemini-api-key"),
 		strings.HasPrefix(relative, "/claude-api-key"),
