@@ -131,3 +131,72 @@ func TestReplaceAllPreservesOwnershipAndRejectsLastKeyDrop(t *testing.T) {
 		t.Fatal("expected replace that drops eu-2 via id/key confusion to fail")
 	}
 }
+
+func TestOwnedKeyMutationsKeepOneActiveDefault(t *testing.T) {
+	t.Parallel()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	InitTable(db)
+	if _, err := db.Exec(`CREATE TABLE end_users (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create end_users: %v", err)
+	}
+	for _, ownerID := range []string{"eu-last", "eu-default"} {
+		if _, err := db.Exec(`INSERT INTO end_users (id) VALUES (?)`, ownerID); err != nil {
+			t.Fatalf("insert %s: %v", ownerID, err)
+		}
+	}
+
+	store := NewTenantStore(db, "00000000-0000-0000-0000-00000000000a")
+	if err := store.Upsert(APIKeyRow{
+		ID: "last", Key: "sk-last", Name: "last", EndUserID: "eu-last", IsDefault: true,
+	}); err != nil {
+		t.Fatalf("seed last key: %v", err)
+	}
+	last := *store.GetByID("last")
+	last.Disabled = true
+	if err := store.UpdateByID(last); err == nil {
+		t.Fatal("disabling the last active owned key should fail")
+	}
+	if got := store.GetByID("last"); got == nil || got.Disabled || !got.IsDefault {
+		t.Fatalf("last key changed after rejected disable: %#v", got)
+	}
+
+	if err := store.Upsert(APIKeyRow{
+		ID: "default-a", Key: "sk-default-a", Name: "a", EndUserID: "eu-default", IsDefault: true,
+	}); err != nil {
+		t.Fatalf("seed default-a: %v", err)
+	}
+	if err := store.Upsert(APIKeyRow{
+		ID: "default-b", Key: "sk-default-b", Name: "b", EndUserID: "eu-default",
+	}); err != nil {
+		t.Fatalf("seed default-b: %v", err)
+	}
+	defaultA := *store.GetByID("default-a")
+	defaultA.Disabled = true
+	if err := store.UpdateByID(defaultA); err != nil {
+		t.Fatalf("disable one of two active keys: %v", err)
+	}
+	if got := store.GetByID("default-a"); got == nil || !got.Disabled || got.IsDefault {
+		t.Fatalf("disabled key retained default: %#v", got)
+	}
+	if got := store.GetByID("default-b"); got == nil || got.Disabled || !got.IsDefault {
+		t.Fatalf("remaining active key was not promoted: %#v", got)
+	}
+
+	rows := store.List()
+	for i := range rows {
+		if rows[i].EndUserID == "eu-default" {
+			rows[i].Disabled = true
+		}
+	}
+	if err := store.ReplaceAll(rows); err == nil {
+		t.Fatal("replace that disables every key for an owner should fail")
+	}
+	if got := store.GetByID("default-b"); got == nil || got.Disabled || !got.IsDefault {
+		t.Fatalf("failed replace changed active/default state: %#v", got)
+	}
+}

@@ -13,8 +13,8 @@ import (
 
 const createAPIKeyPermissionProfilesTableSQL = `
 CREATE TABLE IF NOT EXISTS api_key_permission_profiles (
-  id                     TEXT PRIMARY KEY NOT NULL,
   tenant_id              TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+  id                     TEXT NOT NULL,
   name                   TEXT NOT NULL DEFAULT '',
   daily_limit            INTEGER NOT NULL DEFAULT 0,
   total_quota            INTEGER NOT NULL DEFAULT 0,
@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS api_key_permission_profiles (
   allowed_channel_groups TEXT NOT NULL DEFAULT '[]',
   system_prompt          TEXT NOT NULL DEFAULT '',
   created_at             TEXT NOT NULL DEFAULT '',
-  updated_at             TEXT NOT NULL DEFAULT ''
+  updated_at             TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (tenant_id, id)
 );
 `
 
@@ -62,6 +63,82 @@ func InitPermissionProfilesTable(db *sql.DB) {
 	if _, err := db.Exec("ALTER TABLE api_key_permission_profiles ADD COLUMN daily_spending_limit REAL NOT NULL DEFAULT 0"); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 		log.Warnf("sqlite/apikey: migrate api_key_permission_profiles daily_spending_limit: %v", err)
 	}
+	if err := migratePermissionProfilesTenantPrimaryKey(db); err != nil {
+		log.Errorf("sqlite/apikey: migrate api_key_permission_profiles tenant primary key: %v", err)
+	}
+}
+
+func migratePermissionProfilesTenantPrimaryKey(db *sql.DB) error {
+	driverType := strings.ToLower(fmt.Sprintf("%T", db.Driver()))
+	if strings.Contains(driverType, "postgres") || strings.Contains(driverType, "compatdriver") {
+		return nil
+	}
+	rows, err := db.Query("PRAGMA table_info(api_key_permission_profiles)")
+	if err != nil {
+		// PostgreSQL uses its own migration for the composite primary key.
+		return nil
+	}
+	defer rows.Close()
+	primaryKeyColumns := map[int]string{}
+	for rows.Next() {
+		var cid, notNull, primaryKeyOrder int
+		var name, columnType string
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKeyOrder); err != nil {
+			return err
+		}
+		if primaryKeyOrder > 0 {
+			primaryKeyColumns[primaryKeyOrder] = strings.ToLower(strings.TrimSpace(name))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if primaryKeyColumns[1] == "tenant_id" && primaryKeyColumns[2] == "id" && len(primaryKeyColumns) == 2 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.Exec(`DROP TABLE IF EXISTS api_key_permission_profiles_tenant_pk`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`
+		CREATE TABLE api_key_permission_profiles_tenant_pk (
+			tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+			id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', daily_limit INTEGER NOT NULL DEFAULT 0,
+			total_quota INTEGER NOT NULL DEFAULT 0, daily_spending_limit REAL NOT NULL DEFAULT 0,
+			concurrency_limit INTEGER NOT NULL DEFAULT 0, rpm_limit INTEGER NOT NULL DEFAULT 0,
+			tpm_limit INTEGER NOT NULL DEFAULT 0, allowed_models TEXT NOT NULL DEFAULT '[]',
+			allowed_channels TEXT NOT NULL DEFAULT '[]', allowed_channel_groups TEXT NOT NULL DEFAULT '[]',
+			system_prompt TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (tenant_id, id)
+		)
+	`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`
+		INSERT INTO api_key_permission_profiles_tenant_pk (
+			tenant_id, id, name, daily_limit, total_quota, daily_spending_limit, concurrency_limit,
+			rpm_limit, tpm_limit, allowed_models, allowed_channels, allowed_channel_groups, system_prompt, created_at, updated_at
+		)
+		SELECT CASE WHEN trim(coalesce(tenant_id, '')) = '' THEN ? ELSE tenant_id END,
+			id, name, daily_limit, total_quota, daily_spending_limit, concurrency_limit,
+			rpm_limit, tpm_limit, allowed_models, allowed_channels, allowed_channel_groups, system_prompt, created_at, updated_at
+		FROM api_key_permission_profiles
+	`, systemTenantID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DROP TABLE api_key_permission_profiles`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`ALTER TABLE api_key_permission_profiles_tenant_pk RENAME TO api_key_permission_profiles`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s Store) ListPermissionProfiles() []PermissionProfileRow {
@@ -94,18 +171,27 @@ func (s Store) ListPermissionProfiles() []PermissionProfileRow {
 }
 
 func (s Store) ReplaceAllPermissionProfiles(profiles []PermissionProfileRow) error {
+	_, err := s.replaceAllPermissionProfiles(profiles, false)
+	return err
+}
+
+func (s Store) ReplaceAllPermissionProfilesAndSyncEndUsers(profiles []PermissionProfileRow) (int64, error) {
+	return s.replaceAllPermissionProfiles(profiles, true)
+}
+
+func (s Store) replaceAllPermissionProfiles(profiles []PermissionProfileRow, syncEndUsers bool) (int64, error) {
 	if s.db == nil {
-		return fmt.Errorf("database not initialised")
+		return 0, fmt.Errorf("database not initialised")
 	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	if _, err := tx.Exec("DELETE FROM api_key_permission_profiles WHERE tenant_id = ?", s.tenantID); err != nil {
 		_ = tx.Rollback()
-		return err
+		return 0, err
 	}
 
 	stmt, err := tx.Prepare(`INSERT INTO api_key_permission_profiles
@@ -114,7 +200,7 @@ func (s Store) ReplaceAllPermissionProfiles(profiles []PermissionProfileRow) err
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = tx.Rollback()
-		return err
+		return 0, err
 	}
 	defer stmt.Close()
 
@@ -124,15 +210,15 @@ func (s Store) ReplaceAllPermissionProfiles(profiles []PermissionProfileRow) err
 		profile = normalizePermissionProfile(profile)
 		if profile.ID == "" {
 			_ = tx.Rollback()
-			return fmt.Errorf("id is required")
+			return 0, fmt.Errorf("id is required")
 		}
 		if profile.Name == "" {
 			_ = tx.Rollback()
-			return fmt.Errorf("name is required")
+			return 0, fmt.Errorf("name is required")
 		}
 		if _, exists := seen[profile.ID]; exists {
 			_ = tx.Rollback()
-			return fmt.Errorf("duplicate id %q", profile.ID)
+			return 0, fmt.Errorf("duplicate id %q", profile.ID)
 		}
 		seen[profile.ID] = struct{}{}
 		if profile.CreatedAt == "" {
@@ -148,11 +234,61 @@ func (s Store) ReplaceAllPermissionProfiles(profiles []PermissionProfileRow) err
 			profile.CreatedAt, profile.UpdatedAt,
 		); err != nil {
 			_ = tx.Rollback()
-			return err
+			return 0, err
 		}
 	}
 
-	return tx.Commit()
+	appliedCount := int64(0)
+	if syncEndUsers {
+		for _, profile := range profiles {
+			profile = normalizePermissionProfile(profile)
+			result, syncErr := tx.Exec(`
+				UPDATE end_users SET
+					permission_profile_id = ?, daily_limit = ?, total_quota = ?, spending_limit = 0,
+					daily_spending_limit = ?, concurrency_limit = ?, rpm_limit = ?, tpm_limit = ?,
+					allowed_models = ?, allowed_channels = ?, allowed_channel_groups = ?, system_prompt = ?,
+					updated_at = ?, version = version + 1
+				WHERE tenant_id = ? AND permission_profile_id = ?
+			`, profile.ID, profile.DailyLimit, profile.TotalQuota, profile.DailySpendingLimit,
+				profile.ConcurrencyLimit, profile.RPMLimit, profile.TPMLimit,
+				mustJSONStringList(profile.AllowedModels), mustJSONStringList(profile.AllowedChannels),
+				mustJSONStringList(profile.AllowedChannelGroups), profile.SystemPrompt,
+				now, s.tenantID, profile.ID)
+			if syncErr != nil {
+				_ = tx.Rollback()
+				return 0, syncErr
+			}
+			if rows, rowsErr := result.RowsAffected(); rowsErr == nil {
+				appliedCount += rows
+			}
+		}
+
+		unbindQuery := `
+			UPDATE end_users SET permission_profile_id = '', updated_at = ?, version = version + 1
+			WHERE tenant_id = ? AND permission_profile_id != ''`
+		unbindArgs := []interface{}{now, s.tenantID}
+		if len(seen) > 0 {
+			placeholders := make([]string, 0, len(seen))
+			for profileID := range seen {
+				placeholders = append(placeholders, "?")
+				unbindArgs = append(unbindArgs, profileID)
+			}
+			unbindQuery += ` AND permission_profile_id NOT IN (` + strings.Join(placeholders, ",") + `)`
+		}
+		result, syncErr := tx.Exec(unbindQuery, unbindArgs...)
+		if syncErr != nil {
+			_ = tx.Rollback()
+			return 0, syncErr
+		}
+		if rows, rowsErr := result.RowsAffected(); rowsErr == nil {
+			appliedCount += rows
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return appliedCount, nil
 }
 
 func normalizePermissionProfile(profile PermissionProfileRow) PermissionProfileRow {

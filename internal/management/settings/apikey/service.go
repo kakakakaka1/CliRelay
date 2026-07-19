@@ -166,26 +166,42 @@ func (s *Service) PermissionProfiles() []usage.APIKeyPermissionProfileRow {
 }
 
 func (s *Service) ReplacePermissionProfiles(profiles []usage.APIKeyPermissionProfileRow) error {
+	normalized, err := s.normalizePermissionProfiles(profiles)
+	if err != nil {
+		return err
+	}
+	return usage.ReplaceAllAPIKeyPermissionProfilesForTenant(s.tenantID, normalized)
+}
+
+func (s *Service) ReplacePermissionProfilesAndSyncAccounts(profiles []usage.APIKeyPermissionProfileRow) (int64, error) {
+	normalized, err := s.normalizePermissionProfiles(profiles)
+	if err != nil {
+		return 0, err
+	}
+	return usage.ReplaceAllAPIKeyPermissionProfilesForTenantAndSyncEndUsers(s.tenantID, normalized)
+}
+
+func (s *Service) normalizePermissionProfiles(profiles []usage.APIKeyPermissionProfileRow) ([]usage.APIKeyPermissionProfileRow, error) {
 	normalized := make([]usage.APIKeyPermissionProfileRow, len(profiles))
 	copy(normalized, profiles)
 	for idx := range normalized {
 		normalized[idx].ID = strings.TrimSpace(normalized[idx].ID)
 		normalized[idx].Name = strings.TrimSpace(normalized[idx].Name)
 		if normalized[idx].ID == "" {
-			return ErrInvalidProfileID
+			return nil, ErrInvalidProfileID
 		}
 		if normalized[idx].Name == "" {
-			return ErrInvalidProfileName
+			return nil, ErrInvalidProfileName
 		}
 		if s != nil && s.sanitizeChannels != nil {
 			cleaned, err := s.sanitizeChannels(normalized[idx].AllowedChannels)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			normalized[idx].AllowedChannels = cleaned
 		}
 	}
-	return usage.ReplaceAllAPIKeyPermissionProfilesForTenant(s.tenantID, normalized)
+	return normalized, nil
 }
 
 func (s *Service) RenameAllowedChannelRestrictions(oldNameSet map[string]struct{}, newName string) error {

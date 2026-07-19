@@ -44,6 +44,10 @@ func ReplaceAllAPIKeyPermissionProfilesForTenant(tenantID string, profiles []API
 	return apiKeyPermissionProfileStoreForTenant(tenantID).ReplaceAllPermissionProfiles(profiles)
 }
 
+func ReplaceAllAPIKeyPermissionProfilesForTenantAndSyncEndUsers(tenantID string, profiles []APIKeyPermissionProfileRow) (int64, error) {
+	return apiKeyPermissionProfileStoreForTenant(tenantID).ReplaceAllPermissionProfilesAndSyncEndUsers(profiles)
+}
+
 func MigrateAPIKeyPermissionProfilesFromYAML(configFilePath string) int {
 	db := getDB()
 	if db == nil || strings.TrimSpace(configFilePath) == "" {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	modelconfigsettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/modelconfig"
 	internalrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
@@ -60,8 +61,9 @@ func (s *Server) unifiedModelsHandler(openaiHandler *openai.OpenAIAPIHandler, cl
 		}
 
 		tenantID := requestTenantID(c)
+		tenantScoped := tenantID != identity.SystemTenantID
 		scopedRoutingRestricted := s.hasScopedRoutingModelRestrictionForTenant(tenantID, routeGroup, allowedChannelGroups)
-		needsScopeFilter := allowedModels != nil || allowedChannels != nil || allowedChannelGroups != nil || routeGroup != "" || scopedRoutingRestricted
+		needsScopeFilter := tenantScoped || allowedModels != nil || allowedChannels != nil || allowedChannelGroups != nil || routeGroup != "" || scopedRoutingRestricted
 
 		recorder := &responseRecorder{
 			ResponseWriter: c.Writer,
@@ -96,7 +98,7 @@ func (s *Server) unifiedModelsHandler(openaiHandler *openai.OpenAIAPIHandler, cl
 							continue
 						}
 					}
-					if allowedChannels != nil || allowedChannelGroups != nil || routeGroup != "" {
+					if tenantScoped || allowedChannels != nil || allowedChannelGroups != nil || routeGroup != "" {
 						if s.handlers == nil || s.handlers.AuthManager == nil || !s.handlers.AuthManager.CanServeModelWithScopesForTenant(tenantID, id, allowedChannels, allowedChannelGroups, routeGroup) {
 							continue
 						}

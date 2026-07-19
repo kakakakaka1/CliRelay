@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 
@@ -12,6 +13,32 @@ type APIKeyIdentity struct {
 	ID   string
 	Key  string
 	Name string
+}
+
+// BackfillLegacyRequestLogsAPIKeyIDForTenant preserves account ownership for
+// legacy rows that only recorded the raw secret before an owned key is rotated.
+func BackfillLegacyRequestLogsAPIKeyIDForTenant(ctx context.Context, tenantID, apiKeyID, oldSecret string) (int64, error) {
+	db := getDB()
+	if db == nil {
+		return 0, nil
+	}
+	tenantID = normalizeTenantID(tenantID)
+	apiKeyID = strings.TrimSpace(apiKeyID)
+	oldSecret = strings.TrimSpace(oldSecret)
+	if apiKeyID == "" || oldSecret == "" {
+		return 0, nil
+	}
+	result, err := db.ExecContext(ctx, `
+		UPDATE request_logs
+		SET api_key_id = ?
+		WHERE tenant_id = ?
+		  AND trim(coalesce(api_key_id, '')) = ''
+		  AND api_key = ?
+	`, apiKeyID, tenantID, oldSecret)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func ResolveAPIKeyIdentity(key string) *APIKeyIdentity {

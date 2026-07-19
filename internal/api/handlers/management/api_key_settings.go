@@ -157,18 +157,27 @@ func (h *Handler) PutAPIKeyPermissionProfiles(c *gin.Context) {
 	}
 
 	var profiles []usage.APIKeyPermissionProfileRow
+	syncAccounts := false
 	if err = json.Unmarshal(data, &profiles); err != nil {
 		var obj struct {
-			Items []usage.APIKeyPermissionProfileRow `json:"items"`
+			Items        []usage.APIKeyPermissionProfileRow `json:"items"`
+			SyncAccounts bool                               `json:"sync-accounts"`
 		}
 		if err2 := json.Unmarshal(data, &obj); err2 != nil {
 			c.JSON(400, gin.H{"error": "invalid body"})
 			return
 		}
 		profiles = obj.Items
+		syncAccounts = obj.SyncAccounts
 	}
 
-	if err := h.apiKeySettings(c).ReplacePermissionProfiles(profiles); err != nil {
+	appliedCount := int64(0)
+	if syncAccounts {
+		appliedCount, err = h.apiKeySettings(c).ReplacePermissionProfilesAndSyncAccounts(profiles)
+	} else {
+		err = h.apiKeySettings(c).ReplacePermissionProfiles(profiles)
+	}
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -176,7 +185,7 @@ func (h *Handler) PutAPIKeyPermissionProfiles(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"status": "ok"})
+	c.JSON(200, gin.H{"status": "ok", "applied_count": appliedCount})
 }
 
 // api-key-entries: backed by SQLite api_keys table

@@ -17,6 +17,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -398,7 +400,7 @@ func (s *Service) ListUsers(ctx context.Context, actor identity.Principal, tenan
 func (s *Service) apiKeyCountsByUser(ctx context.Context, tenantID string) (map[string]int, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT end_user_id, COUNT(*) FROM api_keys
-		WHERE tenant_id = ? AND end_user_id IS NOT NULL
+		WHERE tenant_id = ? AND end_user_id IS NOT NULL AND disabled = 0
 		GROUP BY end_user_id
 	`, tenantID)
 	if err != nil {
@@ -827,7 +829,7 @@ func (s *Service) ListKeys(ctx context.Context, tenantID, endUserID string) ([]A
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, tenant_id, end_user_id, key, name, disabled, COALESCE(is_default, false),
 			COALESCE(created_at, ''), COALESCE(updated_at, '')
-		FROM api_keys WHERE tenant_id = ? AND end_user_id = ?
+		FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND disabled = 0
 		ORDER BY is_default DESC, created_at ASC
 	`, tenantID, endUserID)
 	if err != nil {
@@ -887,7 +889,7 @@ func (s *Service) CreateKey(ctx context.Context, tenantID, endUserID, name strin
 		return result, fmt.Errorf("%w: cannot create api key for non-active end user", ErrValidation)
 	}
 	var count int
-	_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND end_user_id = ?`, tenantID, endUserID).Scan(&count)
+	_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND disabled = 0`, tenantID, endUserID).Scan(&count)
 	isDefault := count == 0
 	var plain string
 	for attempt := 0; attempt < 8; attempt++ {
@@ -948,7 +950,7 @@ func (s *Service) SetDefaultKey(ctx context.Context, tenantID, endUserID, keyID 
 	}
 	defer func() { _ = tx.Rollback() }()
 	var n int
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND id = ?`, tenantID, endUserID, keyID).Scan(&n); err != nil || n == 0 {
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND id = ? AND disabled = 0`, tenantID, endUserID, keyID).Scan(&n); err != nil || n == 0 {
 		return ErrNotFound
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE api_keys SET is_default = false, updated_at = ? WHERE tenant_id = ? AND end_user_id = ?`, time.Now().UTC().Format(time.RFC3339), tenantID, endUserID); err != nil {
@@ -977,7 +979,7 @@ func (s *Service) UpdateKeyName(ctx context.Context, tenantID, endUserID, keyID,
 	if err := ensureUniqueKeyName(ctx, s.db, tenantID, endUserID, name, keyID); err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE api_keys SET name = ?, updated_at = ? WHERE tenant_id = ? AND end_user_id = ? AND id = ?`,
+	res, err := s.db.ExecContext(ctx, `UPDATE api_keys SET name = ?, updated_at = ? WHERE tenant_id = ? AND end_user_id = ? AND id = ? AND disabled = 0`,
 		name, time.Now().UTC().Format(time.RFC3339), tenantID, endUserID, keyID)
 	if err != nil {
 		return err
@@ -996,12 +998,12 @@ func ensureUniqueKeyName(ctx context.Context, q queryRower, tenantID, endUserID,
 	if excludeKeyID == "" {
 		err = q.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM api_keys
-			WHERE tenant_id = ? AND end_user_id = ? AND LOWER(name) = LOWER(?)
+			WHERE tenant_id = ? AND end_user_id = ? AND disabled = 0 AND LOWER(name) = LOWER(?)
 		`, tenantID, endUserID, name).Scan(&exists)
 	} else {
 		err = q.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM api_keys
-			WHERE tenant_id = ? AND end_user_id = ? AND LOWER(name) = LOWER(?) AND id != ?
+			WHERE tenant_id = ? AND end_user_id = ? AND disabled = 0 AND LOWER(name) = LOWER(?) AND id != ?
 		`, tenantID, endUserID, name, excludeKeyID).Scan(&exists)
 	}
 	if err != nil {
@@ -1019,14 +1021,26 @@ type queryRower interface {
 
 func (s *Service) RotateKey(ctx context.Context, tenantID, endUserID, keyID string) (CreateKeyResult, error) {
 	var result CreateKeyResult
+	if err := requireUUID(tenantID); err != nil {
+		return result, err
+	}
+	if err := requireUUID(endUserID); err != nil {
+		return result, err
+	}
+	if err := requireUUID(keyID); err != nil {
+		return result, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var n int
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND id = ?`, tenantID, endUserID, keyID).Scan(&n); err != nil || n == 0 {
-		return result, ErrNotFound
+	var oldSecret string
+	if err = tx.QueryRowContext(ctx, `SELECT key FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND id = ? AND disabled = 0`, tenantID, endUserID, keyID).Scan(&oldSecret); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return result, ErrNotFound
+		}
+		return result, err
 	}
 	var plain string
 	for attempt := 0; attempt < 8; attempt++ {
@@ -1048,6 +1062,9 @@ func (s *Service) RotateKey(ctx context.Context, tenantID, endUserID, keyID stri
 	}
 	if err = tx.Commit(); err != nil {
 		return result, err
+	}
+	if _, backfillErr := usage.BackfillLegacyRequestLogsAPIKeyIDForTenant(context.Background(), tenantID, keyID, oldSecret); backfillErr != nil {
+		log.WithError(backfillErr).Warnf("enduser: legacy request log backfill failed after rotating key id %s in tenant %s", keyID, tenantID)
 	}
 	result.PlaintextKey = plain
 	result.APIKey = APIKey{ID: keyID, TenantID: tenantID, EndUserID: endUserID, KeyMasked: MaskAPIKey(plain), UpdatedAt: now}
@@ -1083,22 +1100,26 @@ func (s *Service) DeleteKey(ctx context.Context, tenantID, endUserID, keyID stri
 			return err2
 		}
 	}
-	var count int
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND end_user_id = ?`, tenantID, endUserID).Scan(&count); err != nil {
-		return err
-	}
-	if count <= 1 {
-		return ErrLastKey
-	}
 	var isDefault bool
-	err = tx.QueryRowContext(ctx, `SELECT COALESCE(is_default, false) FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND id = ?`, tenantID, endUserID, keyID).Scan(&isDefault)
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(is_default, false) FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND id = ? AND disabled = 0`, tenantID, endUserID, keyID).Scan(&isDefault)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND id = ?`, tenantID, endUserID, keyID); err != nil {
+	var count int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND disabled = 0`, tenantID, endUserID).Scan(&count); err != nil {
+		return err
+	}
+	if count <= 1 {
+		return ErrLastKey
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE api_keys SET disabled = 1, is_default = false, updated_at = ?
+		WHERE tenant_id = ? AND end_user_id = ? AND id = ? AND disabled = 0
+	`, now, tenantID, endUserID, keyID); err != nil {
 		return err
 	}
 	if isDefault {
@@ -1106,9 +1127,9 @@ func (s *Service) DeleteKey(ctx context.Context, tenantID, endUserID, keyID stri
 		if _, err = tx.ExecContext(ctx, `
 			UPDATE api_keys SET is_default = true, updated_at = ?
 			WHERE id = (
-				SELECT id FROM api_keys WHERE tenant_id = ? AND end_user_id = ? ORDER BY created_at ASC LIMIT 1
+				SELECT id FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND disabled = 0 ORDER BY created_at ASC LIMIT 1
 			)
-		`, time.Now().UTC().Format(time.RFC3339), tenantID, endUserID); err != nil {
+		`, now, tenantID, endUserID); err != nil {
 			return err
 		}
 	}
