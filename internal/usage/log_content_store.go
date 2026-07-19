@@ -226,6 +226,11 @@ func stopRequestLogMaintenance() {
 }
 
 func runRequestLogMaintenancePass(ctx context.Context, db *sql.DB, driver string) {
+	if removed, err := CleanupStaleDeferredUsageContentFiles(); err != nil {
+		log.WithError(err).Warn("usage: stale deferred content cleanup completed with errors")
+	} else if removed > 0 {
+		log.Infof("usage: removed %d stale deferred content file(s)", removed)
+	}
 	if db == nil {
 		return
 	}

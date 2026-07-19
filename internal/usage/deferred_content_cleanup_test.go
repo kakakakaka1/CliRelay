@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,5 +50,25 @@ func TestCleanupStaleDeferredUsageContentFilesKeepsRecentAndUnrelatedFiles(t *te
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("preserved file missing at %s: %v", path, err)
 		}
+	}
+}
+
+func TestRunRequestLogMaintenancePassCleansStaleDeferredUsageFiles(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+
+	path := filepath.Join(tempDir, "cliproxy-usage-output-stale")
+	if err := os.WriteFile(path, []byte("test"), 0o600); err != nil {
+		t.Fatalf("write stale deferred file: %v", err)
+	}
+	staleTime := time.Now().Add(-staleDeferredUsageContentAge - time.Hour)
+	if err := os.Chtimes(path, staleTime, staleTime); err != nil {
+		t.Fatalf("set stale deferred file time: %v", err)
+	}
+
+	runRequestLogMaintenancePass(context.Background(), nil, "")
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("periodic maintenance left stale deferred file at %s: %v", path, err)
 	}
 }
