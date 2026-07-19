@@ -39,6 +39,7 @@ type Service struct {
 type EntryPatch struct {
 	Key                  *string   `json:"key"`
 	Name                 *string   `json:"name"`
+	Disabled             *bool     `json:"disabled"`
 	PermissionProfileID  *string   `json:"permission-profile-id"`
 	DailyLimit           *int      `json:"daily-limit"`
 	TotalQuota           *int      `json:"total-quota"`
@@ -52,6 +53,8 @@ type EntryPatch struct {
 	AllowedChannelGroups *[]string `json:"allowed-channel-groups"`
 	SystemPrompt         *string   `json:"system-prompt"`
 	CreatedAt            *string   `json:"created-at"`
+	// end_user_id / is_default are intentionally not patchable here; ownership
+	// changes go through end-user owner-scoped APIs only.
 }
 
 type DeleteEntryResult struct {
@@ -418,6 +421,9 @@ func (s *Service) PatchEntry(id *string, index *int, match *string, patch EntryP
 	if patch.Name != nil {
 		entry.Name = strings.TrimSpace(*patch.Name)
 	}
+	if patch.Disabled != nil {
+		entry.Disabled = *patch.Disabled
+	}
 	if patch.PermissionProfileID != nil {
 		entry.PermissionProfileID = strings.TrimSpace(*patch.PermissionProfileID)
 	}
@@ -470,6 +476,9 @@ func (s *Service) PatchEntry(id *string, index *int, match *string, patch EntryP
 	}
 	updated := usage.APIKeyRowFromConfig(normalized)
 	updated.ID = originalID
+	// Preserve ownership regardless of client payload (read-only on generic API).
+	updated.EndUserID = existing.EndUserID
+	updated.IsDefault = existing.IsDefault
 	return usage.UpdateAPIKeyByIDForTenant(s.tenantID, updated)
 }
 

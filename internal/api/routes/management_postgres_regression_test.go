@@ -274,9 +274,11 @@ func (client postgresManagementClient) expectUsageLog(t *testing.T) int64 {
 }
 
 func postgresSmokePath(routePath string) string {
+	// Prefer longer placeholders first so :key_id is not partially matched by :id.
 	replacer := strings.NewReplacer(
-		":id", "1",
+		":key_id", "00000000-0000-0000-0000-000000000099",
 		":task_id", "task-test",
+		":id", "00000000-0000-0000-0000-000000000001",
 		":name", "main.log",
 		":channel", "codex",
 		"*id", "gpt-route-test",
@@ -298,12 +300,12 @@ func postgresSmokeBody(method, routePath string) string {
 }
 
 func postgresSmokeAllowsStatus(routePath string, status int, body string) bool {
-	if status == http.StatusNotFound {
-		// The generic smoke sends an empty JSON object / no query target. These
-		// routes therefore have no key to resolve; dedicated handler tests cover success.
+	if status == http.StatusNotFound || status == http.StatusBadRequest {
+		// The generic smoke sends placeholder ids / empty JSON. These routes
+		// therefore have no real target; dedicated handler tests cover success.
 		targetedLookup := routePath == "/v0/management/api-key-entries/daily-spending/reset" ||
 			routePath == "/v0/management/api-key-entries/daily-spending/reset-history"
-		return strings.Contains(body, "not found") &&
+		return (strings.Contains(body, "not found") || strings.Contains(body, "validation") || strings.Contains(body, "invalid")) &&
 			(strings.Contains(routePath, ":") || strings.Contains(routePath, "*") || targetedLookup)
 	}
 	if status == http.StatusBadGateway {

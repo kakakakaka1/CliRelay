@@ -138,6 +138,8 @@ func (r APIKeyRow) ToConfigEntry() config.APIKeyEntry {
 		AllowedChannelGroups: r.AllowedChannelGroups,
 		SystemPrompt:         r.SystemPrompt,
 		CreatedAt:            r.CreatedAt,
+		EndUserID:            r.EndUserID,
+		IsDefault:            r.IsDefault,
 	}
 }
 
@@ -160,6 +162,8 @@ func APIKeyRowFromConfig(entry config.APIKeyEntry) APIKeyRow {
 		AllowedChannelGroups: entry.AllowedChannelGroups,
 		SystemPrompt:         entry.SystemPrompt,
 		CreatedAt:            entry.CreatedAt,
+		EndUserID:            entry.EndUserID,
+		IsDefault:            entry.IsDefault,
 	}
 }
 
@@ -418,9 +422,14 @@ func (s Store) deleteOwnedGuarded(where string, arg string) error {
 		}
 		return err
 	}
-	if endUserID.Valid && strings.TrimSpace(endUserID.String) != "" {
+	ownerID := ""
+	if endUserID.Valid {
+		ownerID = strings.TrimSpace(endUserID.String)
+	}
+	wasDefault := false
+	if ownerID != "" {
 		// Best-effort row lock on owner (Postgres); SQLite ignores unsupported syntax via fallback.
-		if _, err = tx.Exec(`SELECT id FROM end_users WHERE id = ? FOR UPDATE`, endUserID.String); err != nil {
+		if _, err = tx.Exec(`SELECT id FROM end_users WHERE id = ? FOR UPDATE`, ownerID); err != nil {
 			msg := strings.ToLower(err.Error())
 			if !strings.Contains(msg, "syntax") && !strings.Contains(msg, "for update") {
 				return err
@@ -429,16 +438,44 @@ func (s Store) deleteOwnedGuarded(where string, arg string) error {
 		var n int
 		if err = tx.QueryRow(
 			`SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND end_user_id = ?`,
-			s.tenantID, endUserID.String,
+			s.tenantID, ownerID,
 		).Scan(&n); err != nil {
 			return err
 		}
 		if n <= 1 {
 			return fmt.Errorf("cannot delete last api key owned by an end user")
 		}
+		_ = tx.QueryRow(
+			`SELECT COALESCE(is_default, false) FROM api_keys WHERE tenant_id = ? AND id = ?`,
+			s.tenantID, keyID,
+		).Scan(&wasDefault)
 	}
 	if _, err = tx.Exec(`DELETE FROM api_keys WHERE tenant_id = ? AND id = ?`, s.tenantID, keyID); err != nil {
 		return err
+	}
+	if ownerID != "" && wasDefault {
+		now := time.Now().UTC().Format(time.RFC3339)
+		if _, err = tx.Exec(`
+			UPDATE api_keys SET is_default = true, updated_at = ?
+			 WHERE id = (
+				SELECT id FROM api_keys
+				 WHERE tenant_id = ? AND end_user_id = ?
+				 ORDER BY created_at ASC, id ASC LIMIT 1
+			 )
+		`, now, s.tenantID, ownerID); err != nil {
+			// Some engines disallow updating the same table as the subquery target.
+			var promoteID string
+			if err2 := tx.QueryRow(`
+				SELECT id FROM api_keys
+				 WHERE tenant_id = ? AND end_user_id = ?
+				 ORDER BY created_at ASC, id ASC LIMIT 1
+			`, s.tenantID, ownerID).Scan(&promoteID); err2 != nil {
+				return err
+			}
+			if _, err = tx.Exec(`UPDATE api_keys SET is_default = true, updated_at = ? WHERE tenant_id = ? AND id = ?`, now, s.tenantID, promoteID); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
 }
@@ -487,47 +524,69 @@ func (s Store) ReplaceAll(entries []APIKeyRow) error {
 		return err
 	}
 
-	// Ensure every previously-owned end user keeps at least one key after replace.
-	incomingIDs := make(map[string]struct{}, len(entries))
-	incomingKeys := make(map[string]struct{}, len(entries))
+	// Resolve ownership for each incoming row first, then verify every previously
+	// owned end user still ends up with >=1 key. Counting by ID and key separately
+	// is unsafe: id=A+key=B would mark both A and B as "kept" while only A survives.
+	type resolvedEntry struct {
+		row APIKeyRow
+	}
+	resolved := make([]resolvedEntry, 0, len(entries))
+	seenIDs := make(map[string]struct{}, len(entries))
+	seenKeys := make(map[string]struct{}, len(entries))
+	finalOwnerCount := make(map[string]int)
 	for _, entry := range entries {
-		if id := strings.TrimSpace(entry.ID); id != "" {
-			incomingIDs[id] = struct{}{}
-		}
-		if k := strings.TrimSpace(entry.Key); k != "" {
-			incomingKeys[k] = struct{}{}
-		}
-	}
-	ownedBefore := make(map[string][]ownership)
-	for _, prev := range byID {
-		if prev.endUserID == "" {
+		entry = normalizeRow(entry)
+		if entry.Key == "" {
 			continue
 		}
-		ownedBefore[prev.endUserID] = append(ownedBefore[prev.endUserID], prev)
-	}
-	// also include key-only rows without id
-	for _, prev := range byKey {
-		if prev.endUserID == "" || prev.id != "" {
-			continue
+		if _, dup := seenKeys[entry.Key]; dup {
+			_ = tx.Rollback()
+			return fmt.Errorf("duplicate api key in replace payload")
 		}
-		ownedBefore[prev.endUserID] = append(ownedBefore[prev.endUserID], prev)
-	}
-	for endUserID, owns := range ownedBefore {
-		kept := 0
-		for _, prev := range owns {
+		seenKeys[entry.Key] = struct{}{}
+		prev, ok := byID[entry.ID]
+		if !ok {
+			prev = byKey[entry.Key]
+		}
+		if entry.ID == "" {
 			if prev.id != "" {
-				if _, ok := incomingIDs[prev.id]; ok {
-					kept++
-					continue
-				}
-			}
-			if prev.key != "" {
-				if _, ok := incomingKeys[prev.key]; ok {
-					kept++
-				}
+				entry.ID = prev.id
+			} else {
+				entry.ID = uuid.NewString()
 			}
 		}
-		if kept < 1 {
+		if _, dup := seenIDs[entry.ID]; dup {
+			_ = tx.Rollback()
+			return fmt.Errorf("duplicate api key id in replace payload")
+		}
+		seenIDs[entry.ID] = struct{}{}
+		// Ownership is not client-authoritative on full replace for existing keys.
+		if prev.endUserID != "" {
+			entry.EndUserID = prev.endUserID
+			entry.IsDefault = prev.isDefault
+		} else {
+			// Brand-new keys may not carry ownership through generic replace.
+			entry.EndUserID = ""
+			entry.IsDefault = false
+		}
+		if entry.EndUserID != "" {
+			finalOwnerCount[entry.EndUserID]++
+		}
+		resolved = append(resolved, resolvedEntry{row: entry})
+	}
+	ownedBefore := make(map[string]struct{})
+	for _, prev := range byID {
+		if prev.endUserID != "" {
+			ownedBefore[prev.endUserID] = struct{}{}
+		}
+	}
+	for _, prev := range byKey {
+		if prev.endUserID != "" {
+			ownedBefore[prev.endUserID] = struct{}{}
+		}
+	}
+	for endUserID := range ownedBefore {
+		if finalOwnerCount[endUserID] < 1 {
 			_ = tx.Rollback()
 			return fmt.Errorf("cannot remove last api key for end user %s", endUserID)
 		}
@@ -550,28 +609,8 @@ func (s Store) ReplaceAll(entries []APIKeyRow) error {
 	defer stmt.Close()
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, entry := range entries {
-		entry = normalizeRow(entry)
-		if entry.Key == "" {
-			continue
-		}
-		prev, ok := byID[entry.ID]
-		if !ok {
-			prev = byKey[entry.Key]
-		}
-		if entry.ID == "" {
-			if prev.id != "" {
-				entry.ID = prev.id
-			} else {
-				entry.ID = uuid.NewString()
-			}
-		}
-		if entry.EndUserID == "" {
-			entry.EndUserID = prev.endUserID
-		}
-		if !entry.IsDefault {
-			entry.IsDefault = prev.isDefault
-		}
+	for _, item := range resolved {
+		entry := item.row
 		if entry.CreatedAt == "" {
 			entry.CreatedAt = now
 		}
@@ -597,7 +636,98 @@ func (s Store) ReplaceAll(entries []APIKeyRow) error {
 		}
 	}
 
+	// Portable rebalance (SQLite + Postgres): one default per owned user.
+	if err := promoteMissingDefaultsSQLite(tx, s.tenantID, now); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := demoteExtraDefaultsSQLite(tx, s.tenantID, now); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
 	return tx.Commit()
+}
+
+func promoteMissingDefaultsSQLite(tx *sql.Tx, tenantID, now string) error {
+	// Portable across SQLite INTEGER and Postgres BOOLEAN is_default.
+	rows, err := tx.Query(`
+		SELECT end_user_id FROM api_keys
+		 WHERE tenant_id = ? AND end_user_id IS NOT NULL AND CAST(end_user_id AS TEXT) <> ''
+		 GROUP BY end_user_id
+		HAVING SUM(CASE WHEN is_default THEN 1 ELSE 0 END) = 0
+	`, tenantID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var users []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		users = append(users, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, endUserID := range users {
+		var keyID string
+		if err := tx.QueryRow(`
+			SELECT id FROM api_keys
+			 WHERE tenant_id = ? AND end_user_id = ?
+			 ORDER BY created_at ASC, id ASC LIMIT 1
+		`, tenantID, endUserID).Scan(&keyID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE api_keys SET is_default = true, updated_at = ? WHERE tenant_id = ? AND id = ?`, now, tenantID, keyID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func demoteExtraDefaultsSQLite(tx *sql.Tx, tenantID, now string) error {
+	rows, err := tx.Query(`
+		SELECT end_user_id FROM api_keys
+		 WHERE tenant_id = ? AND end_user_id IS NOT NULL AND CAST(end_user_id AS TEXT) <> ''
+		   AND is_default
+		 GROUP BY end_user_id
+		HAVING COUNT(*) > 1
+	`, tenantID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var users []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		users = append(users, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, endUserID := range users {
+		var keepID string
+		if err := tx.QueryRow(`
+			SELECT id FROM api_keys
+			 WHERE tenant_id = ? AND end_user_id = ? AND is_default
+			 ORDER BY created_at ASC, id ASC LIMIT 1
+		`, tenantID, endUserID).Scan(&keepID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`
+			UPDATE api_keys SET is_default = false, updated_at = ?
+			 WHERE tenant_id = ? AND end_user_id = ? AND is_default AND id <> ?
+		`, now, tenantID, endUserID, keepID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func EffectiveAPIKeyRowWithProfiles(row APIKeyRow, profiles []PermissionProfileSnapshot) APIKeyRow {

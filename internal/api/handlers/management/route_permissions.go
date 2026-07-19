@@ -28,6 +28,13 @@ func permissionForManagementRequest(method, path string) string {
 		return "tenant.users.read"
 	case relative == "/users" && method == http.MethodPost:
 		return "tenant.users.create"
+	// Key sub-resources under end-users use api_keys.* so legacy key-admin roles
+	// keep working after the sidebar moves to 用户账号.
+	case strings.HasPrefix(relative, "/end-users/") && strings.Contains(relative, "/api-keys"):
+		if write {
+			return "api_keys.write"
+		}
+		return "api_keys.read"
 	case strings.HasPrefix(relative, "/end-users"):
 		if write {
 			return "end_users.write"

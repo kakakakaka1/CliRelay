@@ -38,3 +38,68 @@ func TestStoreTenantIsolation(t *testing.T) {
 		t.Fatalf("tenant B list = %#v, want empty", got)
 	}
 }
+
+func TestReplaceAllPreservesOwnershipAndRejectsLastKeyDrop(t *testing.T) {
+	t.Parallel()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	InitTable(db)
+
+	store := NewTenantStore(db, "00000000-0000-0000-0000-00000000000a")
+	if err := store.Upsert(APIKeyRow{
+		ID: "k1", Key: "sk-1", Name: "one", EndUserID: "eu-1", IsDefault: true,
+	}); err != nil {
+		t.Fatalf("seed k1: %v", err)
+	}
+	if err := store.Upsert(APIKeyRow{
+		ID: "k2", Key: "sk-2", Name: "two", EndUserID: "eu-1", IsDefault: false,
+	}); err != nil {
+		t.Fatalf("seed k2: %v", err)
+	}
+	if err := store.Upsert(APIKeyRow{
+		ID: "k3", Key: "sk-3", Name: "three", EndUserID: "eu-2", IsDefault: true,
+	}); err != nil {
+		t.Fatalf("seed k3: %v", err)
+	}
+
+	// Dropping eu-2's only key must fail (final ownership count, not id+key double-count).
+	err = store.ReplaceAll([]APIKeyRow{
+		{ID: "k1", Key: "sk-1", Name: "one-renamed"},
+		{ID: "k2", Key: "sk-2", Name: "two"},
+	})
+	if err == nil {
+		t.Fatal("expected last-key drop for eu-2 to fail")
+	}
+
+	// Client cannot reassign ownership on replace; keep both users' keys.
+	if err := store.ReplaceAll([]APIKeyRow{
+		{ID: "k1", Key: "sk-1", Name: "one-renamed", EndUserID: "hijack", IsDefault: false},
+		{ID: "k2", Key: "sk-2", Name: "two", EndUserID: "hijack", IsDefault: true},
+		{ID: "k3", Key: "sk-3", Name: "three", EndUserID: "hijack", IsDefault: false},
+	}); err != nil {
+		t.Fatalf("replace keep all: %v", err)
+	}
+	got1 := store.GetByID("k1")
+	if got1 == nil || got1.EndUserID != "eu-1" || !got1.IsDefault || got1.Name != "one-renamed" {
+		t.Fatalf("k1 after replace = %#v", got1)
+	}
+	got3 := store.GetByID("k3")
+	if got3 == nil || got3.EndUserID != "eu-2" || !got3.IsDefault {
+		t.Fatalf("k3 after replace = %#v", got3)
+	}
+
+	// id matches one owned key while key text matches another must not count as two kept owners.
+	// Start from known state: eu-1 has k1+k2, eu-2 has k3 only.
+	err = store.ReplaceAll([]APIKeyRow{
+		// reuses id k1 (eu-1) but key text of k3 (eu-2) — only one row survives
+		{ID: "k1", Key: "sk-3", Name: "confused"},
+		{ID: "k2", Key: "sk-2", Name: "two"},
+	})
+	if err == nil {
+		t.Fatal("expected replace that drops eu-2 via id/key confusion to fail")
+	}
+}

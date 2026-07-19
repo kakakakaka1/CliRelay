@@ -177,7 +177,7 @@ func (h *Handler) PostEndUserResetPassword(c *gin.Context) {
 
 func (h *Handler) GetEndUserAPIKeys(c *gin.Context) {
 	principal, _ := principalFromContext(c)
-	if !principal.Has("end_users.read") && !principal.PlatformAdmin {
+	if !principal.Has("api_keys.read") && !principal.Has("end_users.read") && !principal.PlatformAdmin {
 		identityError(c, identity.ErrPermissionDenied)
 		return
 	}
@@ -196,7 +196,7 @@ func (h *Handler) GetEndUserAPIKeys(c *gin.Context) {
 
 func (h *Handler) PostEndUserAPIKey(c *gin.Context) {
 	principal, _ := principalFromContext(c)
-	if !principal.Has("end_users.write") && !principal.PlatformAdmin {
+	if !principal.Has("api_keys.write") && !principal.Has("end_users.write") && !principal.PlatformAdmin {
 		identityError(c, identity.ErrPermissionDenied)
 		return
 	}
@@ -219,6 +219,50 @@ func (h *Handler) PostEndUserAPIKey(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) DeleteEndUserAPIKey(c *gin.Context) {
+	principal, _ := principalFromContext(c)
+	if !principal.Has("end_users.write") && !principal.Has("api_keys.write") && !principal.PlatformAdmin {
+		identityError(c, identity.ErrPermissionDenied)
+		return
+	}
+	svc := h.endUserService()
+	if svc == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "end user service unavailable"})
+		return
+	}
+	if err := svc.DeleteKey(c.Request.Context(), effectiveTenantID(c), c.Param("id"), c.Param("key_id")); err != nil {
+		endUserError(c, err)
+		return
+	}
+	if err := h.refreshAPIKeyCache(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "cache_refresh_failed", "message": err.Error()}})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) PostEndUserAPIKeyDefault(c *gin.Context) {
+	principal, _ := principalFromContext(c)
+	if !principal.Has("end_users.write") && !principal.Has("api_keys.write") && !principal.PlatformAdmin {
+		identityError(c, identity.ErrPermissionDenied)
+		return
+	}
+	svc := h.endUserService()
+	if svc == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "end user service unavailable"})
+		return
+	}
+	if err := svc.SetDefaultKey(c.Request.Context(), effectiveTenantID(c), c.Param("id"), c.Param("key_id")); err != nil {
+		endUserError(c, err)
+		return
+	}
+	if err := h.refreshAPIKeyCache(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "cache_refresh_failed", "message": err.Error()}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 // Portal auth + key management

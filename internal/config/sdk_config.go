@@ -166,6 +166,11 @@ type APIKeyEntry struct {
 
 	// CreatedAt is the ISO 8601 timestamp when this key was created.
 	CreatedAt string `yaml:"created-at,omitempty" json:"created-at,omitempty"`
+
+	// EndUserID links this key to a portal end user (management only; not YAML).
+	EndUserID string `yaml:"-" json:"end_user_id,omitempty"`
+	// IsDefault marks the default key for the owning end user (management only).
+	IsDefault bool `yaml:"-" json:"is_default,omitempty"`
 }
 
 // AllAPIKeys returns a merged, deduplicated list of all API key strings

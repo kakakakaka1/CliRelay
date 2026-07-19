@@ -210,6 +210,26 @@ func (s *Service) Bootstrap(ctx context.Context, initialPassword string) error {
 	`); err != nil {
 		return fmt.Errorf("identity: seed tenant admin role permissions: %w", err)
 	}
+	// Product entry moved from API Keys menu to 用户账号: roles that could manage keys
+	// must still reach the user-account page after the sidebar change.
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO role_permissions (role_id, permission_code)
+		SELECT rp.role_id, 'end_users.read'
+		  FROM role_permissions rp
+		 WHERE rp.permission_code = 'api_keys.read'
+		ON CONFLICT DO NOTHING
+	`); err != nil {
+		return fmt.Errorf("identity: grant end_users.read from api_keys.read: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO role_permissions (role_id, permission_code)
+		SELECT rp.role_id, 'end_users.write'
+		  FROM role_permissions rp
+		 WHERE rp.permission_code = 'api_keys.write'
+		ON CONFLICT DO NOTHING
+	`); err != nil {
+		return fmt.Errorf("identity: grant end_users.write from api_keys.write: %w", err)
+	}
 
 	var adminCount int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id = ?`, SystemUserID).Scan(&adminCount); err != nil {

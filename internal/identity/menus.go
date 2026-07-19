@@ -40,6 +40,8 @@ type MenuSeed struct {
 	Icon           string
 	PermissionCode string
 	SortOrder      int
+	// HideMenu hides from sidebar while keeping route/permission for deep links.
+	HideMenu bool
 }
 
 type MenuInput struct {
@@ -91,8 +93,10 @@ var MenuCatalog = []MenuSeed{
 	{Code: "access.providers", ParentCode: "group.access", Type: "menu", Path: "/access/ai-providers", Component: "providers", LabelKey: "shell.nav_ai_providers", Icon: "bot", PermissionCode: "providers.read", SortOrder: 10},
 	// Stable code kept for role/menu bindings; path lives under /access as AI OAuth accounts.
 	{Code: "system.account-security", ParentCode: "group.access", Type: "menu", Path: "/access/ai-accounts", Component: "account-security", LabelKey: "shell.nav_ai_accounts", Icon: "key-round", PermissionCode: "auth_files.read", SortOrder: 20},
-	{Code: "access.api-keys", ParentCode: "group.access", Type: "menu", Path: "/access/api-keys", Component: "api-keys", LabelKey: "shell.nav_api_keys", Icon: "sparkles", PermissionCode: "api_keys.read", SortOrder: 30},
-	{Code: "access.end-users", ParentCode: "group.access", Type: "menu", Path: "/access/end-users", Component: "end-users", LabelKey: "shell.nav_end_users", Icon: "user-round", PermissionCode: "end_users.read", SortOrder: 35},
+	// API Keys page remains routable for user-scoped deep links, but sidebar entry is hidden:
+	// product entry is「用户账号」with multi-key management under each user.
+	{Code: "access.api-keys", ParentCode: "group.access", Type: "menu", Path: "/access/api-keys", Component: "api-keys", LabelKey: "shell.nav_api_keys", Icon: "sparkles", PermissionCode: "api_keys.read", SortOrder: 30, HideMenu: true},
+	{Code: "access.end-users", ParentCode: "group.access", Type: "menu", Path: "/access/end-users", Component: "end-users", LabelKey: "shell.nav_end_users", Icon: "user-round", PermissionCode: "end_users.read", SortOrder: 25},
 	// Stable code kept; API Key permission profiles belong with client credentials.
 	{Code: "system.api-key-permissions", ParentCode: "group.access", Type: "menu", Path: "/access/api-key-permissions", Component: "api-key-permissions", LabelKey: "shell.nav_api_key_permissions", Icon: "shield-check", PermissionCode: "api_key_profiles.read", SortOrder: 40},
 	// Tenant-scoped: matches /ccswitch-import-configs API auth (routing.read/write).
@@ -128,16 +132,23 @@ func seedMenus(ctx context.Context, tx *sql.Tx) error {
 			permission = menu.PermissionCode
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO menus (code,parent_code,menu_type,path,component,label_key,icon,permission_code,sort_order,system_protected)
-			VALUES (?,?,?,?,?,?,?,?,?,true)
+			INSERT INTO menus (code,parent_code,menu_type,path,component,label_key,icon,permission_code,sort_order,hide_menu,system_protected)
+			VALUES (?,?,?,?,?,?,?,?,?,?,true)
 			ON CONFLICT (code) DO UPDATE SET
 			  parent_code=EXCLUDED.parent_code, menu_type=EXCLUDED.menu_type, path=EXCLUDED.path,
 			  component=EXCLUDED.component, label_key=EXCLUDED.label_key, icon=EXCLUDED.icon,
 			  permission_code=EXCLUDED.permission_code, sort_order=EXCLUDED.sort_order,
 			  system_protected=true, updated_at=now()
-		`, menu.Code, parent, menu.Type, menu.Path, menu.Component, menu.LabelKey, menu.Icon, permission, menu.SortOrder); err != nil {
+		`, menu.Code, parent, menu.Type, menu.Path, menu.Component, menu.LabelKey, menu.Icon, permission, menu.SortOrder, menu.HideMenu); err != nil {
 			return fmt.Errorf("identity: seed menu %s: %w", menu.Code, err)
 		}
+	}
+	// Targeted product migration: hide legacy API Keys sidebar entry without
+	// resetting custom hide_menu on other menus during catalog re-seed.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE menus SET hide_menu = true, updated_at = now() WHERE code = 'access.api-keys'
+	`); err != nil {
+		return fmt.Errorf("identity: hide access.api-keys menu: %w", err)
 	}
 	return nil
 }
