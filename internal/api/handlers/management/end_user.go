@@ -75,6 +75,14 @@ func (h *Handler) GetEndUsers(c *gin.Context) {
 		endUserError(c, err)
 		return
 	}
+	for i := range items {
+		used, usageErr := usage.QueryTodayEffectiveCostByEndUserForTenant(items[i].TenantID, items[i].ID)
+		if usageErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": usageErr.Error()})
+			return
+		}
+		items[i].DailySpendingUsed = used
+	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
@@ -210,6 +218,37 @@ func (h *Handler) PostEndUserResetPassword(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"generated_password": generated})
+}
+
+func (h *Handler) PostEndUserDailySpendingReset(c *gin.Context) {
+	principal, _ := principalFromContext(c)
+	svc := h.endUserService()
+	if svc == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "end user service unavailable"})
+		return
+	}
+	if !principal.Has("end_users.write") && !principal.PlatformAdmin {
+		identityError(c, identity.ErrPermissionDenied)
+		return
+	}
+	tenantID := effectiveTenantID(c)
+	user, err := svc.GetUser(c.Request.Context(), tenantID, c.Param("id"))
+	if err != nil {
+		endUserError(c, err)
+		return
+	}
+	usedBefore, rawToday, err := usage.ResetTodayCostByEndUser(tenantID, user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":                "ok",
+		"end_user_id":           user.ID,
+		"daily-spending-used":   0,
+		"effective-used-before": usedBefore,
+		"raw-today-cost":        rawToday,
+	})
 }
 
 func (h *Handler) GetEndUserAPIKeys(c *gin.Context) {
@@ -473,8 +512,7 @@ func (h *Handler) PatchPortalAPIKey(c *gin.Context) {
 		return
 	}
 	var body struct {
-		Name      *string `json:"name"`
-		IsDefault *bool   `json:"is_default"`
+		Name *string `json:"name"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
@@ -484,12 +522,6 @@ func (h *Handler) PatchPortalAPIKey(c *gin.Context) {
 	svc := h.endUserService()
 	if body.Name != nil {
 		if err := svc.UpdateKeyName(c.Request.Context(), user.TenantID, user.ID, keyID, *body.Name); err != nil {
-			endUserError(c, err)
-			return
-		}
-	}
-	if body.IsDefault != nil && *body.IsDefault {
-		if err := svc.SetDefaultKey(c.Request.Context(), user.TenantID, user.ID, keyID); err != nil {
 			endUserError(c, err)
 			return
 		}

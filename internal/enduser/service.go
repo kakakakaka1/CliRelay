@@ -686,21 +686,25 @@ func (s *Service) UpdateUser(ctx context.Context, actor identity.Principal, tena
 			return User{}, err
 		}
 	}
-	if status != nil && *status != "active" {
-		if _, err = tx.ExecContext(ctx, `
-			UPDATE end_user_sessions SET revoked_at = now(), revoke_reason = 'status_change'
-			WHERE end_user_id = ? AND revoked_at IS NULL
-		`, userID); err != nil {
-			return User{}, err
+	if status != nil {
+		if *status != "active" {
+			if _, err = tx.ExecContext(ctx, `
+					UPDATE end_user_sessions SET revoked_at = now(), revoke_reason = 'status_change'
+					WHERE end_user_id = ? AND revoked_at IS NULL
+				`, userID); err != nil {
+				return User{}, err
+			}
 		}
-		// Disable owned keys while user is disabled/locked. Key-level disabled is not
-		// restored automatically on re-enable (admin re-enables keys explicitly if needed).
-		if *status == "disabled" || *status == "locked" {
+		if *status == "active" || *status == "disabled" || *status == "locked" {
+			disabled := 1
+			if *status == "active" {
+				disabled = 0
+			}
 			now := time.Now().UTC().Format(time.RFC3339)
 			if _, err = tx.ExecContext(ctx, `
-				UPDATE api_keys SET disabled = 1, updated_at = ?
-				WHERE tenant_id = ? AND end_user_id = ?
-			`, now, tenantID, userID); err != nil {
+					UPDATE api_keys SET disabled = ?, updated_at = ?
+					WHERE tenant_id = ? AND end_user_id = ?
+				`, disabled, now, tenantID, userID); err != nil {
 				return User{}, err
 			}
 		}
