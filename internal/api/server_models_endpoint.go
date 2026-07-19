@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	modelconfigsettings "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/modelconfig"
 	internalrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers/claude"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers/openai"
 )
@@ -59,15 +61,7 @@ func (s *Server) unifiedModelsHandler(openaiHandler *openai.OpenAIAPIHandler, cl
 
 		tenantID := requestTenantID(c)
 		scopedRoutingRestricted := s.hasScopedRoutingModelRestrictionForTenant(tenantID, routeGroup, allowedChannelGroups)
-		if allowedModels == nil && allowedChannels == nil && allowedChannelGroups == nil && routeGroup == "" && !scopedRoutingRestricted {
-			userAgent := c.GetHeader("User-Agent")
-			if strings.HasPrefix(userAgent, "claude-cli") {
-				claudeHandler.ClaudeModels(c)
-			} else {
-				openaiHandler.OpenAIModels(c)
-			}
-			return
-		}
+		needsScopeFilter := allowedModels != nil || allowedChannels != nil || allowedChannelGroups != nil || routeGroup != "" || scopedRoutingRestricted
 
 		recorder := &responseRecorder{
 			ResponseWriter: c.Writer,
@@ -87,35 +81,42 @@ func (s *Server) unifiedModelsHandler(openaiHandler *openai.OpenAIAPIHandler, cl
 			Data   []map[string]interface{} `json:"data"`
 		}
 		if err := json.Unmarshal(recorder.body.Bytes(), &resp); err != nil {
+			// Non-list payloads (e.g. Claude-native shape) pass through unchanged.
 			recorder.ResponseWriter.WriteHeader(recorder.statusCode)
 			_, _ = recorder.ResponseWriter.Write(recorder.body.Bytes())
 			return
 		}
 
-		filtered := make([]map[string]interface{}, 0, len(resp.Data))
-		for _, model := range resp.Data {
-			if id, ok := model["id"].(string); ok {
-				if allowedModels != nil {
-					if !modelInSet(id, allowedModels) && !ccSwitchRequestModelAllowedForTarget(id, routeCtx, allowedModels) {
+		if needsScopeFilter {
+			filtered := make([]map[string]interface{}, 0, len(resp.Data))
+			for _, model := range resp.Data {
+				if id, ok := model["id"].(string); ok {
+					if allowedModels != nil {
+						if !modelInSet(id, allowedModels) && !ccSwitchRequestModelAllowedForTarget(id, routeCtx, allowedModels) {
+							continue
+						}
+					}
+					if allowedChannels != nil || allowedChannelGroups != nil || routeGroup != "" {
+						if s.handlers == nil || s.handlers.AuthManager == nil || !s.handlers.AuthManager.CanServeModelWithScopesForTenant(tenantID, id, allowedChannels, allowedChannelGroups, routeGroup) {
+							continue
+						}
+					}
+					if scopedRoutingRestricted && !s.modelAllowedByScopedRoutingGroupsForTenant(tenantID, id, routeGroup, allowedChannelGroups) {
 						continue
 					}
+					filtered = append(filtered, model)
 				}
-				if allowedChannels != nil || allowedChannelGroups != nil || routeGroup != "" {
-					if s.handlers == nil || s.handlers.AuthManager == nil || !s.handlers.AuthManager.CanServeModelWithScopesForTenant(tenantID, id, allowedChannels, allowedChannelGroups, routeGroup) {
-						continue
-					}
-				}
-				if scopedRoutingRestricted && !s.modelAllowedByScopedRoutingGroupsForTenant(tenantID, id, routeGroup, allowedChannelGroups) {
-					continue
-				}
-				filtered = append(filtered, model)
+			}
+			resp.Data = filtered
+
+			if routeCtx != nil && routeCtx.CcSwitch != nil {
+				resp.Data = filterModelsForCcSwitchRoute(resp.Data, routeCtx)
 			}
 		}
-		resp.Data = filtered
 
-		if routeCtx != nil && routeCtx.CcSwitch != nil {
-			resp.Data = filterModelsForCcSwitchRoute(resp.Data, routeCtx)
-		}
+		// Attach tenant catalog metadata so public clients (apikey-lookup plaza)
+		// can show description + pricing without management credentials.
+		enrichOpenAIModelsWithCatalog(tenantID, resp.Data)
 
 		filteredJSON, err := json.Marshal(resp)
 		if err != nil {
@@ -127,6 +128,75 @@ func (s *Server) unifiedModelsHandler(openaiHandler *openai.OpenAIAPIHandler, cl
 		recorder.ResponseWriter.Header().Set("Content-Length", fmt.Sprintf("%d", len(filteredJSON)))
 		recorder.ResponseWriter.WriteHeader(http.StatusOK)
 		_, _ = recorder.ResponseWriter.Write(filteredJSON)
+	}
+}
+
+// enrichOpenAIModelsWithCatalog fills description/pricing/modalities from the
+// tenant model catalog. Safe for missing rows — leaves the base model map alone.
+func enrichOpenAIModelsWithCatalog(tenantID string, models []map[string]interface{}) {
+	if len(models) == 0 {
+		return
+	}
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		id, _ := model["id"].(string)
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if row, ok := modelconfigsettings.GetConfigForTenant(tenantID, id); ok {
+			if ownedBy := strings.TrimSpace(row.OwnedBy); ownedBy != "" {
+				if existing, _ := model["owned_by"].(string); strings.TrimSpace(existing) == "" {
+					model["owned_by"] = ownedBy
+				}
+			}
+			if desc := strings.TrimSpace(row.Description); desc != "" {
+				model["description"] = desc
+			}
+			if displayName := strings.TrimSpace(row.DisplayName); displayName != "" {
+				if existing, _ := model["display_name"].(string); strings.TrimSpace(existing) == "" {
+					model["display_name"] = displayName
+				}
+			}
+			if len(row.InputModalities) > 0 {
+				model["input_modalities"] = append([]string(nil), row.InputModalities...)
+			}
+			if len(row.OutputModalities) > 0 {
+				model["output_modalities"] = append([]string(nil), row.OutputModalities...)
+			}
+			supportsVision := false
+			for _, modality := range row.InputModalities {
+				if strings.EqualFold(strings.TrimSpace(modality), "image") {
+					supportsVision = true
+					break
+				}
+			}
+			model["supports_vision"] = supportsVision
+			model["pricing"] = map[string]any{
+				"mode":                          row.PricingMode,
+				"input_price_per_million":       row.InputPricePerMillion,
+				"output_price_per_million":      row.OutputPricePerMillion,
+				"cached_price_per_million":      row.CachedPricePerMillion,
+				"cache_read_price_per_million":  row.CacheReadPricePerMillion,
+				"cache_write_price_per_million": row.CacheWritePricePerMillion,
+				"price_per_call":                row.PricePerCall,
+			}
+			continue
+		}
+		// Fallback: legacy model_pricing table when no model_config row exists.
+		if pricing, ok := usage.GetModelPricingForTenant(tenantID, id); ok {
+			model["pricing"] = map[string]any{
+				"mode":                          "token",
+				"input_price_per_million":       pricing.InputPricePerMillion,
+				"output_price_per_million":      pricing.OutputPricePerMillion,
+				"cached_price_per_million":      pricing.CachedPricePerMillion,
+				"cache_read_price_per_million":  pricing.CacheReadPricePerMillion,
+				"cache_write_price_per_million": pricing.CacheWritePricePerMillion,
+				"price_per_call":                0,
+			}
+		}
 	}
 }
 

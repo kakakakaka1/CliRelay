@@ -51,6 +51,19 @@ func TestCcSwitchRequestModelAllowedForTarget(t *testing.T) {
 	}
 }
 
+func TestEnrichOpenAIModelsWithCatalogLeavesUnknownModels(t *testing.T) {
+	models := []map[string]interface{}{
+		{"id": "unknown-model-xyz", "object": "model"},
+	}
+	enrichOpenAIModelsWithCatalog("", models)
+	if _, hasPricing := models[0]["pricing"]; hasPricing {
+		t.Fatal("unexpected pricing for unknown model")
+	}
+	if _, hasDesc := models[0]["description"]; hasDesc {
+		t.Fatal("unexpected description for unknown model")
+	}
+}
+
 func modelIDs(models []map[string]interface{}) []string {
 	ids := make([]string, 0, len(models))
 	for _, model := range models {
