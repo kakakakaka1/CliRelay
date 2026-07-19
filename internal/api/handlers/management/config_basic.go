@@ -59,7 +59,36 @@ func (h *Handler) GetConfig(c *gin.Context) {
 		OAuthModelAlias:      runtimeCfg.OAuthModelAlias,
 		Payload:              runtimeCfg.Payload,
 	}
+	// Platform super-admins often switch into a business tenant for ops. The
+	// tenant-scoped provider view must not leak other tenants' secrets, but
+	// process-global runtime toggles (request-log, logging-to-file, …) still
+	// apply to the host. Omitting them made the management UI default those
+	// booleans to false while the process kept writing full request files.
+	if principal, ok := principalFromContext(c); ok && principal.PlatformAdmin {
+		copyProcessGlobalRuntimeToggles(h.cfg, tenantView)
+	}
 	c.JSON(200, sanitizeConfigForAPI(tenantView))
+}
+
+// copyProcessGlobalRuntimeToggles copies host-wide runtime switches that the
+// config panel reads/writes. Provider credentials stay tenant-scoped.
+func copyProcessGlobalRuntimeToggles(src, dst *config.Config) {
+	if src == nil || dst == nil {
+		return
+	}
+	dst.SDKConfig.RequestLog = src.SDKConfig.RequestLog
+	dst.SDKConfig.RequestLogStorage = src.SDKConfig.RequestLogStorage
+	dst.Debug = src.Debug
+	dst.LoggingToFile = src.LoggingToFile
+	dst.LogsMaxTotalSizeMB = src.LogsMaxTotalSizeMB
+	dst.ErrorLogsMaxFiles = src.ErrorLogsMaxFiles
+	dst.UsageStatisticsEnabled = src.UsageStatisticsEnabled
+	dst.WebsocketAuth = src.WebsocketAuth
+	dst.RequestRetry = src.RequestRetry
+	dst.MaxRetryInterval = src.MaxRetryInterval
+	dst.QuotaExceeded = src.QuotaExceeded
+	dst.ForceModelPrefix = src.ForceModelPrefix
+	dst.ProxyURL = src.ProxyURL
 }
 
 // maskKey masks an API key / secret, preserving first 6 and last 4 characters.

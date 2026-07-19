@@ -113,17 +113,82 @@ func TestGetConfigReturnsOnlyTenantRuntimeView(t *testing.T) {
 	}
 	t.Cleanup(usage.CloseDB)
 
-	h := &Handler{cfg: &config.Config{GeminiKey: []config.GeminiKey{{APIKey: "system-secret"}}, Debug: true}}
+	h := &Handler{cfg: &config.Config{
+		SDKConfig: config.SDKConfig{RequestLog: true},
+		GeminiKey: []config.GeminiKey{{APIKey: "system-secret"}},
+		Debug:     true,
+	}}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	c.Set(managementPrincipalKey, identity.Principal{EffectiveTenant: identity.Tenant{ID: "00000000-0000-0000-0000-00000000000a"}})
+	c.Set(managementPrincipalKey, identity.Principal{
+		PlatformAdmin:   false,
+		EffectiveTenant: identity.Tenant{ID: "00000000-0000-0000-0000-00000000000a"},
+	})
 	c.Request = httptest.NewRequest(http.MethodGet, "/v0/management/config", nil)
 	h.GetConfig(c)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "system-secret") || strings.Contains(rec.Body.String(), "debug\":true") {
-		t.Fatalf("tenant config leaked system settings: %s", rec.Body.String())
+	body := rec.Body.String()
+	if strings.Contains(body, "system-secret") || strings.Contains(body, `"debug":true`) {
+		t.Fatalf("tenant config leaked system settings: %s", body)
+	}
+	// Non-platform tenants still must not receive host runtime toggles via /config
+	// (they reach dedicated endpoints only when authorized).
+	if strings.Contains(body, `"request-log":true`) {
+		t.Fatalf("non-platform tenant config leaked process-global request-log: %s", body)
+	}
+}
+
+func TestGetConfigIncludesProcessGlobalTogglesForPlatformAdminInTenantContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	usage.CloseDB()
+	if err := usage.InitDB(filepath.Join(t.TempDir(), "usage.db"), config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(usage.CloseDB)
+
+	h := &Handler{cfg: &config.Config{
+		SDKConfig: config.SDKConfig{
+			RequestLog:       true,
+			ForceModelPrefix: true,
+			ProxyURL:         "http://host-proxy.example:7890",
+		},
+		GeminiKey:              []config.GeminiKey{{APIKey: "system-secret"}},
+		Debug:                  true,
+		LoggingToFile:          true,
+		UsageStatisticsEnabled: true,
+		WebsocketAuth:          true,
+		QuotaExceeded:          config.QuotaExceeded{SwitchProject: true, SwitchPreviewModel: true},
+	}}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Set(managementPrincipalKey, identity.Principal{
+		PlatformAdmin:   true,
+		EffectiveTenant: identity.Tenant{ID: "00000000-0000-0000-0000-00000000000a"},
+		HomeTenant:      identity.Tenant{ID: identity.SystemTenantID},
+	})
+	c.Request = httptest.NewRequest(http.MethodGet, "/v0/management/config", nil)
+	h.GetConfig(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "system-secret") {
+		t.Fatalf("platform-admin tenant view leaked provider secrets: %s", body)
+	}
+	for _, want := range []string{
+		`"request-log":true`,
+		`"logging-to-file":true`,
+		`"debug":true`,
+		`"usage-statistics-enabled":true`,
+		`"ws-auth":true`,
+		`"force-model-prefix":true`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("platform-admin tenant view missing %s: %s", want, body)
+		}
 	}
 }
