@@ -4,8 +4,15 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
+
+// Serializes absolute rollup rebuild against live request_log writers so blue-green
+// catch-up rebuilds cannot race mid-UPSERT.
+var usageProjectionMu sync.RWMutex
 
 const (
 	rollupBucketMinute   = "minute"
@@ -100,7 +107,25 @@ func bootstrapUsageRollup(db *sql.DB, loc *time.Location) error {
 // RunUsageRollupBackfillAtInit rebuilds usage_rollup_buckets from surviving request_logs.
 // Must run after api_keys are imported and end_user_id ownership is populated.
 func RunUsageRollupBackfillAtInit() error {
-	return runUsageRollupBackfillAtInitDB(getDB(), getUsageLocation())
+	return runUsageRollupBackfillAtInitDB(getDB(), getUsageLocation(), false)
+}
+
+// ScheduleUsageRollupBlueGreenCatchup waits for old-slot drain, then force-rebuilds
+// rollup from all surviving request_logs so rows written by the previous binary
+// (without projection) are not permanently missing after marker is set.
+func ScheduleUsageRollupBlueGreenCatchup() {
+	go func() {
+		// Cover blue-green drain (~35s) plus cutover lag; run twice for safety.
+		delays := []time.Duration{90 * time.Second, 90 * time.Second}
+		for i, d := range delays {
+			time.Sleep(d)
+			if err := runUsageRollupBackfillAtInitDB(getDB(), getUsageLocation(), true); err != nil {
+				log.Errorf("usage: blue-green rollup catch-up %d failed: %v", i+1, err)
+				continue
+			}
+			log.Infof("usage: blue-green rollup catch-up %d completed", i+1)
+		}
+	}()
 }
 
 func usageRollupBackfillCompleted(db *sql.DB) bool {
@@ -110,19 +135,22 @@ func usageRollupBackfillCompleted(db *sql.DB) bool {
 	return projectionMarkerValue(db, usageRollupBackfillMarker) == "done"
 }
 
-// runUsageRollupBackfillAtInitDB rebuilds rollup from surviving request_logs once.
-// Reentrancy: if marker is missing, DELETE rollup then absolute rebuild + marker in one tx.
-func runUsageRollupBackfillAtInitDB(db *sql.DB, loc *time.Location) error {
+// runUsageRollupBackfillAtInitDB rebuilds rollup from surviving request_logs.
+// force=true re-runs even when marker is done (post-drain catch-up).
+// Absolute rebuild holds usageProjectionMu exclusively so live writers pause briefly.
+func runUsageRollupBackfillAtInitDB(db *sql.DB, loc *time.Location, force bool) error {
 	if db == nil {
 		return nil
 	}
 	ensureUsageProjectionMarkerTable(db)
-	if projectionMarkerValue(db, usageRollupBackfillMarker) == "done" {
+	if !force && projectionMarkerValue(db, usageRollupBackfillMarker) == "done" {
 		return nil
 	}
 	if loc == nil {
 		loc = time.Local
 	}
+	usageProjectionMu.Lock()
+	defer usageProjectionMu.Unlock()
 
 	// Resolve end_user_id from api_keys after identity tables exist.
 	// Map by api_key_id first, then raw secret for legacy empty-id rows.
@@ -391,6 +419,9 @@ func resolveEndUserIDForKey(apiKey string) string {
 
 // commitLogWithProjections writes AI-account daily + generic rollup then commits.
 func commitLogWithProjections(tx *sql.Tx, ev rollupEvent) error {
+	// Shared lock: exclusive rebuilds (blue-green catch-up) must not interleave.
+	usageProjectionMu.RLock()
+	defer usageProjectionMu.RUnlock()
 	if err := projectUsageRollupTx(tx, ev); err != nil {
 		_ = tx.Rollback()
 		return err

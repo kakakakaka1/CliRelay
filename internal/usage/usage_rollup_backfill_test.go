@@ -50,7 +50,7 @@ func TestUsageRollupBackfillResolvesLegacyKeyAndEndUser(t *testing.T) {
 	if _, err := getDB().Exec(`UPDATE request_logs SET api_key_id = 'key-bf-1' WHERE api_key = 'sk-bf-legacy'`); err != nil {
 		t.Fatalf("repair key id: %v", err)
 	}
-	if err := runUsageRollupBackfillAtInitDB(getDB(), time.UTC); err != nil {
+	if err := runUsageRollupBackfillAtInitDB(getDB(), time.UTC, true); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 
@@ -96,12 +96,9 @@ func TestUsageRollupBackfillIsReentrantWithoutDoubleCount(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	// Force rebuild twice with marker cleared between — absolute rebuild must not double.
+	// Force rebuild twice — absolute rebuild must not double.
 	for i := 0; i < 2; i++ {
-		if _, err := getDB().Exec(`DELETE FROM usage_projection_markers WHERE marker_key = ?`, usageRollupBackfillMarker); err != nil {
-			t.Fatalf("clear marker: %v", err)
-		}
-		if err := runUsageRollupBackfillAtInitDB(getDB(), time.UTC); err != nil {
+		if err := runUsageRollupBackfillAtInitDB(getDB(), time.UTC, true); err != nil {
 			t.Fatalf("backfill %d: %v", i, err)
 		}
 	}
@@ -114,6 +111,64 @@ func TestUsageRollupBackfillIsReentrantWithoutDoubleCount(t *testing.T) {
 	}
 	if total != 2 {
 		t.Fatalf("lifetime rollup total after replay = %v, want 2 (not doubled)", total)
+	}
+}
+
+func TestUsageRollupBlueGreenCatchupIncludesOldSlotRows(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "rollup-bluegreen.db")
+	if err := InitDB(dbPath, config.RequestLogStorageConfig{RetentionDays: 7}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		stopRequestLogMaintenance()
+		CloseDB()
+	})
+	if err := UpsertAPIKey(APIKeyRow{ID: "key-bg", Key: "sk-bg"}); err != nil {
+		t.Fatalf("UpsertAPIKey: %v", err)
+	}
+	at := time.Now().UTC()
+	// Row present at first rebuild.
+	if _, err := getDB().Exec(`
+		INSERT INTO request_logs
+		(tenant_id, timestamp, api_key, api_key_id, model, source, failed, total_tokens, cost)
+		VALUES (?, ?, 'sk-bg', 'key-bg', 'm', 's', 0, 1, 1)
+	`, systemTenantID, at.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert first: %v", err)
+	}
+	if err := runUsageRollupBackfillAtInitDB(getDB(), time.UTC, false); err != nil {
+		t.Fatalf("initial backfill: %v", err)
+	}
+	// Simulate old slot writing a detail row without rollup after marker is done.
+	if _, err := getDB().Exec(`
+		INSERT INTO request_logs
+		(tenant_id, timestamp, api_key, api_key_id, model, source, failed, total_tokens, cost)
+		VALUES (?, ?, 'sk-bg', 'key-bg', 'm', 's', 0, 1, 3)
+	`, systemTenantID, at.Add(time.Minute).Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert old-slot: %v", err)
+	}
+	var before float64
+	if err := getDB().QueryRow(`
+		SELECT COALESCE(SUM(cost_total),0) FROM usage_rollup_buckets
+		WHERE bucket_kind='lifetime' AND api_key_id='key-bg'
+	`).Scan(&before); err != nil {
+		t.Fatalf("before: %v", err)
+	}
+	if before != 1 {
+		t.Fatalf("before catch-up total = %v, want 1", before)
+	}
+	// Force catch-up absolute rebuild (as scheduled after drain).
+	if err := runUsageRollupBackfillAtInitDB(getDB(), time.UTC, true); err != nil {
+		t.Fatalf("catch-up: %v", err)
+	}
+	var after float64
+	if err := getDB().QueryRow(`
+		SELECT COALESCE(SUM(cost_total),0) FROM usage_rollup_buckets
+		WHERE bucket_kind='lifetime' AND api_key_id='key-bg'
+	`).Scan(&after); err != nil {
+		t.Fatalf("after: %v", err)
+	}
+	if after != 4 {
+		t.Fatalf("after catch-up total = %v, want 4 (1+3)", after)
 	}
 }
 
@@ -186,7 +241,7 @@ func TestUsageRollupBackfillDoesNotMarkDoneOnReadFailure(t *testing.T) {
 	if _, err := getDB().Exec(`DELETE FROM usage_projection_markers WHERE marker_key = ?`, usageRollupBackfillMarker); err != nil {
 		t.Fatalf("clear marker: %v", err)
 	}
-	if err := runUsageRollupBackfillAtInitDB(getDB(), time.UTC); err == nil {
+	if err := runUsageRollupBackfillAtInitDB(getDB(), time.UTC, true); err == nil {
 		t.Fatal("expected backfill error when request_logs missing")
 	}
 	if projectionMarkerValue(getDB(), usageRollupBackfillMarker) == "done" {

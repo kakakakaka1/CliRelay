@@ -146,6 +146,9 @@ func initializeRuntimeDataStack(cfg *config.Config, configPath string, loc *time
 	if err := usage.RunUsageRollupBackfillAtInit(); err != nil {
 		return fmt.Errorf("usage rollup backfill: %w", err)
 	}
+	// Old blue-green slot may keep writing request_logs without rollup until drain.
+	// Catch-up absolute rebuilds after drain so those rows are not permanently missing.
+	usage.ScheduleUsageRollupBlueGreenCatchup()
 	usage.MigrateAPIKeyPermissionProfilesFromYAML(configPath)
 	usage.MigrateRoutingConfigFromConfig(cfg, configPath)
 	usage.ApplyStoredRoutingConfig(cfg)
