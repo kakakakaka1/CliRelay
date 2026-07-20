@@ -25,7 +25,17 @@ type ConvertCodexResponseToClaudeParams struct {
 	HasToolCall               bool
 	BlockIndex                int
 	HasReceivedArgumentsDelta bool
+	OpenBlockType             string
+	OpenBlockIndex            int
+	ActiveFunctionCallKeys    map[string]struct{}
+	MessageCompleted          bool
 }
+
+const (
+	codexClaudeThinkingBlock = "thinking"
+	codexClaudeTextBlock     = "text"
+	codexClaudeToolBlock     = "tool_use"
+)
 
 // ConvertCodexResponseToClaude performs sophisticated streaming response format conversion.
 // This function implements a complex state machine that translates Codex API responses
@@ -50,6 +60,10 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 			BlockIndex:  0,
 		}
 	}
+	params := (*param).(*ConvertCodexResponseToClaudeParams)
+	if params.MessageCompleted {
+		return []string{}
+	}
 
 	// log.Debugf("rawJSON: %s", string(rawJSON))
 	if !bytes.HasPrefix(rawJSON, dataTag) {
@@ -70,49 +84,76 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 		output = "event: message_start\n"
 		output += fmt.Sprintf("data: %s\n\n", template)
 	} else if typeStr == "response.reasoning_summary_part.added" {
+		if params.OpenBlockType == codexClaudeThinkingBlock {
+			return []string{output}
+		}
+		output += closeCodexClaudeContentBlock(params)
 		template = `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`
-		template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
+		template, _ = sjson.Set(template, "index", params.BlockIndex)
+		openCodexClaudeContentBlock(params, codexClaudeThinkingBlock)
 
-		output = "event: content_block_start\n"
+		output += "event: content_block_start\n"
 		output += fmt.Sprintf("data: %s\n\n", template)
 	} else if typeStr == "response.reasoning_summary_text.delta" {
+		if params.OpenBlockType == "" {
+			template = `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`
+			template, _ = sjson.Set(template, "index", params.BlockIndex)
+			openCodexClaudeContentBlock(params, codexClaudeThinkingBlock)
+			output += "event: content_block_start\n"
+			output += fmt.Sprintf("data: %s\n\n", template)
+		}
+		if params.OpenBlockType != codexClaudeThinkingBlock {
+			return []string{output}
+		}
 		template = `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}`
-		template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
+		template, _ = sjson.Set(template, "index", params.OpenBlockIndex)
 		template, _ = sjson.Set(template, "delta.thinking", rootResult.Get("delta").String())
 
-		output = "event: content_block_delta\n"
+		output += "event: content_block_delta\n"
 		output += fmt.Sprintf("data: %s\n\n", template)
 	} else if typeStr == "response.reasoning_summary_part.done" {
-		template = `{"type":"content_block_stop","index":0}`
-		template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
-		(*param).(*ConvertCodexResponseToClaudeParams).BlockIndex++
-
-		output = "event: content_block_stop\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
-
+		if params.OpenBlockType == codexClaudeThinkingBlock {
+			output += closeCodexClaudeContentBlock(params)
+		}
 	} else if typeStr == "response.content_part.added" {
+		if params.OpenBlockType == codexClaudeTextBlock {
+			return []string{output}
+		}
+		output += closeCodexClaudeContentBlock(params)
 		template = `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`
-		template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
+		template, _ = sjson.Set(template, "index", params.BlockIndex)
+		openCodexClaudeContentBlock(params, codexClaudeTextBlock)
 
-		output = "event: content_block_start\n"
+		output += "event: content_block_start\n"
 		output += fmt.Sprintf("data: %s\n\n", template)
 	} else if typeStr == "response.output_text.delta" {
+		if params.OpenBlockType == codexClaudeThinkingBlock {
+			output += closeCodexClaudeContentBlock(params)
+		}
+		if params.OpenBlockType == "" {
+			template = `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`
+			template, _ = sjson.Set(template, "index", params.BlockIndex)
+			openCodexClaudeContentBlock(params, codexClaudeTextBlock)
+			output += "event: content_block_start\n"
+			output += fmt.Sprintf("data: %s\n\n", template)
+		}
+		if params.OpenBlockType != codexClaudeTextBlock {
+			return []string{output}
+		}
 		template = `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":""}}`
-		template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
+		template, _ = sjson.Set(template, "index", params.OpenBlockIndex)
 		template, _ = sjson.Set(template, "delta.text", rootResult.Get("delta").String())
 
-		output = "event: content_block_delta\n"
+		output += "event: content_block_delta\n"
 		output += fmt.Sprintf("data: %s\n\n", template)
 	} else if typeStr == "response.content_part.done" {
-		template = `{"type":"content_block_stop","index":0}`
-		template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
-		(*param).(*ConvertCodexResponseToClaudeParams).BlockIndex++
-
-		output = "event: content_block_stop\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		if params.OpenBlockType == codexClaudeTextBlock {
+			output += closeCodexClaudeContentBlock(params)
+		}
 	} else if typeStr == "response.completed" {
+		output += closeCodexClaudeContentBlock(params)
 		template = `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":0}}`
-		p := (*param).(*ConvertCodexResponseToClaudeParams).HasToolCall
+		p := params.HasToolCall
 		stopReason := rootResult.Get("response.stop_reason").String()
 		if p {
 			template, _ = sjson.Set(template, "delta.stop_reason", "tool_use")
@@ -128,35 +169,48 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 			template, _ = sjson.Set(template, "usage.cache_read_input_tokens", cachedTokens)
 		}
 
-		output = "event: message_delta\n"
+		output += "event: message_delta\n"
 		output += fmt.Sprintf("data: %s\n\n", template)
 		output += "event: message_stop\n"
 		output += `data: {"type":"message_stop"}`
 		output += "\n\n"
+		params.MessageCompleted = true
 	} else if typeStr == "response.output_item.added" {
 		itemResult := rootResult.Get("item")
 		itemType := itemResult.Get("type").String()
 		if itemType == "function_call" {
-			(*param).(*ConvertCodexResponseToClaudeParams).HasToolCall = true
-			(*param).(*ConvertCodexResponseToClaudeParams).HasReceivedArgumentsDelta = false
-			template = `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"","name":"","input":{}}}`
-			template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
-			template, _ = sjson.Set(template, "content_block.id", itemResult.Get("call_id").String())
-			{
-				// Restore original tool name if shortened
-				name := itemResult.Get("name").String()
-				rev := buildReverseMapFromClaudeOriginalShortToOriginal(originalRequestRawJSON)
-				if orig, ok := rev[name]; ok {
-					name = orig
-				}
-				template, _ = sjson.Set(template, "content_block.name", name)
+			name := strings.TrimSpace(itemResult.Get("name").String())
+			rev := buildReverseMapFromClaudeOriginalShortToOriginal(originalRequestRawJSON)
+			if orig, ok := rev[name]; ok {
+				name = strings.TrimSpace(orig)
+			}
+			callID := strings.TrimSpace(itemResult.Get("call_id").String())
+			if callID == "" {
+				callID = strings.TrimSpace(itemResult.Get("id").String())
+			}
+			if name == "" || callID == "" {
+				return []string{output}
 			}
 
-			output = "event: content_block_start\n"
+			keys := codexClaudeFunctionCallKeys(rootResult, itemResult)
+			if params.OpenBlockType == codexClaudeToolBlock && codexClaudeFunctionCallMatches(params, keys) {
+				return []string{output}
+			}
+			output += closeCodexClaudeContentBlock(params)
+			params.HasToolCall = true
+			params.HasReceivedArgumentsDelta = false
+			template = `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"","name":"","input":{}}}`
+			template, _ = sjson.Set(template, "index", params.BlockIndex)
+			template, _ = sjson.Set(template, "content_block.id", callID)
+			template, _ = sjson.Set(template, "content_block.name", name)
+			openCodexClaudeContentBlock(params, codexClaudeToolBlock)
+			params.ActiveFunctionCallKeys = keys
+
+			output += "event: content_block_start\n"
 			output += fmt.Sprintf("data: %s\n\n", template)
 
 			template = `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}`
-			template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
+			template, _ = sjson.Set(template, "index", params.OpenBlockIndex)
 
 			output += "event: content_block_delta\n"
 			output += fmt.Sprintf("data: %s\n\n", template)
@@ -165,40 +219,108 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 		itemResult := rootResult.Get("item")
 		itemType := itemResult.Get("type").String()
 		if itemType == "function_call" {
-			template = `{"type":"content_block_stop","index":0}`
-			template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
-			(*param).(*ConvertCodexResponseToClaudeParams).BlockIndex++
-
-			output = "event: content_block_stop\n"
-			output += fmt.Sprintf("data: %s\n\n", template)
+			if params.OpenBlockType != codexClaudeToolBlock || !codexClaudeFunctionCallMatches(params, codexClaudeFunctionCallKeys(rootResult, itemResult)) {
+				return []string{output}
+			}
+			if !params.HasReceivedArgumentsDelta {
+				if args := itemResult.Get("arguments").String(); args != "" {
+					output += codexClaudeFunctionArgumentsDelta(params.OpenBlockIndex, args)
+					params.HasReceivedArgumentsDelta = true
+				}
+			}
+			output += closeCodexClaudeContentBlock(params)
 		}
 	} else if typeStr == "response.function_call_arguments.delta" {
-		(*param).(*ConvertCodexResponseToClaudeParams).HasReceivedArgumentsDelta = true
-		template = `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}`
-		template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
-		template, _ = sjson.Set(template, "delta.partial_json", rootResult.Get("delta").String())
-
-		output += "event: content_block_delta\n"
-		output += fmt.Sprintf("data: %s\n\n", template)
+		if params.OpenBlockType == codexClaudeToolBlock && codexClaudeFunctionCallMatches(params, codexClaudeFunctionCallKeys(rootResult, gjson.Result{})) {
+			params.HasReceivedArgumentsDelta = true
+			output += codexClaudeFunctionArgumentsDelta(params.OpenBlockIndex, rootResult.Get("delta").String())
+		}
 	} else if typeStr == "response.function_call_arguments.done" {
 		// Some models (e.g. gpt-5.3-codex-spark) send function call arguments
 		// in a single "done" event without preceding "delta" events.
 		// Emit the full arguments as a single input_json_delta so the
 		// downstream Claude client receives the complete tool input.
 		// When delta events were already received, skip to avoid duplicating arguments.
-		if !(*param).(*ConvertCodexResponseToClaudeParams).HasReceivedArgumentsDelta {
+		if params.OpenBlockType == codexClaudeToolBlock && codexClaudeFunctionCallMatches(params, codexClaudeFunctionCallKeys(rootResult, gjson.Result{})) && !params.HasReceivedArgumentsDelta {
 			if args := rootResult.Get("arguments").String(); args != "" {
-				template = `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}`
-				template, _ = sjson.Set(template, "index", (*param).(*ConvertCodexResponseToClaudeParams).BlockIndex)
-				template, _ = sjson.Set(template, "delta.partial_json", args)
-
-				output += "event: content_block_delta\n"
-				output += fmt.Sprintf("data: %s\n\n", template)
+				output += codexClaudeFunctionArgumentsDelta(params.OpenBlockIndex, args)
+				params.HasReceivedArgumentsDelta = true
 			}
 		}
 	}
 
 	return []string{output}
+}
+
+func openCodexClaudeContentBlock(params *ConvertCodexResponseToClaudeParams, blockType string) {
+	params.OpenBlockType = blockType
+	params.OpenBlockIndex = params.BlockIndex
+}
+
+func closeCodexClaudeContentBlock(params *ConvertCodexResponseToClaudeParams) string {
+	if params.OpenBlockType == "" {
+		return ""
+	}
+	template := `{"type":"content_block_stop","index":0}`
+	template, _ = sjson.Set(template, "index", params.OpenBlockIndex)
+	if params.BlockIndex <= params.OpenBlockIndex {
+		params.BlockIndex = params.OpenBlockIndex + 1
+	}
+	params.OpenBlockType = ""
+	params.OpenBlockIndex = 0
+	params.ActiveFunctionCallKeys = nil
+	params.HasReceivedArgumentsDelta = false
+	return "event: content_block_stop\n" + fmt.Sprintf("data: %s\n\n", template)
+}
+
+func codexClaudeFunctionArgumentsDelta(blockIndex int, arguments string) string {
+	template := `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}`
+	template, _ = sjson.Set(template, "index", blockIndex)
+	template, _ = sjson.Set(template, "delta.partial_json", arguments)
+	return "event: content_block_delta\n" + fmt.Sprintf("data: %s\n\n", template)
+}
+
+func codexClaudeFunctionCallKeys(rootResult, itemResult gjson.Result) map[string]struct{} {
+	keys := make(map[string]struct{}, 4)
+	if outputIndex := strings.TrimSpace(rootResult.Get("output_index").String()); outputIndex != "" {
+		keys["output:"+outputIndex] = struct{}{}
+	}
+	if itemID := strings.TrimSpace(rootResult.Get("item_id").String()); itemID != "" {
+		keys["item:"+itemID] = struct{}{}
+	}
+	if itemID := strings.TrimSpace(itemResult.Get("id").String()); itemID != "" {
+		keys["item:"+itemID] = struct{}{}
+	}
+	if callID := strings.TrimSpace(rootResult.Get("call_id").String()); callID != "" {
+		keys["call:"+callID] = struct{}{}
+	}
+	if callID := strings.TrimSpace(itemResult.Get("call_id").String()); callID != "" {
+		keys["call:"+callID] = struct{}{}
+	}
+	return keys
+}
+
+func codexClaudeFunctionCallMatches(params *ConvertCodexResponseToClaudeParams, eventKeys map[string]struct{}) bool {
+	if len(params.ActiveFunctionCallKeys) == 0 || len(eventKeys) == 0 {
+		return true
+	}
+	for _, prefix := range []string{"output:", "item:", "call:"} {
+		activeValue, activeOK := codexClaudeFunctionCallKeyValue(params.ActiveFunctionCallKeys, prefix)
+		eventValue, eventOK := codexClaudeFunctionCallKeyValue(eventKeys, prefix)
+		if activeOK && eventOK && activeValue != eventValue {
+			return false
+		}
+	}
+	return true
+}
+
+func codexClaudeFunctionCallKeyValue(keys map[string]struct{}, prefix string) (string, bool) {
+	for key := range keys {
+		if strings.HasPrefix(key, prefix) {
+			return key, true
+		}
+	}
+	return "", false
 }
 
 // ConvertCodexResponseToClaudeNonStream converts a non-streaming Codex response to a non-streaming Claude Code response.
@@ -303,14 +425,21 @@ func ConvertCodexResponseToClaudeNonStream(_ context.Context, _ string, original
 					}
 				}
 			case "function_call":
-				hasToolCall = true
-				name := item.Get("name").String()
+				name := strings.TrimSpace(item.Get("name").String())
 				if original, ok := revNames[name]; ok {
-					name = original
+					name = strings.TrimSpace(original)
 				}
+				callID := strings.TrimSpace(item.Get("call_id").String())
+				if callID == "" {
+					callID = strings.TrimSpace(item.Get("id").String())
+				}
+				if name == "" || callID == "" {
+					return true
+				}
+				hasToolCall = true
 
 				toolBlock := `{"type":"tool_use","id":"","name":"","input":{}}`
-				toolBlock, _ = sjson.Set(toolBlock, "id", item.Get("call_id").String())
+				toolBlock, _ = sjson.Set(toolBlock, "id", callID)
 				toolBlock, _ = sjson.Set(toolBlock, "name", name)
 				inputRaw := "{}"
 				if argsStr := item.Get("arguments").String(); argsStr != "" && gjson.Valid(argsStr) {
@@ -327,7 +456,11 @@ func ConvertCodexResponseToClaudeNonStream(_ context.Context, _ string, original
 	}
 
 	if stopReason := responseData.Get("stop_reason"); stopReason.Exists() && stopReason.String() != "" {
-		out, _ = sjson.Set(out, "stop_reason", stopReason.String())
+		if stopReason.String() == "tool_use" && !hasToolCall {
+			out, _ = sjson.Set(out, "stop_reason", "end_turn")
+		} else {
+			out, _ = sjson.Set(out, "stop_reason", stopReason.String())
+		}
 	} else if hasToolCall {
 		out, _ = sjson.Set(out, "stop_reason", "tool_use")
 	} else {

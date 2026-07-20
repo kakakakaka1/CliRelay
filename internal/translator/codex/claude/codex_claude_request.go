@@ -167,7 +167,7 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 
 	// Convert tools declarations to the expected format for the Codex API.
 	toolsResult := rootResult.Get("tools")
-	if toolsResult.IsArray() {
+	if toolsResult.IsArray() && len(toolsResult.Array()) > 0 {
 		// Codex validates deferred tools strictly: defer_loading requires tools.tool_search.
 		// Claude Code may set defer_loading on tools when tool schemas are deferred.
 		// The Codex endpoint we proxy to rejects defer_loading without tool_search, so strip the flag.

@@ -30,3 +30,20 @@ func TestConvertClaudeRequestToCodex_StripsDeferLoading(t *testing.T) {
 		return true
 	})
 }
+
+func TestConvertClaudeRequestToCodex_EmptyToolsOmitsToolChoice(t *testing.T) {
+	input := []byte(`{
+		"model":"claude-haiku-4-5",
+		"messages":[{"role":"user","content":"Create a title"}],
+		"tools":[],
+		"tool_choice":{"type":"auto"}
+	}`)
+
+	out := ConvertClaudeRequestToCodex("grok-4", input, false)
+	if gjson.GetBytes(out, "tool_choice").Exists() {
+		t.Fatalf("empty tools must not emit tool_choice: %s", out)
+	}
+	if tools := gjson.GetBytes(out, "tools"); tools.Exists() && len(tools.Array()) != 0 {
+		t.Fatalf("unexpected translated tools: %s", out)
+	}
+}
