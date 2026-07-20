@@ -211,6 +211,10 @@ func RecordQuotaSnapshotPointsIdentityForTenant(tenantID, authIndex, authSubject
 		return fmt.Errorf("usage: quota snapshot points commit: %w", err)
 	}
 	maybePruneQuotaSnapshots(tenantID)
+	// Dual-write shared subject quota so cross-tenant detail trend sees the same windows.
+	if authSubjectID != "" {
+		_ = RecordAIAccountSubjectQuotaPoints(authSubjectID, provider, points)
+	}
 	return nil
 }
 

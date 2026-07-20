@@ -135,6 +135,70 @@ func upsertAIAccountSubjectQuotaCycleTx(tx *sql.Tx, cycle AIAccountSubjectQuotaC
 	return nil
 }
 
+// QueryAIAccountSubjectQuotaSeries loads shared quota history for the detail trend chart.
+func QueryAIAccountSubjectQuotaSeries(authSubjectID string, start, end time.Time) ([]QuotaSnapshotSeries, error) {
+	db := getReadDB()
+	authSubjectID = strings.TrimSpace(authSubjectID)
+	if db == nil || authSubjectID == "" {
+		return []QuotaSnapshotSeries{}, nil
+	}
+	if start.IsZero() {
+		start = time.Now().AddDate(0, 0, -7)
+	}
+	if end.IsZero() {
+		end = time.Now()
+	}
+	rows, err := db.Query(`
+		SELECT recorded_at, provider, quota_key, quota_label, percent, reset_at, window_seconds
+		FROM ai_account_subject_quota_points
+		WHERE auth_subject_id = ? AND recorded_at >= ? AND recorded_at <= ?
+		ORDER BY recorded_at ASC, quota_key ASC
+	`, authSubjectID, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, fmt.Errorf("usage: shared subject quota series: %w", err)
+	}
+	defer rows.Close()
+
+	series := make([]QuotaSnapshotSeries, 0)
+	indexByKey := make(map[string]int)
+	for rows.Next() {
+		var recorded storedTime
+		var provider, quotaKey, quotaLabel string
+		var percent sql.NullFloat64
+		var reset storedTime
+		var windowSeconds int64
+		if err := rows.Scan(&recorded, &provider, &quotaKey, &quotaLabel, &percent, &reset, &windowSeconds); err != nil {
+			return nil, err
+		}
+		if !recorded.Valid {
+			continue
+		}
+		seriesKey := fmt.Sprintf("%s\x00%d", quotaKey, windowSeconds)
+		idx, ok := indexByKey[seriesKey]
+		if !ok {
+			idx = len(series)
+			series = append(series, QuotaSnapshotSeries{
+				QuotaKey:      quotaKey,
+				QuotaLabel:    quotaLabel,
+				WindowSeconds: windowSeconds,
+				Points:        []QuotaSnapshotSeriesPoint{},
+			})
+			indexByKey[seriesKey] = idx
+		}
+		point := QuotaSnapshotSeriesPoint{Timestamp: recorded.Time}
+		if percent.Valid {
+			v := percent.Float64
+			point.Percent = &v
+		}
+		if reset.Valid {
+			t := reset.Time
+			point.ResetAt = &t
+		}
+		series[idx].Points = append(series[idx].Points, point)
+	}
+	return series, rows.Err()
+}
+
 func QueryLatestAIAccountSubjectWeeklyCyclesBatch(subjectIDs []string, preferredKeys []string) (map[string]time.Time, error) {
 	db := getReadDB()
 	ids := dedupeExactStrings(subjectIDs)

@@ -40,6 +40,150 @@ func (s *Service) AuthFileTrend(authIndex string, days int, hours int) (int, any
 	if auth == nil {
 		return http.StatusNotFound, map[string]any{"error": "auth not found"}
 	}
+	// Always compute tenant-private logs (legacy empty-subject rows + same-tenant traffic).
+	status, payload := s.authFileTrendFromTenantLogs(authIndex, auth, days, hours)
+	if status != http.StatusOK {
+		return status, payload
+	}
+	tenantTrend, ok := payload.(AuthFileTrendResponse)
+	if !ok {
+		return status, payload
+	}
+	identity := usage.ResolveAuthSubjectIdentity(auth)
+	if identity == nil || !identity.ShareEligible || identity.ID == "" {
+		return status, tenantTrend
+	}
+	// Overlay shared subject projection so other tenants see the same physical account.
+	sharedStatus, sharedPayload := s.authFileTrendFromSharedSubject(authIndex, auth, identity.ID, days, hours)
+	if sharedStatus != http.StatusOK {
+		return status, tenantTrend
+	}
+	sharedTrend, ok := sharedPayload.(AuthFileTrendResponse)
+	if !ok {
+		return status, tenantTrend
+	}
+	return http.StatusOK, mergeAuthFileTrendShared(tenantTrend, sharedTrend)
+}
+
+// mergeAuthFileTrendShared prefers shared subject totals when they exceed tenant-private
+// logs (cross-tenant traffic), keeps richer tenant counts for same-tenant legacy aliases,
+// and always prefers non-empty shared quota series.
+func mergeAuthFileTrendShared(tenant, shared AuthFileTrendResponse) AuthFileTrendResponse {
+	out := tenant
+	if shared.CycleRequestTotal > tenant.CycleRequestTotal ||
+		(shared.CycleRequestTotal == tenant.CycleRequestTotal && shared.CycleCostTotal > tenant.CycleCostTotal) ||
+		(tenant.CycleRequestTotal == 0 && shared.RequestTotal > tenant.RequestTotal) {
+		out.CycleRequestTotal = shared.CycleRequestTotal
+		out.CycleCostTotal = shared.CycleCostTotal
+		if shared.RequestTotal > tenant.RequestTotal {
+			out.RequestTotal = shared.RequestTotal
+		}
+		if sumDailyRequests(shared.DailyUsage) > sumDailyRequests(tenant.DailyUsage) {
+			out.DailyUsage = shared.DailyUsage
+		}
+	}
+	if shared.CycleKnown && shared.CycleStart != "" {
+		out.CycleKnown = true
+		out.CycleStart = shared.CycleStart
+	}
+	if len(shared.QuotaSeries) > 0 {
+		out.QuotaSeries = shared.QuotaSeries
+		if shared.WeeklyQuotaUsed != nil {
+			out.WeeklyQuotaUsed = shared.WeeklyQuotaUsed
+		}
+	}
+	// Shared tables have no hourly buckets; keep tenant hourly when present.
+	if sumHourlyRequests(tenant.HourlyUsage) == 0 && sumHourlyRequests(shared.HourlyUsage) > 0 {
+		out.HourlyUsage = shared.HourlyUsage
+	}
+	return out
+}
+
+func sumDailyRequests(points []usage.DailyUsagePoint) int64 {
+	var total int64
+	for _, p := range points {
+		total += p.Requests
+	}
+	return total
+}
+
+func sumHourlyRequests(points []usage.HourlyUsagePoint) int64 {
+	var total int64
+	for _, p := range points {
+		total += p.Requests
+	}
+	return total
+}
+
+func (s *Service) authFileTrendFromSharedSubject(authIndex string, auth *coreauth.Auth, subjectID string, days, hours int) (int, any) {
+	preferredWeeklyQuotaKeys := primaryWeeklyQuotaKeysForProvider(auth.Provider)
+	trendStart := time.Now().AddDate(0, 0, -7)
+	trendEnd := time.Now().Add(time.Minute)
+
+	dailyRaw, err := usage.QueryAIAccountSubjectDailyUsage(subjectID, days)
+	if err != nil {
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+	}
+	daily := fillDailyUsagePoints(dailyRaw, days)
+	// No shared hourly buckets; avoid cross-tenant request_logs scans.
+	hourly := usage.EmptyHourlyUsageBuckets(hours)
+
+	series, err := usage.QueryAIAccountSubjectQuotaSeries(subjectID, trendStart, trendEnd)
+	if err != nil {
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+	}
+	if series == nil {
+		series = []usage.QuotaSnapshotSeries{}
+	}
+	weeklyQuotaUsed := latestWeeklyQuotaUsedPercent(series, preferredWeeklyQuotaKeys...)
+
+	cycleStarts, err := usage.QueryLatestAIAccountSubjectWeeklyCyclesBatch([]string{subjectID}, preferredWeeklyQuotaKeys)
+	if err != nil {
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+	}
+	cycleStart := cycleStarts[subjectID]
+	if cycleStart.IsZero() {
+		if weeklyCycleStart, ok := latestWeeklyQuotaCycleStart(series, preferredWeeklyQuotaKeys...); ok {
+			cycleStart = weeklyCycleStart
+		}
+	}
+
+	summaries, err := usage.QueryAIAccountSubjectUsageSummaries([]string{subjectID}, map[string]time.Time{subjectID: cycleStart})
+	if err != nil {
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+	}
+	summary := summaries[subjectID]
+	requestTotal := summary.RequestTotal7d
+	if days >= 30 {
+		requestTotal = summary.RequestTotal30d
+	}
+	cycleKnown := !cycleStart.IsZero() || summary.CycleKnown
+	cycleRequestTotal := summary.CycleRequestTotal
+	cycleCostTotal := summary.CycleCostTotal
+	cycleStartStr := ""
+	if !cycleStart.IsZero() {
+		cycleStartStr = cycleStart.UTC().Format(time.RFC3339)
+	} else if summary.CycleStart != "" {
+		cycleStartStr = summary.CycleStart
+	}
+
+	return http.StatusOK, AuthFileTrendResponse{
+		AuthIndex:         authIndex,
+		Days:              days,
+		Hours:             hours,
+		RequestTotal:      requestTotal,
+		CycleRequestTotal: cycleRequestTotal,
+		CycleCostTotal:    cycleCostTotal,
+		WeeklyQuotaUsed:   weeklyQuotaUsed,
+		CycleKnown:        cycleKnown,
+		CycleStart:        cycleStartStr,
+		DailyUsage:        daily,
+		HourlyUsage:       hourly,
+		QuotaSeries:       series,
+	}
+}
+
+func (s *Service) authFileTrendFromTenantLogs(authIndex string, auth *coreauth.Auth, days, hours int) (int, any) {
 	matcher := s.authSubjectMatcher(auth)
 	preferredWeeklyQuotaKeys := primaryWeeklyQuotaKeysForProvider(auth.Provider)
 

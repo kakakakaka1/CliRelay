@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
@@ -941,6 +942,130 @@ func TestGetAuthFileTrendUsesWeeklyResetCycleForRequestTotal(t *testing.T) {
 	}
 	if len(payload.QuotaSeries[0].Points) != 1 || payload.QuotaSeries[0].Points[0].Percent == nil || *payload.QuotaSeries[0].Points[0].Percent != 93 {
 		t.Fatalf("quota point = %+v, want one 93%% point", payload.QuotaSeries[0].Points)
+	}
+}
+
+func TestGetAuthFileTrendSharesCycleAcrossTenantsForStableAccountID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		usage.CloseDB()
+		_ = os.Remove(dbPath)
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+	})
+
+	const (
+		tenantA = "11111111-1111-1111-1111-111111111111"
+		tenantB = "22222222-2222-2222-2222-222222222222"
+	)
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	authA, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "codex-shared-a",
+		TenantID: tenantA,
+		FileName: "a.json",
+		Provider: "codex",
+		Label:    "Shared A",
+		Metadata: map[string]any{"account_id": "acct-shared-trend", "email": "tyktgyk@gmail.com"},
+	})
+	if err != nil {
+		t.Fatalf("register auth A: %v", err)
+	}
+	authB, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "codex-shared-b",
+		TenantID: tenantB,
+		FileName: "b.json",
+		Provider: "codex",
+		Label:    "Shared B",
+		Metadata: map[string]any{"account_id": "acct-shared-trend", "email": "tyktgyk@gmail.com"},
+	})
+	if err != nil {
+		t.Fatalf("register auth B: %v", err)
+	}
+	identityA := usage.ResolveAuthSubjectIdentity(authA)
+	identityB := usage.ResolveAuthSubjectIdentity(authB)
+	if identityA == nil || identityB == nil || identityA.ID != identityB.ID || !identityA.ShareEligible {
+		t.Fatalf("expected shared subject, got A=%+v B=%+v", identityA, identityB)
+	}
+	if err := usage.UpsertAIAccountTenantBinding(authA, identityA); err != nil {
+		t.Fatal(err)
+	}
+	if err := usage.UpsertAIAccountTenantBinding(authB, identityB); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	resetAt := now.Add(4 * 24 * time.Hour)
+	cycleStart := resetAt.Add(-7 * 24 * time.Hour)
+	if err := usage.UpsertModelPricing("gpt-5.4", 1, 2, 0); err != nil {
+		t.Fatalf("UpsertModelPricing: %v", err)
+	}
+	// Cycle cache must exist before request projection writes cycle buckets.
+	remaining := 93.0
+	if err := usage.RecordQuotaSnapshotPointsIdentityForTenant(tenantA, authA.Index, identityA.ID, "codex", []usage.QuotaSnapshotPoint{{
+		RecordedAt: now, QuotaKey: "code_week", QuotaLabel: "Weekly",
+		Percent: &remaining, ResetAt: &resetAt, WindowSeconds: 604800,
+	}}); err != nil {
+		t.Fatalf("record quota: %v", err)
+	}
+	// Only tenant A has request logs; B must still see shared cycle totals.
+	usage.InsertLogWithDetailsIdentitySubject("sk-a", "", identityA.ID, "A", "gpt-5.4", "codex", "A", authA.Index, false, cycleStart.Add(time.Hour), 1, 1, usage.TokenStats{
+		InputTokens: 1000, OutputTokens: 2000, TotalTokens: 3000,
+	}, "", "", "")
+	usage.InsertLogWithDetailsIdentitySubject("sk-a", "", identityA.ID, "A", "gpt-5.4", "codex", "A", authA.Index, false, now, 1, 1, usage.TokenStats{
+		InputTokens: 1000, OutputTokens: 1000, TotalTokens: 2000,
+	}, "", "", "")
+
+	h := &Handler{cfg: &config.Config{}, authManager: manager}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Set(managementPrincipalKey, identity.Principal{EffectiveTenant: identity.Tenant{ID: tenantB}})
+	c.Request = httptest.NewRequest(http.MethodGet, "/usage/auth-file-trend?auth_index="+authB.Index+"&days=7&hours=5", nil)
+	h.UsageLogs().GetAuthFileTrend(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		CycleRequestTotal int64    `json:"cycle_request_total"`
+		CycleCostTotal    float64  `json:"cycle_cost_total"`
+		RequestTotal      int64    `json:"request_total"`
+		WeeklyQuotaUsed   *float64 `json:"weekly_quota_used_percent"`
+		CycleKnown        bool     `json:"cycle_known"`
+		CycleStart        string   `json:"cycle_start"`
+		QuotaSeries       []struct {
+			QuotaKey string `json:"quota_key"`
+			Points   []struct {
+				Percent *float64 `json:"percent"`
+			} `json:"points"`
+		} `json:"quota_series"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !payload.CycleKnown || payload.CycleRequestTotal != 2 {
+		t.Fatalf("tenant B cycle = known=%v total=%d, want 2 shared requests", payload.CycleKnown, payload.CycleRequestTotal)
+	}
+	if math.Abs(payload.CycleCostTotal-0.008) > 1e-12 {
+		t.Fatalf("tenant B cycle_cost_total=%v, want 0.008", payload.CycleCostTotal)
+	}
+	if payload.RequestTotal != 2 {
+		t.Fatalf("tenant B request_total=%d, want 2", payload.RequestTotal)
+	}
+	if payload.CycleStart != cycleStart.Format(time.RFC3339) {
+		t.Fatalf("cycle_start=%q want %q", payload.CycleStart, cycleStart.Format(time.RFC3339))
+	}
+	if payload.WeeklyQuotaUsed == nil || math.Abs(*payload.WeeklyQuotaUsed-7) > 1e-12 {
+		t.Fatalf("weekly_quota_used=%v, want 7", payload.WeeklyQuotaUsed)
+	}
+	if len(payload.QuotaSeries) != 1 || len(payload.QuotaSeries[0].Points) != 1 {
+		t.Fatalf("quota_series=%+v", payload.QuotaSeries)
 	}
 }
 

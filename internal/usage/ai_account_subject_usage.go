@@ -98,6 +98,64 @@ func projectAIAccountSubjectUsageTx(tx *sql.Tx, authSubjectID string, failed boo
 	return nil
 }
 
+// QueryAIAccountSubjectDailyUsage returns day buckets for one shared subject (no tenant filter).
+func QueryAIAccountSubjectDailyUsage(authSubjectID string, days int) ([]DailyUsagePoint, error) {
+	db := getReadDB()
+	authSubjectID = strings.TrimSpace(authSubjectID)
+	if db == nil || authSubjectID == "" {
+		return []DailyUsagePoint{}, nil
+	}
+	if days < 1 {
+		days = 7
+	}
+	loc := getUsageLocation()
+	start := time.Now().In(loc).AddDate(0, 0, -(days - 1)).Format("2006-01-02")
+	rows, err := db.Query(`
+		SELECT bucket_start, request_count, cost_total
+		FROM ai_account_subject_usage_buckets
+		WHERE auth_subject_id = ? AND bucket_kind = 'day' AND bucket_start >= ?
+		ORDER BY bucket_start ASC
+	`, authSubjectID, start)
+	if err != nil {
+		return nil, fmt.Errorf("usage: shared subject daily usage: %w", err)
+	}
+	defer rows.Close()
+	out := make([]DailyUsagePoint, 0, days)
+	for rows.Next() {
+		var point DailyUsagePoint
+		if err := rows.Scan(&point.Date, &point.Requests, &point.Cost); err != nil {
+			return nil, err
+		}
+		point.Date = strings.TrimSpace(point.Date)
+		if point.Date == "" {
+			continue
+		}
+		out = append(out, point)
+	}
+	return out, rows.Err()
+}
+
+// EmptyHourlyUsageBuckets returns a zero-filled hourly window in the usage timezone.
+// Shared subject tables have day/cycle/lifetime only; detail charts use zeros for hours.
+func EmptyHourlyUsageBuckets(hours int) []HourlyUsagePoint {
+	if hours < 1 {
+		hours = 5
+	}
+	if hours > 24 {
+		hours = 24
+	}
+	loc := getUsageLocation()
+	now := time.Now().In(loc).Truncate(time.Hour)
+	start := now.Add(-time.Duration(hours-1) * time.Hour)
+	out := make([]HourlyUsagePoint, 0, hours)
+	for i := 0; i < hours; i++ {
+		out = append(out, HourlyUsagePoint{
+			Hour: start.Add(time.Duration(i) * time.Hour).Format("2006-01-02 15:00"),
+		})
+	}
+	return out
+}
+
 func QueryAIAccountSubjectUsageSummaries(subjectIDs []string, cycleStartBySubject map[string]time.Time) (map[string]AuthSubjectUsageSummary, error) {
 	db := getReadDB()
 	ids := dedupeExactStrings(subjectIDs)
@@ -173,7 +231,7 @@ func QueryAIAccountSubjectUsageSummaries(subjectIDs []string, cycleStartBySubjec
 		var requestTotal, successTotal, failureTotal int64
 		var costTotal float64
 		var first, updated, projected sql.NullString
-		var complete bool
+		var complete sql.NullBool
 		if err := lifeRows.Scan(&id, &requestTotal, &successTotal, &failureTotal, &costTotal, &first, &updated, &projected, &complete); err != nil {
 			lifeRows.Close()
 			return nil, err
@@ -193,7 +251,7 @@ func QueryAIAccountSubjectUsageSummaries(subjectIDs []string, cycleStartBySubjec
 		if s.ProjectedSince == nil {
 			s.ProjectedSince = parseNullableTime(first)
 		}
-		s.HistoryComplete = complete
+		s.HistoryComplete = complete.Valid && complete.Bool
 		if t, ok := parseStoredTimeString(updated.String); ok && t.After(s.UpdatedAt) {
 			s.UpdatedAt = t
 		}
