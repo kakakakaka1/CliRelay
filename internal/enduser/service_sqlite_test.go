@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -97,6 +98,17 @@ func TestDeleteKeyPromotesDefaultOnSQLite(t *testing.T) {
 	}
 	if !keys[0].IsDefault {
 		t.Fatal("remaining key must be promoted to default")
+	}
+	var disabled int
+	var storedSecret string
+	if err := db.QueryRow(`SELECT disabled, key FROM api_keys WHERE tenant_id = ? AND id = ?`, tenantID, first.APIKey.ID).Scan(&disabled, &storedSecret); err != nil {
+		t.Fatalf("query soft-deleted key: %v", err)
+	}
+	if disabled != 1 {
+		t.Fatalf("disabled = %d, want 1", disabled)
+	}
+	if storedSecret == first.PlaintextKey || !strings.HasPrefix(storedSecret, "sk-deleted-") {
+		t.Fatalf("soft-deleted secret not invalidated: %q", storedSecret)
 	}
 	if err := svc.DeleteKey(ctx, tenantID, userID, keys[0].ID); !errors.Is(err, ErrLastKey) {
 		t.Fatalf("delete last key err = %v, want ErrLastKey", err)

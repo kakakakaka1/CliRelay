@@ -2,6 +2,7 @@ package apikey
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -185,6 +186,17 @@ func TestOwnedKeyMutationsKeepOneActiveDefault(t *testing.T) {
 	}
 	if got := store.GetByID("default-b"); got == nil || got.Disabled || !got.IsDefault {
 		t.Fatalf("remaining active key was not promoted: %#v", got)
+	}
+
+	// DeleteByID on owned key soft-deletes and invalidates the secret.
+	if err := store.DeleteByID("default-a"); err != nil {
+		t.Fatalf("DeleteByID owned: %v", err)
+	}
+	if got := store.GetByID("default-a"); got == nil || !got.Disabled || got.Key == "sk-default-a" || !strings.HasPrefix(got.Key, "sk-deleted-") {
+		t.Fatalf("soft-deleted owned key secret not invalidated: %#v", got)
+	}
+	if got := store.Get("sk-default-a"); got != nil {
+		t.Fatalf("old secret still resolvable after soft delete: %#v", got)
 	}
 
 	rows := store.List()

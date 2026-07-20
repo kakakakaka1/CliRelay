@@ -1,7 +1,9 @@
 package apikey
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -110,6 +112,12 @@ func InitTable(db *sql.DB) {
 	migrateColumns(db)
 	backfillIDs(db)
 	backfillNames(db)
+	// One-time repair: soft-delete used to leave the original secret in place.
+	// Tombstone those rows so deleted keys cannot be re-enabled and reused.
+	// Intentional disable (power toggle) is the same disabled=1 bit; after this
+	// repair, only DELETE path tombstones. Operators who only disabled a key
+	// lose re-enable-with-same-secret once — create a new key instead.
+	tombstoneStaleDisabledOwnedSecrets(db)
 }
 
 func BackfillNames(db *sql.DB) {
@@ -610,19 +618,24 @@ func (s Store) deleteOwnedGuarded(where string, arg string) error {
 		ownerID = strings.TrimSpace(endUserID.String)
 	}
 	if ownerID != "" {
-		if disabledInt != 0 {
-			return nil
-		}
 		if err = lockOwnedEndUser(tx, ownerID); err != nil {
 			return err
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if ownerID != "" {
+		// Soft-delete keeps the row (stable id → request_logs ownership) but
+		// permanently invalidates the secret so the deleted key can never auth
+		// again, including via accidental re-enable. Also covers "disabled then
+		// deleted" so a prior toggle-disable cannot leave a reusable secret.
+		tombstone, genErr := newTombstoneSecret()
+		if genErr != nil {
+			return genErr
+		}
 		if _, err = tx.Exec(`
-			UPDATE api_keys SET disabled = 1, is_default = false, updated_at = ?
+			UPDATE api_keys SET key = ?, disabled = 1, is_default = false, updated_at = ?
 			WHERE tenant_id = ? AND id = ?
-		`, now, s.tenantID, keyID); err != nil {
+		`, tombstone, now, s.tenantID, keyID); err != nil {
 			return err
 		}
 		if err = ensureOwnedActiveKeyAndDefault(tx, s.tenantID, ownerID, now); err != nil {
@@ -632,6 +645,16 @@ func (s Store) deleteOwnedGuarded(where string, arg string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// newTombstoneSecret returns a unique unusable secret for soft-deleted owned keys.
+// api_keys.key is globally UNIQUE, so each tombstone must differ.
+func newTombstoneSecret() (string, error) {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return "sk-deleted-" + hex.EncodeToString(raw), nil
 }
 
 func (s Store) Delete(key string) error {
@@ -858,6 +881,68 @@ func migrateColumns(db *sql.DB) {
 	}
 	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key)"); err != nil {
 		log.Warnf("sqlite/apikey: ensure api_keys key index: %v", err)
+	}
+}
+
+// tombstoneStaleDisabledOwnedSecrets invalidates secrets for already soft-deleted
+// owned keys that still hold their original plaintext (pre-fix rows).
+func tombstoneStaleDisabledOwnedSecrets(db *sql.DB) {
+	if db == nil {
+		return
+	}
+	rows, err := db.Query(`
+		SELECT id FROM api_keys
+		WHERE disabled != 0
+		  AND end_user_id IS NOT NULL AND trim(end_user_id) != ''
+		  AND key NOT LIKE 'sk-deleted-%'
+	`)
+	if err != nil {
+		log.Warnf("sqlite/apikey: list stale disabled owned secrets: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			log.Warnf("sqlite/apikey: scan stale disabled owned secret: %v", err)
+			return
+		}
+		id = strings.TrimSpace(id)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Warnf("sqlite/apikey: iterate stale disabled owned secrets: %v", err)
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	fixed := 0
+	for _, id := range ids {
+		tombstone, genErr := newTombstoneSecret()
+		if genErr != nil {
+			log.Warnf("sqlite/apikey: tombstone secret: %v", genErr)
+			return
+		}
+		res, execErr := db.Exec(`
+			UPDATE api_keys SET key = ?, is_default = false, updated_at = ?
+			WHERE id = ? AND disabled != 0 AND key NOT LIKE 'sk-deleted-%'
+		`, tombstone, now, id)
+		if execErr != nil {
+			log.Warnf("sqlite/apikey: tombstone owned secret id=%s: %v", id, execErr)
+			continue
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			fixed++
+		}
+	}
+	if fixed > 0 {
+		log.Infof("sqlite/apikey: invalidated secrets for %d soft-deleted owned keys", fixed)
 	}
 }
 

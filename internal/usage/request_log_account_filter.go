@@ -114,6 +114,11 @@ func accountFilterRepresentatives(tenantID string) (repByEndUser map[string]stri
 	nameByEndUser = make(map[string]string)
 	defaultPicked := make(map[string]bool)
 	for _, row := range rows {
+		if row.Disabled {
+			// Soft-deleted keys retain ownership for log collapse, but must not
+			// become the account filter representative value.
+			continue
+		}
 		eu := strings.TrimSpace(row.EndUserID)
 		if eu == "" {
 			continue

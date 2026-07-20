@@ -1101,12 +1101,39 @@ func (s *Service) DeleteKey(ctx context.Context, tenantID, endUserID, keyID stri
 		}
 	}
 	var isDefault bool
-	err = tx.QueryRowContext(ctx, `SELECT COALESCE(is_default, false) FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND id = ? AND disabled = 0`, tenantID, endUserID, keyID).Scan(&isDefault)
+	var disabledInt int
+	var currentKey string
+	err = tx.QueryRowContext(ctx, `
+		SELECT COALESCE(is_default, false), disabled, key
+		FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND id = ?
+	`, tenantID, endUserID, keyID).Scan(&isDefault, &disabledInt, &currentKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	// Soft-delete keeps the row (stable id → request_logs ownership) but
+	// permanently invalidates the secret so the deleted key can never auth
+	// again, including via accidental re-enable in management UI.
+	needTombstone := !strings.HasPrefix(strings.TrimSpace(currentKey), "sk-deleted-")
+	if disabledInt != 0 {
+		// Already soft-deleted/disabled: only ensure secret is tombstoned.
+		if needTombstone {
+			tombstone, genErr := GenerateAPIKey()
+			if genErr != nil {
+				return genErr
+			}
+			tombstone = "sk-deleted-" + strings.TrimPrefix(tombstone, "sk-")
+			if _, err = tx.ExecContext(ctx, `
+				UPDATE api_keys SET key = ?, is_default = false, updated_at = ?
+				WHERE tenant_id = ? AND end_user_id = ? AND id = ?
+			`, tombstone, now, tenantID, endUserID, keyID); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
 	}
 	var count int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND end_user_id = ? AND disabled = 0`, tenantID, endUserID).Scan(&count); err != nil {
@@ -1115,11 +1142,16 @@ func (s *Service) DeleteKey(ctx context.Context, tenantID, endUserID, keyID stri
 	if count <= 1 {
 		return ErrLastKey
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	tombstone, genErr := GenerateAPIKey()
+	if genErr != nil {
+		return genErr
+	}
+	// Prefix makes tombstones obvious in DB; still unique via random suffix.
+	tombstone = "sk-deleted-" + strings.TrimPrefix(tombstone, "sk-")
 	if _, err = tx.ExecContext(ctx, `
-		UPDATE api_keys SET disabled = 1, is_default = false, updated_at = ?
+		UPDATE api_keys SET key = ?, disabled = 1, is_default = false, updated_at = ?
 		WHERE tenant_id = ? AND end_user_id = ? AND id = ? AND disabled = 0
-	`, now, tenantID, endUserID, keyID); err != nil {
+	`, tombstone, now, tenantID, endUserID, keyID); err != nil {
 		return err
 	}
 	if isDefault {

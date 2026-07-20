@@ -274,7 +274,18 @@ func (s *Service) ListEntries() []config.APIKeyEntry {
 // ListEntriesWithDailySpending lists keys and attaches effective daily spending fields.
 // Query failures return an error so management handlers do not silently show $0.
 func (s *Service) ListEntriesWithDailySpending() ([]config.APIKeyEntry, error) {
-	rows := usage.EffectiveAPIKeyRowsForTenant(s.tenantID, usage.ListAPIKeysForTenant(s.tenantID))
+	all := usage.ListAPIKeysForTenant(s.tenantID)
+	// Soft-deleted owned keys keep a sk-deleted-* tombstone secret for log
+	// ownership; hide them from management lists. Intentional disable (same
+	// secret, disabled=1) still appears so operators can re-enable.
+	visible := make([]usage.APIKeyRow, 0, len(all))
+	for _, row := range all {
+		if row.Disabled && strings.TrimSpace(row.EndUserID) != "" && strings.HasPrefix(strings.TrimSpace(row.Key), "sk-deleted-") {
+			continue
+		}
+		visible = append(visible, row)
+	}
+	rows := usage.EffectiveAPIKeyRowsForTenant(s.tenantID, visible)
 	entries := make([]config.APIKeyEntry, 0, len(rows))
 	for _, row := range rows {
 		entries = append(entries, row.ToConfigEntry())
@@ -438,6 +449,10 @@ func (s *Service) PatchEntry(id *string, index *int, match *string, patch EntryP
 		entry.Name = strings.TrimSpace(*patch.Name)
 	}
 	if patch.Disabled != nil {
+		// Tombstoned owned secrets are permanently revoked; never re-enable them.
+		if !*patch.Disabled && strings.HasPrefix(strings.TrimSpace(existing.Key), "sk-deleted-") {
+			return ErrItemNotFound
+		}
 		entry.Disabled = *patch.Disabled
 	}
 	if patch.PermissionProfileID != nil {

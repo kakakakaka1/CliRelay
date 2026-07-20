@@ -1978,6 +1978,80 @@ func TestQueryFiltersCollapsesOwnedKeysToOneAccountOption(t *testing.T) {
 	}
 }
 
+func TestQueryFiltersUsesActiveRepAfterSoftDeletedOwnedKey(t *testing.T) {
+	// Soft-deleted owned keys stay in api_keys for log ownership, but the
+	// account filter representative must be an active secret, never a tombstone.
+	initTestUsageDB(t, config.RequestLogStorageConfig{})
+	db := getDB()
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS end_users (
+			id TEXT PRIMARY KEY,
+			tenant_id TEXT NOT NULL,
+			username TEXT NOT NULL,
+			username_normalized TEXT NOT NULL,
+			display_name TEXT NOT NULL,
+			password_hash TEXT NOT NULL DEFAULT 'x',
+			status TEXT NOT NULL DEFAULT 'active',
+			permission_profile_id TEXT NOT NULL DEFAULT '',
+			daily_limit INTEGER NOT NULL DEFAULT 0,
+			total_quota INTEGER NOT NULL DEFAULT 0,
+			spending_limit REAL NOT NULL DEFAULT 0,
+			daily_spending_limit REAL NOT NULL DEFAULT 0,
+			concurrency_limit INTEGER NOT NULL DEFAULT 0,
+			rpm_limit INTEGER NOT NULL DEFAULT 0,
+			tpm_limit INTEGER NOT NULL DEFAULT 0,
+			allowed_models TEXT NOT NULL DEFAULT '[]',
+			allowed_channels TEXT NOT NULL DEFAULT '[]',
+			allowed_channel_groups TEXT NOT NULL DEFAULT '[]',
+			system_prompt TEXT NOT NULL DEFAULT ''
+		)
+	`); err != nil {
+		t.Fatalf("create end_users: %v", err)
+	}
+	endUserID := "eu-soft-del"
+	if _, err := db.Exec(`
+		INSERT INTO end_users (id, tenant_id, username, username_normalized, display_name)
+		VALUES (?, ?, 'lyding', 'lyding', 'LYDing')
+	`, endUserID, systemTenantID); err != nil {
+		t.Fatalf("insert end user: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := UpsertAPIKey(APIKeyRow{
+		TenantID: systemTenantID, ID: "key-dead", Key: "sk-deleted-old", Name: "LYDing",
+		EndUserID: endUserID, Disabled: true, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert dead: %v", err)
+	}
+	if err := UpsertAPIKey(APIKeyRow{
+		TenantID: systemTenantID, ID: "key-live", Key: "sk-live-new", Name: "LYDing1",
+		EndUserID: endUserID, IsDefault: true, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert live: %v", err)
+	}
+	ts := time.Now().UTC()
+	InsertLogWithDetailsIdentity("sk-old-plain", "key-dead", "LYDing", "gpt-a", "src", "ch", "a1", false, ts, 1, 1, TokenStats{TotalTokens: 1}, "", "", "")
+	InsertLogWithDetailsIdentity("sk-live-new", "key-live", "LYDing1", "gpt-b", "src", "ch", "a2", false, ts.Add(time.Second), 1, 1, TokenStats{TotalTokens: 1}, "", "", "")
+
+	filters, err := QueryFilters(7)
+	if err != nil {
+		t.Fatalf("QueryFilters: %v", err)
+	}
+	if len(filters.APIKeys) != 1 {
+		t.Fatalf("filters.APIKeys = %#v, want one account option", filters.APIKeys)
+	}
+	if filters.APIKeys[0] != "sk-live-new" {
+		t.Fatalf("representative = %q, want sk-live-new (active)", filters.APIKeys[0])
+	}
+	if filters.APIKeyNames["sk-live-new"] != "LYDing" {
+		t.Fatalf("filter name = %q, want account display LYDing not key name", filters.APIKeyNames["sk-live-new"])
+	}
+	for _, name := range filters.APIKeyNames {
+		if name == "LYDing1" {
+			t.Fatalf("filters leaked key name LYDing1: %#v", filters.APIKeyNames)
+		}
+	}
+}
+
 func TestQueryAPIKeyDistributionMergesRawAndIDGroupsForSameKey(t *testing.T) {
 	// Production shape: some request_logs carry api_key_id, older rows for the
 	// same secret only have api_key. Distribution must merge into one point so

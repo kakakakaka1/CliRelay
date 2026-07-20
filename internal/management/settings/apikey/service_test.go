@@ -332,6 +332,56 @@ func TestDeleteEntryByIndexDeletesLogsWhenRequested(t *testing.T) {
 	}
 }
 
+func TestListEntriesHidesSoftDeletedOwnedKeys(t *testing.T) {
+	setupTestDB(t)
+	svc := NewService(nil)
+	if err := usage.UpsertAPIKey(usage.APIKeyRow{
+		ID: "owned-active", Key: "sk-owned-active", Name: "active", EndUserID: "eu-1",
+	}); err != nil {
+		t.Fatalf("UpsertAPIKey(active): %v", err)
+	}
+	if err := usage.UpsertAPIKey(usage.APIKeyRow{
+		ID: "owned-tombstone", Key: "sk-deleted-abc", Name: "dead", EndUserID: "eu-1", Disabled: true,
+	}); err != nil {
+		t.Fatalf("UpsertAPIKey(tombstone): %v", err)
+	}
+	if err := usage.UpsertAPIKey(usage.APIKeyRow{
+		ID: "owned-disabled", Key: "sk-owned-disabled", Name: "paused", EndUserID: "eu-1", Disabled: true,
+	}); err != nil {
+		t.Fatalf("UpsertAPIKey(disabled): %v", err)
+	}
+	if err := usage.UpsertAPIKey(usage.APIKeyRow{
+		ID: "solo-disabled", Key: "sk-solo-disabled", Name: "solo", Disabled: true,
+	}); err != nil {
+		t.Fatalf("UpsertAPIKey(solo): %v", err)
+	}
+
+	entries, err := svc.ListEntriesWithDailySpending()
+	if err != nil {
+		t.Fatalf("ListEntriesWithDailySpending: %v", err)
+	}
+	foundTombstone, foundDisabled, foundActive, foundSolo := false, false, false, false
+	for _, e := range entries {
+		switch e.Key {
+		case "sk-deleted-abc":
+			foundTombstone = true
+		case "sk-owned-disabled":
+			foundDisabled = true
+		case "sk-owned-active":
+			foundActive = true
+		case "sk-solo-disabled":
+			foundSolo = true
+		}
+	}
+	if foundTombstone {
+		t.Fatalf("ListEntries leaked tombstoned owned key: %#v", entries)
+	}
+	if !foundDisabled || !foundActive || !foundSolo {
+		t.Fatalf("ListEntries missing expected keys: disabled=%v active=%v solo=%v entries=%#v",
+			foundDisabled, foundActive, foundSolo, entries)
+	}
+}
+
 func TestListEntriesAttachesDailySpendingRuntime(t *testing.T) {
 	setupTestDB(t)
 	svc := NewService(nil)

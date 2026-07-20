@@ -76,7 +76,12 @@ func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any,
 	if filters.APIKeyNames == nil {
 		filters.APIKeyNames = make(map[string]string, len(filters.APIKeys))
 	}
+	// Prefer account display names already resolved by queryDistinctAPIKeys.
+	// Only fill gaps from keyNameMap; never overwrite end-user labels with key names.
 	for _, key := range filters.APIKeys {
+		if strings.TrimSpace(filters.APIKeyNames[key]) != "" {
+			continue
+		}
 		if name, ok := maps.keyNameMap[key]; ok {
 			filters.APIKeyNames[key] = name
 		}
@@ -859,8 +864,20 @@ func (s *Service) buildNameMaps() nameMaps {
 	}
 
 	for _, row := range apikeysettings.NewService(nil, apikeysettings.WithTenantID(s.tenantID)).ListRows() {
-		if row.Key != "" && row.Name != "" {
-			maps.keyNameMap[row.Key] = row.Name
+		key := strings.TrimSpace(row.Key)
+		if key == "" {
+			continue
+		}
+		// Owned multi-key accounts: filter/list labels are end-user display names,
+		// never the individual key name (e.g. LYDing1 must not appear as a user).
+		if eu := strings.TrimSpace(row.EndUserID); eu != "" {
+			if label := usage.DisplayNameForEndUser(eu); label != "" {
+				maps.keyNameMap[key] = label
+				continue
+			}
+		}
+		if name := strings.TrimSpace(row.Name); name != "" {
+			maps.keyNameMap[key] = name
 		}
 	}
 

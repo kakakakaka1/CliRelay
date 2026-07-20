@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,8 +123,15 @@ func TestSoftDeletedOwnedKeyKeepsAccountHistory(t *testing.T) {
 	if err := db.QueryRow(`SELECT disabled, end_user_id, key FROM api_keys WHERE tenant_id = ? AND id = ?`, tenantID, first.APIKey.ID).Scan(&disabled, &ownerID, &storedSecret); err != nil {
 		t.Fatalf("query soft-deleted key: %v", err)
 	}
-	if disabled != 1 || ownerID != userID || storedSecret != first.PlaintextKey {
-		t.Fatalf("soft-deleted row = disabled:%d owner:%q secret:%q", disabled, ownerID, storedSecret)
+	if disabled != 1 || ownerID != userID {
+		t.Fatalf("soft-deleted row = disabled:%d owner:%q", disabled, ownerID)
+	}
+	// Deleted secret must be permanently invalidated (not the original plaintext).
+	if storedSecret == first.PlaintextKey {
+		t.Fatalf("soft-deleted secret still equals original plaintext")
+	}
+	if !strings.HasPrefix(storedSecret, "sk-deleted-") {
+		t.Fatalf("soft-deleted secret = %q, want sk-deleted- prefix", storedSecret)
 	}
 
 	params := usage.LogQueryParams{TenantID: tenantID, EndUserID: userID, Page: 1, Size: 20, Days: 1}
