@@ -195,9 +195,8 @@ func runUsageRollupBackfillAtInitDB(db *sql.DB, loc *time.Location, finalMarker 
 	if finalMarker != rollupMarkerPending && finalMarker != rollupMarkerDone {
 		finalMarker = rollupMarkerPending
 	}
-	if loc == nil {
-		loc = time.Local
-	}
+	// Day keys use process usageLoc (set by InitDB/InitPostgres); keep param for call-site clarity.
+	_ = loc
 
 	// Exclusive rebuild: re-check marker under lock so concurrent finalizers cannot
 	// double-DELETE after the first writer already marked done and cleanup ran.
