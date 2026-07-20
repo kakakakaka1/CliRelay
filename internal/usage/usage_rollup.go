@@ -476,10 +476,8 @@ func resolveEndUserIDForKey(apiKey string) string {
 }
 
 // commitLogWithProjections writes AI-account daily + generic rollup then commits.
+// Caller must already hold usageProjectionMu.RLock (see insertLogIdentity).
 func commitLogWithProjections(tx *sql.Tx, ev rollupEvent) error {
-	// Shared lock: exclusive rebuilds (blue-green catch-up) must not interleave.
-	usageProjectionMu.RLock()
-	defer usageProjectionMu.RUnlock()
 	if err := projectUsageRollupTx(tx, ev); err != nil {
 		_ = tx.Rollback()
 		return err

@@ -900,6 +900,11 @@ func insertLogIdentity(apiKey, apiKeyID, authSubjectID, apiKeyName, model, upstr
 		endUserID = strings.TrimSpace(row.EndUserID)
 	}
 
+	// Shared projection lock before opening a DB tx so exclusive rebuilds never
+	// leave writers holding connections while waiting on the mutex (pool deadlock).
+	usageProjectionMu.RLock()
+	defer usageProjectionMu.RUnlock()
+
 	// 插入 request log 的事务由 usage 存储层统一拥有，不从外部 HTTP 请求透传 context，
 	// 以避免请求取消把已经选定要持久化的审计记录中断在半途。
 	tx, err := db.BeginTx(context.Background(), nil)
