@@ -1039,7 +1039,12 @@ func TestGetAuthFileTrendSharesCycleAcrossTenantsForStableAccountID(t *testing.T
 		WeeklyQuotaUsed   *float64 `json:"weekly_quota_used_percent"`
 		CycleKnown        bool     `json:"cycle_known"`
 		CycleStart        string   `json:"cycle_start"`
-		QuotaSeries       []struct {
+		HourlyUsage       []struct {
+			Hour     string  `json:"hour"`
+			Requests int64   `json:"requests"`
+			Cost     float64 `json:"cost"`
+		} `json:"hourly_usage"`
+		QuotaSeries []struct {
 			QuotaKey string `json:"quota_key"`
 			Points   []struct {
 				Percent *float64 `json:"percent"`
@@ -1066,6 +1071,13 @@ func TestGetAuthFileTrendSharesCycleAcrossTenantsForStableAccountID(t *testing.T
 	}
 	if len(payload.QuotaSeries) != 1 || len(payload.QuotaSeries[0].Points) != 1 {
 		t.Fatalf("quota_series=%+v", payload.QuotaSeries)
+	}
+	var hourlyRequests int64
+	for _, point := range payload.HourlyUsage {
+		hourlyRequests += point.Requests
+	}
+	if hourlyRequests < 1 {
+		t.Fatalf("tenant B hourly_usage requests=%d, want shared recent hours from tenant A", hourlyRequests)
 	}
 }
 

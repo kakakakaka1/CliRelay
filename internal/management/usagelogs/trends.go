@@ -92,8 +92,8 @@ func mergeAuthFileTrendShared(tenant, shared AuthFileTrendResponse) AuthFileTren
 			out.WeeklyQuotaUsed = shared.WeeklyQuotaUsed
 		}
 	}
-	// Shared tables have no hourly buckets; keep tenant hourly when present.
-	if sumHourlyRequests(tenant.HourlyUsage) == 0 && sumHourlyRequests(shared.HourlyUsage) > 0 {
+	// Prefer richer shared hourly (all tenants); keep tenant-only when shared empty.
+	if sumHourlyRequests(shared.HourlyUsage) > sumHourlyRequests(tenant.HourlyUsage) {
 		out.HourlyUsage = shared.HourlyUsage
 	}
 	return out
@@ -125,8 +125,14 @@ func (s *Service) authFileTrendFromSharedSubject(authIndex string, auth *coreaut
 		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 	daily := fillDailyUsagePoints(dailyRaw, days)
-	// No shared hourly buckets; avoid cross-tenant request_logs scans.
-	hourly := usage.EmptyHourlyUsageBuckets(hours)
+	// Shared day buckets have no hour grain; aggregate recent hours by subject across tenants.
+	hourly, err := usage.QueryHourlyUsageByAuthSubjectAcrossTenants(usage.AuthSubjectMatcher{SubjectID: subjectID}, hours)
+	if err != nil {
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+	}
+	if hourly == nil {
+		hourly = usage.EmptyHourlyUsageBuckets(hours)
+	}
 
 	series, err := usage.QueryAIAccountSubjectQuotaSeries(subjectID, trendStart, trendEnd)
 	if err != nil {
