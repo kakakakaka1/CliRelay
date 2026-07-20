@@ -572,6 +572,7 @@ func QueryAPIKeyDistributionForTenant(tenantID string, days int) ([]APIKeyDistri
 	}
 	defer rows.Close()
 
+	repByEndUser, nameByEndUser := accountFilterRepresentatives(tenantID)
 	merged := make(map[string]*APIKeyDistributionPoint)
 	order := make([]string, 0)
 	for rows.Next() {
@@ -588,18 +589,32 @@ func QueryAPIKeyDistributionForTenant(tenantID string, days int) ([]APIKeyDistri
 
 		// Prefer stable id identity; fall back to exact raw-key match for
 		// legacy rows that never received api_key_id backfill.
+		var live *APIKeyRow
 		if row, ok := currentByID[trimNullString(logicalID)]; ok {
-			if trimmed := strings.TrimSpace(row.Key); trimmed != "" {
-				p.APIKey = trimmed
-			}
-			if label := ResolveAPIKeyDisplayName(&row, p.Name); label != "" {
-				p.Name = label
-			}
+			copy := row
+			live = &copy
 		} else if row, ok := currentByKey[p.APIKey]; ok {
-			if trimmed := strings.TrimSpace(row.Key); trimmed != "" {
+			copy := row
+			live = &copy
+		}
+		mergeKey := p.APIKey
+		if live != nil {
+			if trimmed := strings.TrimSpace(live.Key); trimmed != "" {
 				p.APIKey = trimmed
+				mergeKey = trimmed
 			}
-			if label := ResolveAPIKeyDisplayName(&row, p.Name); label != "" {
+			if eu := strings.TrimSpace(live.EndUserID); eu != "" {
+				// Collapse multi-key accounts into one distribution slice.
+				mergeKey = "eu:" + eu
+				if rep := strings.TrimSpace(repByEndUser[eu]); rep != "" {
+					p.APIKey = rep
+				}
+				if label := strings.TrimSpace(nameByEndUser[eu]); label != "" {
+					p.Name = label
+				} else if label := ResolveAPIKeyDisplayName(live, p.Name); label != "" {
+					p.Name = label
+				}
+			} else if label := ResolveAPIKeyDisplayName(live, p.Name); label != "" {
 				p.Name = label
 			}
 		}
@@ -607,7 +622,7 @@ func QueryAPIKeyDistributionForTenant(tenantID string, days int) ([]APIKeyDistri
 			continue
 		}
 
-		if existing, ok := merged[p.APIKey]; ok {
+		if existing, ok := merged[mergeKey]; ok {
 			existing.Requests += p.Requests
 			existing.Tokens += p.Tokens
 			if existing.Name == "" && p.Name != "" {
@@ -616,8 +631,8 @@ func QueryAPIKeyDistributionForTenant(tenantID string, days int) ([]APIKeyDistri
 			continue
 		}
 		point := p
-		merged[p.APIKey] = &point
-		order = append(order, p.APIKey)
+		merged[mergeKey] = &point
+		order = append(order, mergeKey)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

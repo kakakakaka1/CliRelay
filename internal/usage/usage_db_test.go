@@ -1856,6 +1856,128 @@ func TestQueryFiltersForLogsLinksFilterFacets(t *testing.T) {
 	}
 }
 
+func TestQueryFiltersCollapsesOwnedKeysToOneAccountOption(t *testing.T) {
+	// Multi-key end-user accounts must appear once in request-log filters under
+	// the account display name. Selecting that option matches every owned key.
+	initTestUsageDB(t, config.RequestLogStorageConfig{})
+
+	db := getDB()
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS end_users (
+			id TEXT PRIMARY KEY,
+			tenant_id TEXT NOT NULL,
+			username TEXT NOT NULL,
+			username_normalized TEXT NOT NULL,
+			display_name TEXT NOT NULL,
+			password_hash TEXT NOT NULL DEFAULT 'x',
+			status TEXT NOT NULL DEFAULT 'active',
+			permission_profile_id TEXT NOT NULL DEFAULT '',
+			daily_limit INTEGER NOT NULL DEFAULT 0,
+			total_quota INTEGER NOT NULL DEFAULT 0,
+			spending_limit REAL NOT NULL DEFAULT 0,
+			daily_spending_limit REAL NOT NULL DEFAULT 0,
+			concurrency_limit INTEGER NOT NULL DEFAULT 0,
+			rpm_limit INTEGER NOT NULL DEFAULT 0,
+			tpm_limit INTEGER NOT NULL DEFAULT 0,
+			allowed_models TEXT NOT NULL DEFAULT '[]',
+			allowed_channels TEXT NOT NULL DEFAULT '[]',
+			allowed_channel_groups TEXT NOT NULL DEFAULT '[]',
+			system_prompt TEXT NOT NULL DEFAULT ''
+		)
+	`); err != nil {
+		t.Fatalf("create end_users: %v", err)
+	}
+
+	endUserID := "eu-kittors"
+	if _, err := db.Exec(`
+		INSERT INTO end_users (id, tenant_id, username, username_normalized, display_name)
+		VALUES (?, ?, 'kittors', 'kittors', 'Kittors')
+	`, endUserID, systemTenantID); err != nil {
+		t.Fatalf("insert end user: %v", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	defaultID := "key-default"
+	extraID := "key-extra"
+	if err := UpsertAPIKey(APIKeyRow{
+		TenantID: systemTenantID, ID: defaultID, Key: "sk-kittors-default", Name: "default",
+		EndUserID: endUserID, IsDefault: true, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert default key: %v", err)
+	}
+	if err := UpsertAPIKey(APIKeyRow{
+		TenantID: systemTenantID, ID: extraID, Key: "sk-kittors-test", Name: "测试 key",
+		EndUserID: endUserID, IsDefault: false, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert test key: %v", err)
+	}
+	if err := UpsertAPIKey(APIKeyRow{
+		TenantID: systemTenantID, ID: "key-solo", Key: "sk-solo", Name: "zbb",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert solo key: %v", err)
+	}
+
+	ts := time.Now().UTC()
+	InsertLogWithDetailsIdentity("sk-kittors-default", defaultID, "Kittors", "gpt-a", "src", "ch", "a1", false, ts, 1, 1, TokenStats{TotalTokens: 10}, "", "", "")
+	InsertLogWithDetailsIdentity("sk-kittors-test", extraID, "测试 key", "gpt-b", "src", "ch", "a2", false, ts.Add(time.Second), 1, 1, TokenStats{TotalTokens: 20}, "", "", "")
+	InsertLogWithDetailsIdentity("sk-solo", "key-solo", "zbb", "gpt-c", "src", "ch", "a3", false, ts.Add(2*time.Second), 1, 1, TokenStats{TotalTokens: 5}, "", "", "")
+
+	filters, err := QueryFilters(7)
+	if err != nil {
+		t.Fatalf("QueryFilters() error = %v", err)
+	}
+	if len(filters.APIKeys) != 2 {
+		t.Fatalf("filters.APIKeys = %#v, want 2 options (account + solo)", filters.APIKeys)
+	}
+	if !slices.Contains(filters.APIKeys, "sk-kittors-default") {
+		t.Fatalf("filters.APIKeys = %#v, want representative sk-kittors-default", filters.APIKeys)
+	}
+	if slices.Contains(filters.APIKeys, "sk-kittors-test") {
+		t.Fatalf("filters.APIKeys = %#v, must not list owned non-representative key", filters.APIKeys)
+	}
+	if filters.APIKeyNames["sk-kittors-default"] != "Kittors" {
+		t.Fatalf("filters.APIKeyNames[sk-kittors-default] = %q, want Kittors", filters.APIKeyNames["sk-kittors-default"])
+	}
+	for _, name := range filters.APIKeyNames {
+		if name == "测试 key" {
+			t.Fatalf("filters.APIKeyNames leaked key label %q", name)
+		}
+	}
+
+	logs, err := QueryLogs(LogQueryParams{Page: 1, Size: 50, Days: 7, APIKeys: []string{"sk-kittors-default"}})
+	if err != nil {
+		t.Fatalf("QueryLogs(account filter) error = %v", err)
+	}
+	if logs.Total != 2 {
+		t.Fatalf("QueryLogs total = %d, want 2 (both owned keys)", logs.Total)
+	}
+
+	dist, err := QueryAPIKeyDistribution(7)
+	if err != nil {
+		t.Fatalf("QueryAPIKeyDistribution() error = %v", err)
+	}
+	if len(dist) != 2 {
+		t.Fatalf("distribution len = %d, want 2: %#v", len(dist), dist)
+	}
+	var account *APIKeyDistributionPoint
+	for i := range dist {
+		if dist[i].APIKey == "sk-kittors-default" || dist[i].Name == "Kittors" {
+			account = &dist[i]
+			break
+		}
+	}
+	if account == nil {
+		t.Fatalf("missing account distribution point in %#v", dist)
+	}
+	if account.Name != "Kittors" {
+		t.Fatalf("account name = %q, want Kittors", account.Name)
+	}
+	if account.Requests != 2 || account.Tokens != 30 {
+		t.Fatalf("account distribution = %#v, want 2 requests / 30 tokens", account)
+	}
+}
+
 func TestQueryAPIKeyDistributionMergesRawAndIDGroupsForSameKey(t *testing.T) {
 	// Production shape: some request_logs carry api_key_id, older rows for the
 	// same secret only have api_key. Distribution must merge into one point so

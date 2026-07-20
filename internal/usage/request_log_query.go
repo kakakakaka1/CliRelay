@@ -1042,116 +1042,11 @@ func queryDistinctStatuses(db *sql.DB, params LogQueryParams) ([]string, error) 
 	return result, rows.Err()
 }
 
-func queryDistinctAPIKeys(db *sql.DB, params LogQueryParams) ([]string, map[string]string, error) {
-	currentByID := currentAPIKeyRowsByID()
-	where, args := buildWhereClause(params)
-	if where == "" {
-		where = " WHERE api_key != ''"
-	} else {
-		where += " AND api_key != ''"
-	}
-	rows, err := db.Query(`
-		SELECT
-			CASE
-				WHEN trim(coalesce(api_key_id, '')) <> '' THEN api_key_id
-				ELSE 'raw:' || api_key
-			END AS logical_selector,
-			COALESCE(MAX(NULLIF(trim(coalesce(api_key_id, '')), '')), '') AS logical_id,
-			MAX(api_key) AS snapshot_key,
-			COALESCE(NULLIF(MAX(api_key_name), ''), '') AS snapshot_name
-		FROM request_logs
-		`+where+`
-		GROUP BY logical_selector
-		ORDER BY logical_selector
-	`, args...)
-	if err != nil {
-		log.Warnf("usage: distinct api_key logical groups query failed: %v", err)
-		return nil, nil, fmt.Errorf("usage: distinct api_key logical groups: %w", err)
-	}
-	defer rows.Close()
-
-	values := make([]string, 0)
-	names := make(map[string]string)
-	seen := make(map[string]struct{})
-	for rows.Next() {
-		var logicalSelector string
-		var logicalID sql.NullString
-		var snapshotKey string
-		var snapshotName string
-		if err := rows.Scan(&logicalSelector, &logicalID, &snapshotKey, &snapshotName); err != nil {
-			log.Warnf("usage: distinct api_key scan failed: %v", err)
-			return nil, nil, err
-		}
-
-		value := strings.TrimSpace(snapshotKey)
-		name := strings.TrimSpace(snapshotName)
-		if row, ok := currentByID[trimNullString(logicalID)]; ok {
-			if trimmed := strings.TrimSpace(row.Key); trimmed != "" {
-				value = trimmed
-			}
-			// Owned keys: show end-user account name in filters / labels.
-			if label := ResolveAPIKeyDisplayName(&row, name); label != "" {
-				name = label
-			}
-		}
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			if name != "" {
-				names[value] = name
-			}
-			continue
-		}
-		seen[value] = struct{}{}
-		values = append(values, value)
-		if name != "" {
-			names[value] = name
-		}
-	}
-	return values, names, rows.Err()
-}
-
 func trimNullString(value sql.NullString) string {
 	if !value.Valid {
 		return ""
 	}
 	return strings.TrimSpace(value.String)
-}
-
-func buildSingleAPIKeySelectorClause(selector string) (string, []interface{}) {
-	return buildSingleAPIKeySelectorClauseForTenant(systemTenantID, selector)
-}
-
-func buildSingleAPIKeySelectorClauseForTenant(tenantID, selector string) (string, []interface{}) {
-	trimmed := strings.TrimSpace(selector)
-	if trimmed == "" {
-		return "", nil
-	}
-	if row := GetAPIKeyForTenant(normalizeTenantID(tenantID), trimmed); row != nil && strings.TrimSpace(row.ID) != "" {
-		return " WHERE (api_key_id = ? OR (api_key_id = '' AND api_key = ?))", []interface{}{strings.TrimSpace(row.ID), strings.TrimSpace(row.Key)}
-	}
-	return " WHERE api_key = ?", []interface{}{trimmed}
-}
-
-// buildPublicLookupAPIKeySelectorClause matches any key in the end-user account pool
-// (or a single standalone key). Used by public log content access checks.
-func buildPublicLookupAPIKeySelectorClause(tenantID, selector string) (string, []interface{}) {
-	keys := ExpandPublicLookupAPIKeys(selector)
-	if len(keys) == 0 {
-		return " WHERE 1 = 0", nil
-	}
-	if len(keys) == 1 {
-		return buildSingleAPIKeySelectorClauseForTenant(tenantID, keys[0])
-	}
-	conds := make([]string, 0, len(keys))
-	args := make([]interface{}, 0, len(keys)*2)
-	for _, k := range keys {
-		clause, clauseArgs := buildSingleAPIKeySelectorClauseForTenant(tenantID, k)
-		conds = append(conds, strings.TrimPrefix(clause, " WHERE "))
-		args = append(args, clauseArgs...)
-	}
-	return " WHERE (" + strings.Join(conds, " OR ") + ")", args
 }
 
 // QueryModelsForKey returns the distinct models used by a specific API key within the time range.
