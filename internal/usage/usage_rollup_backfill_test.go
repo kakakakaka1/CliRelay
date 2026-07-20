@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -113,6 +114,65 @@ func TestUsageRollupBackfillIsReentrantWithoutDoubleCount(t *testing.T) {
 	}
 	if total != 2 {
 		t.Fatalf("lifetime rollup total after replay = %v, want 2 (not doubled)", total)
+	}
+}
+
+func TestUsageRollupBackfillDoesNotMarkDoneOnReadFailure(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "rollup-fail.db")
+	if err := InitDB(dbPath, config.RequestLogStorageConfig{RetentionDays: 7}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		stopRequestLogMaintenance()
+		CloseDB()
+	})
+	// Drop request_logs to force query failure after marker cleared.
+	if _, err := getDB().Exec(`DROP TABLE request_logs`); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	if _, err := getDB().Exec(`DELETE FROM usage_projection_markers WHERE marker_key = ?`, usageRollupBackfillMarker); err != nil {
+		t.Fatalf("clear marker: %v", err)
+	}
+	if err := runUsageRollupBackfillAtInitDB(getDB(), time.UTC); err == nil {
+		t.Fatal("expected backfill error when request_logs missing")
+	}
+	if projectionMarkerValue(getDB(), usageRollupBackfillMarker) == "done" {
+		t.Fatal("marker must not be done after failed backfill")
+	}
+}
+
+func TestUsageRollupRetentionRunsWhenDetailCleanupDisabled(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "rollup-cleanup-flag.db")
+	disabled := false
+	if err := InitDB(dbPath, config.RequestLogStorageConfig{
+		RetentionDays:  7,
+		CleanupEnabled: &disabled,
+	}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		stopRequestLogMaintenance()
+		CloseDB()
+	})
+	now := time.Now().UTC()
+	if _, err := getDB().Exec(`
+		INSERT INTO usage_rollup_buckets (
+			tenant_id, bucket_kind, bucket_start, api_key_id, end_user_id, auth_subject_id,
+			model, source, channel_name, request_count, success_count, failure_count, streaming_count,
+			input_tokens, output_tokens, reasoning_tokens, cached_tokens, effective_input_tokens,
+			total_tokens, cost_total, latency_sum_ms, latency_count, first_token_sum_ms, first_token_count, updated_at
+		) VALUES (?, 'minute', ?, 'k', '', '', 'm', 's', '', 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, ?)
+	`, systemTenantID, now.Add(-48*time.Hour).Format("2006-01-02T15:04"), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	// Simulate maintenance pass with detail cleanup disabled.
+	runRequestLogMaintenancePass(context.Background(), getDB(), "sqlite")
+	var n int64
+	if err := getDB().QueryRow(`SELECT COUNT(*) FROM usage_rollup_buckets WHERE bucket_kind='minute'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("stale minute buckets remaining = %d, want 0 even when cleanup-enabled=false", n)
 	}
 }
 

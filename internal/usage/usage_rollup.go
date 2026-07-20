@@ -91,11 +91,16 @@ func ensureUsageRollupTables(db *sql.DB) error {
 }
 
 func bootstrapUsageRollup(db *sql.DB, loc *time.Location) error {
-	if err := ensureUsageRollupTables(db); err != nil {
-		return err
-	}
-	// Caller must pass loc — do not call getUsageLocation while holding usageDBMu.
-	return runUsageRollupBackfillAtInitDB(db, loc)
+	_ = loc
+	// Schema only during InitDB/InitPostgres. Historical rebuild runs later via
+	// RunUsageRollupBackfillAtInit after YAML key import + end-user backfill.
+	return ensureUsageRollupTables(db)
+}
+
+// RunUsageRollupBackfillAtInit rebuilds usage_rollup_buckets from surviving request_logs.
+// Must run after api_keys are imported and end_user_id ownership is populated.
+func RunUsageRollupBackfillAtInit() error {
+	return runUsageRollupBackfillAtInitDB(getDB(), getUsageLocation())
 }
 
 // runUsageRollupBackfillAtInitDB rebuilds rollup from surviving request_logs once.
@@ -117,28 +122,35 @@ func runUsageRollupBackfillAtInitDB(db *sql.DB, loc *time.Location) error {
 	keyIDToEndUser := map[string]string{}
 	secretToEndUser := map[string]string{}
 	secretToKeyID := map[string]string{}
-	if keyRows, err := db.Query(`SELECT id, key, COALESCE(end_user_id,'') FROM api_keys`); err == nil {
-		for keyRows.Next() {
-			var id, key, endUser string
-			if err := keyRows.Scan(&id, &key, &endUser); err != nil {
-				_ = keyRows.Close()
-				return fmt.Errorf("usage: rollup backfill scan api_keys: %w", err)
-			}
-			id = strings.TrimSpace(id)
-			key = strings.TrimSpace(key)
-			endUser = strings.TrimSpace(endUser)
+	keyRows, err := db.Query(`SELECT id, key, COALESCE(end_user_id,'') FROM api_keys`)
+	if err != nil {
+		// api_keys missing is fatal for correct ownership; do not write marker.
+		return fmt.Errorf("usage: rollup backfill query api_keys: %w", err)
+	}
+	for keyRows.Next() {
+		var id, key, endUser string
+		if err := keyRows.Scan(&id, &key, &endUser); err != nil {
+			_ = keyRows.Close()
+			return fmt.Errorf("usage: rollup backfill scan api_keys: %w", err)
+		}
+		id = strings.TrimSpace(id)
+		key = strings.TrimSpace(key)
+		endUser = strings.TrimSpace(endUser)
+		if id != "" {
+			keyIDToEndUser[id] = endUser
+		}
+		if key != "" {
+			secretToEndUser[key] = endUser
 			if id != "" {
-				keyIDToEndUser[id] = endUser
-			}
-			if key != "" {
-				secretToEndUser[key] = endUser
-				if id != "" {
-					secretToKeyID[key] = id
-				}
+				secretToKeyID[key] = id
 			}
 		}
-		_ = keyRows.Close()
 	}
+	if err := keyRows.Err(); err != nil {
+		_ = keyRows.Close()
+		return fmt.Errorf("usage: rollup backfill api_keys rows: %w", err)
+	}
+	_ = keyRows.Close()
 
 	type backfillRow struct {
 		ev rollupEvent
@@ -153,7 +165,8 @@ func runUsageRollupBackfillAtInitDB(db *sql.DB, loc *time.Location) error {
 		FROM request_logs
 	`)
 	if err != nil {
-		return setProjectionMarker(db, usageRollupBackfillMarker, "done")
+		// Do not mark done on read failure — next startup must retry.
+		return fmt.Errorf("usage: rollup backfill query request_logs: %w", err)
 	}
 	for rows.Next() {
 		var (

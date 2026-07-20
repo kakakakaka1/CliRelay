@@ -298,17 +298,19 @@ func runRequestLogMaintenancePass(ctx context.Context, db *sql.DB, driver string
 		}
 	}
 
-	// cleanup-enabled gates both metadata and content retention/size cleanup.
-	// Body purge when store-content=false still runs above (privacy, not retention).
-	if !currentRequestLogStorageConfig().CleanupEnabled {
-		compactLogContentStorageInternal(ctx, db, true)
-		return
-	}
-
+	// Rollup minute/hour/day retention is independent of detail cleanup-enabled.
+	// Projection must stay bounded even when operators pause request_logs cleanup.
 	if n, err := cleanupExpiredUsageRollupBuckets(db); err != nil {
 		log.Errorf("usage: prune usage rollup buckets: %v", err)
 	} else if n > 0 {
 		log.Infof("usage: pruned %d expired usage_rollup_buckets rows", n)
+	}
+
+	// cleanup-enabled gates metadata and content retention/size cleanup only.
+	// Body purge when store-content=false still runs above (privacy, not retention).
+	if !currentRequestLogStorageConfig().CleanupEnabled {
+		compactLogContentStorageInternal(ctx, db, true)
+		return
 	}
 
 	cleanupStarted := time.Now()
