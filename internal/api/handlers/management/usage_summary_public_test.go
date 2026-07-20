@@ -54,18 +54,19 @@ func TestGetPublicUsageSummary(t *testing.T) {
 		keyLimited  = "sk-test-key-limited"
 	)
 
-	insertTestLog(t, keyWithData)
-	insertTestLog(t, keyWithData)
-	insertTestLog(t, keyLimited)
-
+	// Register keys before InsertLog so rollup rows get stable api_key_id.
 	if err := usage.ReplaceAllAPIKeys([]usage.APIKeyRow{
-		{Key: keyWithData, Disabled: false},
-		{Key: keyNoUsage, Disabled: false},
-		{Key: keyDisabled, Disabled: true},
-		{Key: keyLimited, Disabled: false, DailyLimit: 10, TotalQuota: 100, SpendingLimit: 50, DailySpendingLimit: 5},
+		{ID: "id-with-data", Key: keyWithData, Disabled: false},
+		{ID: "id-no-usage", Key: keyNoUsage, Disabled: false},
+		{ID: "id-disabled", Key: keyDisabled, Disabled: true},
+		{ID: "id-limited", Key: keyLimited, Disabled: false, DailyLimit: 10, TotalQuota: 100, SpendingLimit: 50, DailySpendingLimit: 5},
 	}); err != nil {
 		t.Fatalf("ReplaceAllAPIKeys: %v", err)
 	}
+
+	insertTestLog(t, keyWithData)
+	insertTestLog(t, keyWithData)
+	insertTestLog(t, keyLimited)
 
 	t.Run("found=true for key with usage today", func(t *testing.T) {
 		body := []byte(`{"api_key":"` + keyWithData + `"}`)

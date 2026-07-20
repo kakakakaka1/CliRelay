@@ -279,13 +279,32 @@ func TestQueryTodayCostByKeyResetsDaily(t *testing.T) {
 	} {
 		if _, err := db.Exec(
 			`INSERT INTO request_logs
-			 (timestamp, api_key, model, source, failed, latency_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, cost)
-			 VALUES (?, ?, ?, ?, 0, 1, 0, 0, 0, 0, 0, ?)`,
-			row.ts.Format(time.RFC3339), "sk-daily-spending", "model", "test", row.cost,
+			 (timestamp, api_key, api_key_id, model, source, failed, latency_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, cost)
+			 VALUES (?, ?, ?, ?, ?, 0, 1, 0, 0, 0, 0, 0, ?)`,
+			row.ts.Format(time.RFC3339), "sk-daily-spending", "key-daily-spending", "model", "test", row.cost,
 		); err != nil {
 			t.Fatalf("insert request log: %v", err)
 		}
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		if err := projectUsageRollupTx(tx, rollupEvent{
+			TenantID: systemTenantID,
+			APIKeyID: "key-daily-spending",
+			Model:    "model",
+			Source:   "test",
+			Cost:     row.cost,
+			At:       row.ts,
+		}); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("project: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
 	}
+	_ = UpsertAPIKey(APIKeyRow{ID: "key-daily-spending", Key: "sk-daily-spending"})
 
 	got, err := QueryTodayCostByKey("sk-daily-spending")
 	if err != nil {

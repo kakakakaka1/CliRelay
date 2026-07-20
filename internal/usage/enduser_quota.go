@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // EndUserQuota is the account-level limit/permission snapshot used by auth + quota.
@@ -262,63 +261,40 @@ func buildEndUserAPIKeySelectorClause(endUserID string) (string, []interface{}) 
 
 // CountTodayByEndUser counts requests across all keys of the end user today.
 func CountTodayByEndUser(endUserID string) (int64, error) {
-	db := getReadDB()
-	if db == nil {
-		return 0, nil
+	quota := GetEndUserQuota(endUserID)
+	tenantID := systemTenantID
+	if quota != nil && strings.TrimSpace(quota.TenantID) != "" {
+		tenantID = quota.TenantID
 	}
-	clause, args := buildEndUserAPIKeySelectorClause(endUserID)
-	if clause == "" {
-		return 0, nil
-	}
-	queryArgs := append(args, CutoffStartUTC(1).Format(time.RFC3339))
-	var count int64
-	err := db.QueryRow(
-		"SELECT COUNT(*) FROM request_logs"+clause+" AND timestamp >= ?",
-		queryArgs...,
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("usage: count today by end user: %w", err)
-	}
-	return count, nil
+	return queryTodayCountByEndUserFromRollup(tenantID, endUserID)
 }
 
 // CountTotalByEndUser counts lifetime requests across all keys of the end user.
 func CountTotalByEndUser(endUserID string) (int64, error) {
-	db := getReadDB()
-	if db == nil {
-		return 0, nil
+	quota := GetEndUserQuota(endUserID)
+	tenantID := systemTenantID
+	if quota != nil && strings.TrimSpace(quota.TenantID) != "" {
+		tenantID = quota.TenantID
 	}
-	clause, args := buildEndUserAPIKeySelectorClause(endUserID)
-	if clause == "" {
-		return 0, nil
-	}
-	var count int64
-	err := db.QueryRow("SELECT COUNT(*) FROM request_logs"+clause, args...).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("usage: count total by end user: %w", err)
-	}
-	return count, nil
+	return queryLifetimeCountByEndUserFromRollup(tenantID, endUserID)
 }
 
 // QueryTotalCostByEndUser sums lifetime cost across all keys of the end user.
 func QueryTotalCostByEndUser(endUserID string) (float64, error) {
-	db := getDB()
-	if db == nil {
-		return 0, nil
+	quota := GetEndUserQuota(endUserID)
+	tenantID := systemTenantID
+	if quota != nil && strings.TrimSpace(quota.TenantID) != "" {
+		tenantID = quota.TenantID
 	}
-	clause, args := buildEndUserAPIKeySelectorClause(endUserID)
-	if clause == "" {
-		return 0, nil
-	}
-	var total float64
-	err := db.QueryRow(
-		"SELECT COALESCE(SUM(cost), 0) FROM request_logs"+clause,
-		args...,
-	).Scan(&total)
+	agg, err := queryRollupAgg(rollupFilter{
+		TenantID:   tenantID,
+		BucketKind: rollupBucketLifetime,
+		EndUserID:  endUserID,
+	})
 	if err != nil {
-		return 0, fmt.Errorf("usage: query total cost by end user: %w", err)
+		return 0, fmt.Errorf("usage: total cost by end user: %w", err)
 	}
-	return total, nil
+	return agg.CostTotal, nil
 }
 
 // QueryTodayCostByEndUser returns account-level project-day spend after the latest same-day reset baseline.

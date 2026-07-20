@@ -74,12 +74,19 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.SystemStatsCacheSeconds = 60
 	cfg.SystemStatsWebSocketMaxAgeSeconds = int(DefaultSystemStatsWebSocketMaxAge / time.Second)
 	cfg.RequestLogStorage.StoreContent = false
-	cfg.RequestLogStorage.ContentRetentionDays = 30
-	cfg.RequestLogStorage.CleanupIntervalMinutes = 1440
+	cfg.RequestLogStorage.RetentionDays = 7
+	cfg.RequestLogStorage.ContentRetentionDays = 3
+	cleanupEnabled := true
+	cfg.RequestLogStorage.CleanupEnabled = &cleanupEnabled
+	cfg.RequestLogStorage.CleanupIntervalMinutes = 60
+	cfg.RequestLogStorage.CleanupBatchSize = 1000
+	cfg.RequestLogStorage.CleanupMaxRuntimeSeconds = 30
+	cfg.RequestLogStorage.MaxRows = 100000
+	cfg.RequestLogStorage.MaxMetadataSizeMB = 256
 	// Default cap for stored request/response bodies in usage.db.
 	// This controls the compressed body payloads only (metadata rows are separate).
-	cfg.RequestLogStorage.MaxTotalSizeMB = 1024
-	cfg.RequestLogStorage.VacuumOnCleanup = true
+	cfg.RequestLogStorage.MaxTotalSizeMB = 128
+	cfg.RequestLogStorage.VacuumOnCleanup = false
 	cfg.DisableCooling = false
 	cfg.Routing.IncludeDefaultGroup = true
 	cfg.Pprof.Enable = false
@@ -172,11 +179,33 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	if cfg.RequestBody.DiskThresholdMB <= 0 {
 		cfg.RequestBody.DiskThresholdMB = DefaultRequestBodyDiskThresholdMB
 	}
+	if cfg.RequestLogStorage.RetentionDays <= 0 {
+		cfg.RequestLogStorage.RetentionDays = 7
+	}
 	if cfg.RequestLogStorage.ContentRetentionDays < 0 {
 		cfg.RequestLogStorage.ContentRetentionDays = 0
 	}
+	if cfg.RequestLogStorage.ContentRetentionDays > cfg.RequestLogStorage.RetentionDays && cfg.RequestLogStorage.RetentionDays > 0 {
+		cfg.RequestLogStorage.ContentRetentionDays = cfg.RequestLogStorage.RetentionDays
+	}
+	if cfg.RequestLogStorage.CleanupEnabled == nil {
+		enabled := true
+		cfg.RequestLogStorage.CleanupEnabled = &enabled
+	}
 	if cfg.RequestLogStorage.CleanupIntervalMinutes <= 0 {
-		cfg.RequestLogStorage.CleanupIntervalMinutes = 1440
+		cfg.RequestLogStorage.CleanupIntervalMinutes = 60
+	}
+	if cfg.RequestLogStorage.CleanupBatchSize <= 0 {
+		cfg.RequestLogStorage.CleanupBatchSize = 1000
+	}
+	if cfg.RequestLogStorage.CleanupMaxRuntimeSeconds <= 0 {
+		cfg.RequestLogStorage.CleanupMaxRuntimeSeconds = 30
+	}
+	if cfg.RequestLogStorage.MaxRows < 0 {
+		cfg.RequestLogStorage.MaxRows = 0
+	}
+	if cfg.RequestLogStorage.MaxMetadataSizeMB < 0 {
+		cfg.RequestLogStorage.MaxMetadataSizeMB = 0
 	}
 	if cfg.RequestLogStorage.MaxTotalSizeMB < 0 {
 		cfg.RequestLogStorage.MaxTotalSizeMB = 0

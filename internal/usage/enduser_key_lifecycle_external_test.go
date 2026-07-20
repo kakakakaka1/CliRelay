@@ -76,13 +76,47 @@ func insertLifecycleUser(t *testing.T, db *sql.DB, tenantID, userID string) {
 
 func insertLifecycleLog(t *testing.T, db *sql.DB, tenantID, apiKey, apiKeyID string, cost float64) {
 	t.Helper()
+	at := usage.CutoffStartUTC(1).Add(time.Hour)
+	endUserID := ""
+	if row := usage.GetAPIKey(apiKey); row != nil {
+		endUserID = strings.TrimSpace(row.EndUserID)
+	}
 	if _, err := db.Exec(`
 		INSERT INTO request_logs (
 			tenant_id, timestamp, api_key, api_key_id, api_key_name, model, source,
 			failed, total_tokens, cost
 		) VALUES (?, ?, ?, ?, 'Lifecycle Key', 'gpt-test', 'test', 0, 1, ?)
-	`, tenantID, usage.CutoffStartUTC(1).Add(time.Hour).Format(time.RFC3339), apiKey, apiKeyID, cost); err != nil {
+	`, tenantID, at.Format(time.RFC3339), apiKey, apiKeyID, cost); err != nil {
 		t.Fatalf("insert request log: %v", err)
+	}
+	// Mirror production rollup UPSERT (external package cannot call unexported helpers).
+	for _, kindStart := range []struct{ kind, start string }{
+		{"minute", at.UTC().Format("2006-01-02T15:04")},
+		{"hour", at.UTC().Format("2006-01-02T15")},
+		{"day", at.UTC().Format("2006-01-02")},
+		{"lifetime", "1970-01-01"},
+	} {
+		if _, err := db.Exec(`
+			INSERT INTO usage_rollup_buckets (
+				tenant_id, bucket_kind, bucket_start, api_key_id, end_user_id, auth_subject_id,
+				model, source, channel_name,
+				request_count, success_count, failure_count, streaming_count,
+				input_tokens, output_tokens, reasoning_tokens, cached_tokens,
+				effective_input_tokens, total_tokens, cost_total,
+				latency_sum_ms, latency_count, first_token_sum_ms, first_token_count, updated_at
+			) VALUES (?, ?, ?, ?, ?, '', 'gpt-test', 'test', '', 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, ?, 0, 0, 0, 0, ?)
+			ON CONFLICT(
+				tenant_id, bucket_kind, bucket_start, api_key_id, end_user_id, auth_subject_id,
+				model, source, channel_name
+			) DO UPDATE SET
+				request_count = usage_rollup_buckets.request_count + 1,
+				success_count = usage_rollup_buckets.success_count + 1,
+				total_tokens = usage_rollup_buckets.total_tokens + 1,
+				cost_total = usage_rollup_buckets.cost_total + excluded.cost_total,
+				updated_at = excluded.updated_at
+		`, tenantID, kindStart.kind, kindStart.start, apiKeyID, endUserID, cost, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			t.Fatalf("insert rollup %s: %v", kindStart.kind, err)
+		}
 	}
 }
 

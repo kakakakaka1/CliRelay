@@ -31,22 +31,12 @@ func bootstrapEndUserDailySpendingResets(db *sql.DB) error {
 }
 
 func QueryRawTodayCostByEndUserForTenant(tenantID, endUserID string) (float64, error) {
-	db := getReadDB()
-	if db == nil {
-		return 0, nil
-	}
 	tenantID = normalizeTenantID(tenantID)
 	endUserID = strings.TrimSpace(endUserID)
-	predicate, args := buildEndUserAPIKeySelectorPredicate(tenantID, endUserID)
-	queryArgs := append([]interface{}{tenantID, CutoffStartUTC(1).Format(time.RFC3339)}, args...)
-	var total float64
-	if err := db.QueryRow(
-		"SELECT COALESCE(SUM(cost), 0) FROM request_logs WHERE tenant_id = ? AND timestamp >= ? AND "+predicate,
-		queryArgs...,
-	).Scan(&total); err != nil {
-		return 0, fmt.Errorf("usage: query raw today cost by end user: %w", err)
+	if endUserID == "" {
+		return 0, nil
 	}
-	return total, nil
+	return queryTodayCostByEndUserFromRollup(tenantID, endUserID)
 }
 
 func getEndUserDailySpendingResetBaseline(tenantID, endUserID string) (float64, bool, error) {
@@ -113,27 +103,20 @@ func QueryTodayEffectiveCostsByEndUsersForTenant(tenantID string, endUserIDs []s
 		return out, nil
 	}
 
-	// Sum today's cost per end_user via owned keys (stable id or legacy secret).
-	// Arg order: join tenant, end_user ids..., log tenant, cutoff.
+	// Sum today's cost per end_user from usage rollup (written with end_user_id at request time).
 	ph := make([]string, len(ids))
 	queryArgs := make([]interface{}, 0, 3+len(ids))
-	queryArgs = append(queryArgs, tenantID)
+	queryArgs = append(queryArgs, tenantID, rollupBucketDay, localDayKeyAt(time.Now()))
 	for i, id := range ids {
 		ph[i] = "?"
 		queryArgs = append(queryArgs, id)
 	}
-	queryArgs = append(queryArgs, tenantID, CutoffStartUTC(1).Format(time.RFC3339))
 	rows, err := db.Query(`
-		SELECT k.end_user_id, COALESCE(SUM(r.cost), 0)
-		FROM request_logs r
-		INNER JOIN api_keys k ON k.tenant_id = ?
-			AND k.end_user_id IN (`+strings.Join(ph, ",")+`)
-			AND (
-				(trim(coalesce(r.api_key_id, '')) <> '' AND r.api_key_id = k.id)
-				OR (trim(coalesce(r.api_key_id, '')) = '' AND r.api_key = k.key)
-			)
-		WHERE r.tenant_id = ? AND r.timestamp >= ?
-		GROUP BY k.end_user_id
+		SELECT end_user_id, COALESCE(SUM(cost_total), 0)
+		FROM usage_rollup_buckets
+		WHERE tenant_id = ? AND bucket_kind = ? AND bucket_start = ?
+		  AND end_user_id IN (`+strings.Join(ph, ",")+`)
+		GROUP BY end_user_id
 	`, queryArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("usage: batch today cost by end users: %w", err)

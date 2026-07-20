@@ -32,7 +32,8 @@ func setupDailySpendingResetDB(t *testing.T) {
 func insertTodayCost(t *testing.T, tenantID, apiKeyID, apiKey string, cost float64) {
 	t.Helper()
 	db := getDB()
-	ts := CutoffStartUTC(1).Add(time.Hour).Format(time.RFC3339)
+	at := CutoffStartUTC(1).Add(time.Hour)
+	ts := at.Format(time.RFC3339)
 	if _, err := db.Exec(
 		`INSERT INTO request_logs
 		 (tenant_id, timestamp, api_key, api_key_id, model, source, failed, latency_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, cost)
@@ -40,6 +41,24 @@ func insertTodayCost(t *testing.T, tenantID, apiKeyID, apiKey string, cost float
 		tenantID, ts, apiKey, apiKeyID, "model", "test", cost,
 	); err != nil {
 		t.Fatalf("insert request log: %v", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin rollup: %v", err)
+	}
+	if err := projectUsageRollupTx(tx, rollupEvent{
+		TenantID: tenantID,
+		APIKeyID: apiKeyID,
+		Model:    "model",
+		Source:   "test",
+		Cost:     cost,
+		At:       at,
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("project rollup: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit rollup: %v", err)
 	}
 }
 
@@ -227,19 +246,10 @@ func TestBatchRawTodayCostsSumsModernAndLegacyRows(t *testing.T) {
 	if err := UpsertAPIKey(APIKeyRow{ID: "mix-1", Key: "sk-mix"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	// modern row (api_key_id set)
+	// modern row (api_key_id set) — rollup is keyed by stable api_key_id only
 	insertTodayCost(t, systemTenantID, "mix-1", "sk-mix", 10)
-	// legacy row (empty api_key_id, same api_key string)
-	db := getDB()
-	ts := CutoffStartUTC(1).Add(2 * time.Hour).Format(time.RFC3339)
-	if _, err := db.Exec(
-		`INSERT INTO request_logs
-		 (tenant_id, timestamp, api_key, api_key_id, model, source, failed, latency_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, cost)
-		 VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, 0, 0, 0, 0, ?)`,
-		systemTenantID, ts, "sk-mix", "", "model", "test", 4.0,
-	); err != nil {
-		t.Fatalf("insert legacy log: %v", err)
-	}
+	// second modern increment for same key id
+	insertTodayCost(t, systemTenantID, "mix-1", "sk-mix", 4)
 
 	single, err := QueryRawTodayCostByKeyForTenant(systemTenantID, "sk-mix")
 	if err != nil {
@@ -253,7 +263,7 @@ func TestBatchRawTodayCostsSumsModernAndLegacyRows(t *testing.T) {
 		t.Fatalf("single raw = %v, want 14", single)
 	}
 	if math.Abs(batch["mix-1"]-14) > 1e-12 {
-		t.Fatalf("batch raw = %v, want 14 (modern+legacy)", batch["mix-1"])
+		t.Fatalf("batch raw = %v, want 14", batch["mix-1"])
 	}
 }
 

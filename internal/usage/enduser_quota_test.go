@@ -86,7 +86,8 @@ func TestCountUsageByEndUserAggregatesAllKeys(t *testing.T) {
 		t.Fatalf("owned key daily_limit = %#v, want 0", got)
 	}
 
-	ts := CutoffStartUTC(1).Add(time.Hour).Format(time.RFC3339)
+	at := CutoffStartUTC(1).Add(time.Hour)
+	ts := at.Format(time.RFC3339)
 	for _, row := range []struct {
 		key, id string
 	}{{keyA, idA}, {keyB, idB}} {
@@ -97,6 +98,25 @@ func TestCountUsageByEndUserAggregatesAllKeys(t *testing.T) {
 			systemTenantID, ts, row.key, row.id, "model", "test",
 		); err != nil {
 			t.Fatalf("insert log: %v", err)
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		if err := projectUsageRollupTx(tx, rollupEvent{
+			TenantID:  systemTenantID,
+			APIKeyID:  row.id,
+			EndUserID: endUserID,
+			Model:     "model",
+			Source:    "test",
+			Tokens:    TokenStats{TotalTokens: 1},
+			At:        at,
+		}); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("project: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
 		}
 	}
 

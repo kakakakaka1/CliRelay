@@ -22,6 +22,17 @@ func (h *Handler) GetRequestLogBodyStorage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"enabled": h.cfg.RequestLogStorage.StoreContent})
 }
 
+// GetRequestLogStorageStatus returns retention policy + live table sizes.
+// Cleaning request_logs never clears usage_rollup_buckets stats.
+func (h *Handler) GetRequestLogStorageStatus(c *gin.Context) {
+	status, err := usage.GetRequestLogStorageStatus()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
 func (h *Handler) PutRequestLogBodyStorage(c *gin.Context) {
 	var body requestLogBodyStorageUpdate
 	if err := c.ShouldBindJSON(&body); err != nil || body.Value == nil {

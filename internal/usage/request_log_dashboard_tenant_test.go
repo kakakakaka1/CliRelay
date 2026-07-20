@@ -12,27 +12,47 @@ func TestDashboardQueriesAreTenantScoped(t *testing.T) {
 	db := getDB()
 	const tenantA = "00000000-0000-0000-0000-00000000000a"
 	const tenantB = "00000000-0000-0000-0000-00000000000b"
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, tenantID := range []string{tenantA, tenantB} {
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339Nano)
+	insertDetailAndRollup := func(tenantID string, failed bool, in, out, total int64, cost float64) {
+		t.Helper()
+		failedInt := 0
+		if failed {
+			failedInt = 1
+		}
 		if _, err := db.Exec(`
 			INSERT INTO request_logs
 			(tenant_id, timestamp, api_key, model, source, channel_name, auth_index, failed,
 			 latency_ms, first_token_ms, input_tokens, output_tokens, reasoning_tokens,
 			 cached_tokens, total_tokens, cost)
-			VALUES (?, ?, '', 'model', 'source', 'channel', 'auth', 0, 1, 1, 10, 5, 0, 0, 15, 0.1)
-		`, tenantID, now); err != nil {
+			VALUES (?, ?, '', 'model', 'source', 'channel', 'auth', ?, 1, 1, ?, ?, 0, 0, ?, ?)
+		`, tenantID, nowStr, failedInt, in, out, total, cost); err != nil {
 			t.Fatalf("insert %s: %v", tenantID, err)
 		}
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := projectUsageRollupTx(tx, rollupEvent{
+			TenantID: tenantID,
+			Model:    "model",
+			Source:   "source",
+			ChannelName: "channel",
+			Failed:   failed,
+			Tokens:   TokenStats{InputTokens: in, OutputTokens: out, TotalTokens: total},
+			Cost:     cost,
+			At:       now,
+		}); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := db.Exec(`
-		INSERT INTO request_logs
-		(tenant_id, timestamp, api_key, model, source, channel_name, auth_index, failed,
-		 latency_ms, first_token_ms, input_tokens, output_tokens, reasoning_tokens,
-		 cached_tokens, total_tokens, cost)
-		VALUES (?, ?, '', 'model', 'source', 'channel', 'auth', 1, 1, 1, 20, 10, 0, 0, 30, 0.2)
-	`, tenantB, now); err != nil {
-		t.Fatal(err)
-	}
+	insertDetailAndRollup(tenantA, false, 10, 5, 15, 0.1)
+	insertDetailAndRollup(tenantB, false, 10, 5, 15, 0.1)
+	insertDetailAndRollup(tenantB, true, 20, 10, 30, 0.2)
 
 	kpiA, err := QueryDashboardKPIForTenant(tenantA, 1)
 	if err != nil {

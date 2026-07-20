@@ -29,8 +29,67 @@ func RuntimeMigrations() []Migration {
 		{Version: "202607190001_end_user_account_quota", SQL: endUserAccountQuotaSQL},
 		// Account-level same-day spending reset baseline for end-user quota pools.
 		{Version: "202607190002_end_user_daily_spending_resets", SQL: endUserDailySpendingResetsSQL},
+		// Small usage rollup so stats/limits stop scanning request_logs.
+		{Version: "202607200001_usage_rollup_buckets", SQL: usageRollupBucketsSQL},
 	}
 }
+
+const usageRollupBucketsSQL = `
+CREATE TABLE IF NOT EXISTS usage_rollup_buckets (
+  tenant_id               UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+  bucket_kind             TEXT NOT NULL,
+  bucket_start            TEXT NOT NULL,
+  api_key_id              TEXT NOT NULL DEFAULT '',
+  end_user_id             TEXT NOT NULL DEFAULT '',
+  auth_subject_id         TEXT NOT NULL DEFAULT '',
+  model                   TEXT NOT NULL DEFAULT '',
+  source                  TEXT NOT NULL DEFAULT '',
+  channel_name            TEXT NOT NULL DEFAULT '',
+  request_count           BIGINT NOT NULL DEFAULT 0,
+  success_count           BIGINT NOT NULL DEFAULT 0,
+  failure_count           BIGINT NOT NULL DEFAULT 0,
+  streaming_count         BIGINT NOT NULL DEFAULT 0,
+  input_tokens            BIGINT NOT NULL DEFAULT 0,
+  output_tokens           BIGINT NOT NULL DEFAULT 0,
+  reasoning_tokens        BIGINT NOT NULL DEFAULT 0,
+  cached_tokens           BIGINT NOT NULL DEFAULT 0,
+  effective_input_tokens  BIGINT NOT NULL DEFAULT 0,
+  total_tokens            BIGINT NOT NULL DEFAULT 0,
+  cost_total              DOUBLE PRECISION NOT NULL DEFAULT 0,
+  latency_sum_ms          BIGINT NOT NULL DEFAULT 0,
+  latency_count           BIGINT NOT NULL DEFAULT 0,
+  first_token_sum_ms      BIGINT NOT NULL DEFAULT 0,
+  first_token_count       BIGINT NOT NULL DEFAULT 0,
+  updated_at              TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (
+    tenant_id, bucket_kind, bucket_start,
+    api_key_id, end_user_id, auth_subject_id,
+    model, source, channel_name
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_usage_rollup_tenant_kind_start
+  ON usage_rollup_buckets(tenant_id, bucket_kind, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_usage_rollup_tenant_key_day
+  ON usage_rollup_buckets(tenant_id, bucket_kind, api_key_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_usage_rollup_tenant_user_day
+  ON usage_rollup_buckets(tenant_id, bucket_kind, end_user_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_usage_rollup_tenant_subject_day
+  ON usage_rollup_buckets(tenant_id, bucket_kind, auth_subject_id, bucket_start);
+
+CREATE TABLE IF NOT EXISTS request_log_storage_state (
+  id                        INTEGER PRIMARY KEY CHECK (id = 1),
+  metadata_row_count        BIGINT NOT NULL DEFAULT 0,
+  content_row_count         BIGINT NOT NULL DEFAULT 0,
+  last_cleanup_started_at   TIMESTAMPTZ,
+  last_cleanup_finished_at  TIMESTAMPTZ,
+  last_cleanup_status       TEXT NOT NULL DEFAULT '',
+  last_cleanup_deleted_rows BIGINT NOT NULL DEFAULT 0,
+  last_cleanup_duration_ms  BIGINT NOT NULL DEFAULT 0,
+  last_cleanup_error        TEXT NOT NULL DEFAULT '',
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO request_log_storage_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+`
 
 const endUserDailySpendingResetsSQL = `
 CREATE TABLE IF NOT EXISTS end_user_daily_spending_resets (

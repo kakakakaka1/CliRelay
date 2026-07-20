@@ -31,10 +31,16 @@ const (
 )
 
 type requestLogStorageRuntime struct {
-	ContentRetentionDays   int
-	CleanupIntervalMinutes int
-	MaxTotalSizeMB         int
-	VacuumOnCleanup        bool
+	RetentionDays            int
+	ContentRetentionDays     int
+	CleanupEnabled           bool
+	CleanupIntervalMinutes   int
+	CleanupBatchSize         int
+	CleanupMaxRuntimeSeconds int
+	MaxRows                  int
+	MaxMetadataSizeMB        int
+	MaxTotalSizeMB           int
+	VacuumOnCleanup          bool
 }
 
 var (
@@ -69,27 +75,32 @@ var (
 )
 
 func init() {
-	requestLogStorage.Store(requestLogStorageRuntime{
-		ContentRetentionDays:   30,
-		CleanupIntervalMinutes: 1440,
-		MaxTotalSizeMB:         1024,
-		VacuumOnCleanup:        true,
-	})
+	requestLogStorage.Store(defaultRequestLogStorageRuntime())
 	requestLogContentBytes.Store(-1)
 	requestLogBodiesEnabled.Store(false)
 	// Initialize atomic.Value type so subsequent stores can use typed nil safely.
 	requestLogMaintenanceWakeup.Store((chan struct{})(nil))
 }
 
+func defaultRequestLogStorageRuntime() requestLogStorageRuntime {
+	return requestLogStorageRuntime{
+		RetentionDays:            7,
+		ContentRetentionDays:     3,
+		CleanupEnabled:           true,
+		CleanupIntervalMinutes:   60,
+		CleanupBatchSize:         1000,
+		CleanupMaxRuntimeSeconds: 30,
+		MaxRows:                  100000,
+		MaxMetadataSizeMB:        256,
+		MaxTotalSizeMB:           128,
+		VacuumOnCleanup:          false,
+	}
+}
+
 func currentRequestLogStorageConfig() requestLogStorageRuntime {
 	value := requestLogStorage.Load()
 	if value == nil {
-		return requestLogStorageRuntime{
-			ContentRetentionDays:   30,
-			CleanupIntervalMinutes: 1440,
-			MaxTotalSizeMB:         1024,
-			VacuumOnCleanup:        true,
-		}
+		return defaultRequestLogStorageRuntime()
 	}
 	runtimeCfg, _ := value.(requestLogStorageRuntime)
 	return runtimeCfg
@@ -122,16 +133,43 @@ func ApplyRequestLogStorageConfig(cfg config.RequestLogStorageConfig) {
 
 func normalizeRequestLogStorageConfig(cfg config.RequestLogStorageConfig) requestLogStorageRuntime {
 	runtimeCfg := requestLogStorageRuntime{
-		ContentRetentionDays:   cfg.ContentRetentionDays,
-		CleanupIntervalMinutes: cfg.CleanupIntervalMinutes,
-		MaxTotalSizeMB:         cfg.MaxTotalSizeMB,
-		VacuumOnCleanup:        cfg.VacuumOnCleanup,
+		RetentionDays:            cfg.RetentionDays,
+		ContentRetentionDays:     cfg.ContentRetentionDays,
+		CleanupEnabled:           true,
+		CleanupIntervalMinutes:   cfg.CleanupIntervalMinutes,
+		CleanupBatchSize:         cfg.CleanupBatchSize,
+		CleanupMaxRuntimeSeconds: cfg.CleanupMaxRuntimeSeconds,
+		MaxRows:                  cfg.MaxRows,
+		MaxMetadataSizeMB:        cfg.MaxMetadataSizeMB,
+		MaxTotalSizeMB:           cfg.MaxTotalSizeMB,
+		VacuumOnCleanup:          cfg.VacuumOnCleanup,
+	}
+	if cfg.CleanupEnabled != nil {
+		runtimeCfg.CleanupEnabled = *cfg.CleanupEnabled
+	}
+	if runtimeCfg.RetentionDays <= 0 {
+		runtimeCfg.RetentionDays = 7
 	}
 	if runtimeCfg.ContentRetentionDays < 0 {
 		runtimeCfg.ContentRetentionDays = 0
 	}
+	if runtimeCfg.ContentRetentionDays > runtimeCfg.RetentionDays {
+		runtimeCfg.ContentRetentionDays = runtimeCfg.RetentionDays
+	}
 	if runtimeCfg.CleanupIntervalMinutes <= 0 {
-		runtimeCfg.CleanupIntervalMinutes = 1440
+		runtimeCfg.CleanupIntervalMinutes = 60
+	}
+	if runtimeCfg.CleanupBatchSize <= 0 {
+		runtimeCfg.CleanupBatchSize = 1000
+	}
+	if runtimeCfg.CleanupMaxRuntimeSeconds <= 0 {
+		runtimeCfg.CleanupMaxRuntimeSeconds = 30
+	}
+	if runtimeCfg.MaxRows < 0 {
+		runtimeCfg.MaxRows = 0
+	}
+	if runtimeCfg.MaxMetadataSizeMB < 0 {
+		runtimeCfg.MaxMetadataSizeMB = 0
 	}
 	if runtimeCfg.MaxTotalSizeMB < 0 {
 		runtimeCfg.MaxTotalSizeMB = 0
@@ -258,6 +296,16 @@ func runRequestLogMaintenancePass(ctx context.Context, db *sql.DB, driver string
 		if migrated == 0 {
 			break
 		}
+	}
+
+	cleanupStarted := time.Now()
+	metaDeleted, metaErr := cleanupExpiredRequestLogMetadata(ctx, db)
+	if metaErr != nil {
+		log.Errorf("usage: cleanup request log metadata: %v", metaErr)
+		recordCleanupPass(metaDeleted, cleanupStarted, "error", metaErr.Error())
+	} else if metaDeleted > 0 {
+		log.Infof("usage: pruned %d expired request_logs metadata rows", metaDeleted)
+		recordCleanupPass(metaDeleted, cleanupStarted, "ok", "")
 	}
 
 	deleted, err := cleanupExpiredLogContent(db)

@@ -48,27 +48,24 @@ func bootstrapAPIKeyDailySpendingResets(db *sql.DB) error {
 
 // QueryRawTodayCostByKeyForTenant returns SUM(cost) for the current project day (no reset baseline).
 func QueryRawTodayCostByKeyForTenant(tenantID, apiKey string) (float64, error) {
-	db := getDB()
-	if db == nil {
-		return 0, nil
-	}
 	tenantID = normalizeTenantID(tenantID)
-	clause, args := buildSingleAPIKeySelectorClauseForTenant(tenantID, apiKey)
-	if clause == "" {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
 		return 0, nil
 	}
-	queryArgs := append([]interface{}{tenantID}, args...)
-	queryArgs = append(queryArgs, CutoffStartUTC(1).Format(time.RFC3339))
-	predicate := strings.Replace(clause, " WHERE ", " AND ", 1)
-	var total float64
-	err := db.QueryRow(
-		"SELECT COALESCE(SUM(cost), 0) FROM request_logs WHERE tenant_id = ?"+predicate+" AND timestamp >= ?",
-		queryArgs...,
-	).Scan(&total)
-	if err != nil {
-		return 0, fmt.Errorf("usage: query raw today cost: %w", err)
+	apiKeyID := ""
+	if identity := ResolveAPIKeyIdentity(apiKey); identity != nil {
+		apiKeyID = identity.ID
 	}
-	return total, nil
+	if apiKeyID == "" {
+		if row := GetAPIKeyForTenant(tenantID, apiKey); row != nil {
+			apiKeyID = strings.TrimSpace(row.ID)
+		}
+	}
+	if apiKeyID == "" {
+		return 0, nil
+	}
+	return queryTodayCostByAPIKeyIDFromRollup(tenantID, apiKeyID)
 }
 
 // QueryTodayCostByKey returns effective project-day cost after applying any same-day reset baseline.
@@ -211,56 +208,51 @@ func QueryRawTodayCostsByKeysForTenant(tenantID string, keys []APIKeyRow) (map[s
 	if len(keys) == 0 {
 		return out, nil
 	}
-	db := getDB()
+	db := getReadDB()
 	if db == nil {
 		return out, nil
 	}
 	tenantID = normalizeTenantID(tenantID)
 	ids := make([]string, 0, len(keys))
-	keyStrings := make([]string, 0, len(keys))
 	idSet := make(map[string]struct{}, len(keys))
-	keySet := make(map[string]struct{}, len(keys))
+	idToKey := make(map[string]string, len(keys))
 	for _, k := range keys {
-		if id := strings.TrimSpace(k.ID); id != "" {
-			if _, ok := idSet[id]; !ok {
-				idSet[id] = struct{}{}
-				ids = append(ids, id)
+		id := strings.TrimSpace(k.ID)
+		if id == "" {
+			if identity := ResolveAPIKeyIdentity(k.Key); identity != nil {
+				id = identity.ID
 			}
+		}
+		if id == "" {
+			continue
+		}
+		if _, ok := idSet[id]; !ok {
+			idSet[id] = struct{}{}
+			ids = append(ids, id)
 		}
 		if key := strings.TrimSpace(k.Key); key != "" {
-			if _, ok := keySet[key]; !ok {
-				keySet[key] = struct{}{}
-				keyStrings = append(keyStrings, key)
-			}
+			idToKey[id] = key
 		}
 	}
-	if len(ids) == 0 && len(keyStrings) == 0 {
+	if len(ids) == 0 {
 		return out, nil
 	}
 
+	dayKey := localDayKeyAt(time.Now())
 	var b strings.Builder
-	args := make([]interface{}, 0, 2+len(ids)+len(keyStrings))
-	b.WriteString(`SELECT api_key_id, api_key, COALESCE(SUM(cost), 0) FROM request_logs WHERE tenant_id = ? AND timestamp >= ? AND (`)
-	args = append(args, tenantID, CutoffStartUTC(1).Format(time.RFC3339))
-	parts := make([]string, 0, 2)
-	if len(ids) > 0 {
-		ph := make([]string, len(ids))
-		for i, id := range ids {
-			ph[i] = "?"
-			args = append(args, id)
+	args := make([]interface{}, 0, 3+len(ids))
+	b.WriteString(`SELECT api_key_id, COALESCE(SUM(cost_total), 0)
+		FROM usage_rollup_buckets
+		WHERE tenant_id = ? AND bucket_kind = ? AND bucket_start = ? AND api_key_id IN (`)
+	args = append(args, tenantID, rollupBucketDay, dayKey)
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteByte(',')
 		}
-		parts = append(parts, `api_key_id IN (`+strings.Join(ph, ",")+`)`)
+		b.WriteByte('?')
+		args = append(args, id)
 	}
-	if len(keyStrings) > 0 {
-		ph := make([]string, len(keyStrings))
-		for i, key := range keyStrings {
-			ph[i] = "?"
-			args = append(args, key)
-		}
-		parts = append(parts, `(api_key_id = '' AND api_key IN (`+strings.Join(ph, ",")+`))`)
-	}
-	b.WriteString(strings.Join(parts, " OR "))
-	b.WriteString(`) GROUP BY api_key_id, api_key`)
+	b.WriteString(`) GROUP BY api_key_id`)
 
 	rows, err := db.Query(b.String(), args...)
 	if err != nil {
@@ -271,15 +263,16 @@ func QueryRawTodayCostsByKeysForTenant(tenantID string, keys []APIKeyRow) (map[s
 	// Map raw rows into lookup by id and by key string for callers.
 	costByID := make(map[string]float64)
 	costByKey := make(map[string]float64)
-	// legacyCostByKey: only api_key_id='' rows (matches single-key selector OR branch).
+	// legacyCostByKey kept empty: rollup always uses stable api_key_id.
 	legacyCostByKey := make(map[string]float64)
 	for rows.Next() {
-		var apiKeyID, apiKey string
+		var apiKeyID string
 		var cost float64
-		if err := rows.Scan(&apiKeyID, &apiKey, &cost); err != nil {
+		if err := rows.Scan(&apiKeyID, &cost); err != nil {
 			return nil, fmt.Errorf("usage: scan batch raw today cost: %w", err)
 		}
 		apiKeyID = strings.TrimSpace(apiKeyID)
+		apiKey := idToKey[apiKeyID]
 		apiKey = strings.TrimSpace(apiKey)
 		if apiKeyID != "" {
 			costByID[apiKeyID] += cost

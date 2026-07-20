@@ -733,6 +733,11 @@ func initOpenedDBLocked(db, readDB *sql.DB, dbPath, driver string, storageCfg co
 		ensureRequestLogDetailIndexes(db)
 	}
 	bootstrapAIAccountStatusReadModels(db, loc)
+	if err := bootstrapUsageRollup(db); err != nil {
+		_ = db.Close()
+		usageDB, usageReadDB = nil, nil
+		return fmt.Errorf("usage: bootstrap usage rollup: %w", err)
+	}
 	if err := bootstrapAPIKeyDailySpendingResets(db); err != nil {
 		_ = db.Close()
 		usageDB, usageReadDB = nil, nil
@@ -878,17 +883,19 @@ func insertLogIdentity(apiKey, apiKeyID, authSubjectID, apiKeyName, model, upstr
 	apiKeyName = strings.TrimSpace(apiKeyName)
 	upstreamModel = strings.TrimSpace(upstreamModel)
 	visionFallbackModel = strings.TrimSpace(visionFallbackModel)
-	if identity := ResolveAPIKeyIdentity(apiKey); identity != nil {
+	// Resolve identity before opening the write tx: SQLite single-writer + maintenance
+	// would deadlock if we query api_keys while this connection already holds a tx.
+	endUserID := ""
+	if row := GetAPIKey(apiKey); row != nil {
 		if apiKeyID == "" {
-			apiKeyID = identity.ID
+			apiKeyID = strings.TrimSpace(row.ID)
 		}
-		// Always prefer the live key's own name. End-user display name is hydrated
-		// independently on reads so account and credential identity are not conflated.
-		if name := strings.TrimSpace(identity.Name); name != "" {
+		if name := strings.TrimSpace(row.Name); name != "" {
 			apiKeyName = name
 		} else if apiKeyName == "" {
-			apiKeyName = identity.Name
+			apiKeyName = strings.TrimSpace(row.Name)
 		}
+		endUserID = strings.TrimSpace(row.EndUserID)
 	}
 
 	// 插入 request log 的事务由 usage 存储层统一拥有，不从外部 HTTP 请求透传 context，
@@ -952,7 +959,22 @@ func insertLogIdentity(apiKey, apiKeyID, authSubjectID, apiKeyName, model, upstr
 		return
 	}
 
-	if errCommit := commitLogWithAuthSubjectUsageDaily(tx, tenantID, authSubjectID, failed, cost, timestamp); errCommit != nil {
+	if errCommit := commitLogWithProjections(tx, rollupEvent{
+		TenantID:      tenantID,
+		APIKeyID:      apiKeyID,
+		EndUserID:     endUserID,
+		AuthSubjectID: authSubjectID,
+		Model:         model,
+		Source:        source,
+		ChannelName:   channelName,
+		Failed:        failed,
+		Streaming:     streaming,
+		LatencyMs:     latencyMs,
+		FirstTokenMs:  firstTokenMs,
+		Tokens:        tokens,
+		Cost:          cost,
+		At:            timestamp,
+	}); errCommit != nil {
 		log.Errorf("usage: commit log insert: %v", errCommit)
 		return
 	}

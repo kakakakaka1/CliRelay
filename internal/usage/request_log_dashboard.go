@@ -60,52 +60,10 @@ func QueryDashboardKPI(days int) (DashboardKPI, error) {
 }
 
 func QueryDashboardKPIForTenant(tenantID string, days int) (DashboardKPI, error) {
-	db := getReadDB()
-	if db == nil {
+	if getReadDB() == nil {
 		return DashboardKPI{}, nil
 	}
-	if days < 1 {
-		days = 7
-	}
-
-	cutoff := CutoffStartUTC(days).Format(time.RFC3339)
-
-	var kpi DashboardKPI
-	var effectiveInputTokens int64
-	kpiSQL := "SELECT " +
-		"COUNT(*), " +
-		"COALESCE(SUM(CASE WHEN failed=0 THEN 1 ELSE 0 END), 0), " +
-		"COALESCE(SUM(CASE WHEN failed=1 THEN 1 ELSE 0 END), 0), " +
-		"COALESCE(SUM(input_tokens), 0), " +
-		"COALESCE(SUM(output_tokens), 0), " +
-		"COALESCE(SUM(reasoning_tokens), 0), " +
-		"COALESCE(SUM(cached_tokens), 0), " +
-		"COALESCE(SUM(total_tokens), 0), " +
-		"COALESCE(SUM(cost), 0), " +
-		"COALESCE(SUM(" + cacheRateEffectiveInputSQL + "), 0) " +
-		"FROM request_logs WHERE tenant_id = ? AND timestamp >= ?"
-	err := db.QueryRow(kpiSQL, normalizeTenantID(tenantID), cutoff).Scan(
-		&kpi.TotalRequests,
-		&kpi.SuccessRequests,
-		&kpi.FailedRequests,
-		&kpi.InputTokens,
-		&kpi.OutputTokens,
-		&kpi.ReasoningTokens,
-		&kpi.CachedTokens,
-		&kpi.TotalTokens,
-		&kpi.TotalCost,
-		&effectiveInputTokens,
-	)
-	if err != nil {
-		return DashboardKPI{}, fmt.Errorf("usage: dashboard KPI query: %w", err)
-	}
-
-	if kpi.TotalRequests > 0 {
-		kpi.SuccessRate = float64(kpi.SuccessRequests) / float64(kpi.TotalRequests) * 100
-	}
-	kpi.CacheRate = cacheRateFromTokenTotals(effectiveInputTokens, kpi.CachedTokens)
-
-	return kpi, nil
+	return queryDashboardKPIFromRollup(tenantID, days)
 }
 
 // QueryDashboardTrends returns fixed-width trend buckets used by the dashboard.

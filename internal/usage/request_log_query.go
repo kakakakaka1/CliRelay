@@ -303,40 +303,22 @@ func (params LogQueryParams) withoutFacet(facet string) LogQueryParams {
 	return params
 }
 
-// QueryStats returns aggregated statistics over the filtered dataset.
+// QueryStats returns aggregated statistics from usage rollup projection.
+// Does not scan request_logs so detail retention cleanup cannot zero stats.
 func QueryStats(params LogQueryParams) (LogStats, error) {
-	db := getReadDB()
-	if db == nil {
-
+	if getReadDB() == nil {
 		return LogStats{CacheRate: 0}, nil
 	}
-	if params.Days < 1 {
-		params.Days = 7
+	// Explicit empty multi-selects match no rows; rollup does not model "empty model".
+	if params.MatchNoAPIKeys || params.MatchNoModels || params.MatchNoStatuses || params.MatchNoChannels {
+		return LogStats{CacheRate: 0}, nil
 	}
-
-	where, args := buildWhereClause(params)
-
-	var total, successCount, totalTokens, effectiveInputTokens, totalCachedTokens int64
-	var totalCost float64
-	statsSQL := "SELECT COUNT(*), COALESCE(SUM(CASE WHEN failed=0 THEN 1 ELSE 0 END),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(cost),0), COALESCE(SUM(" + cacheRateEffectiveInputSQL + "),0), COALESCE(SUM(cached_tokens),0) " +
-		"FROM request_logs" + where
-	if err := db.QueryRow(statsSQL, args...).Scan(&total, &successCount, &totalTokens, &totalCost, &effectiveInputTokens, &totalCachedTokens); err != nil {
+	stats, err := queryStatsFromRollup(params)
+	if err != nil {
 		log.Warnf("usage: stats query failed: %v", err)
-		return LogStats{}, fmt.Errorf("usage: stats query: %w", err)
+		return LogStats{}, err
 	}
-
-	var successRate float64
-	if total > 0 {
-		successRate = float64(successCount) / float64(total) * 100
-	}
-
-	return LogStats{
-		Total:       total,
-		SuccessRate: successRate,
-		TotalTokens: totalTokens,
-		CacheRate:   cacheRateFromTokenTotals(effectiveInputTokens, totalCachedTokens),
-		TotalCost:   totalCost,
-	}, nil
+	return stats, nil
 }
 
 // DeleteLogsByAPIKey removes all request_logs and request_log_content entries

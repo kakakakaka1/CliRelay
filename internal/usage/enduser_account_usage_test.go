@@ -2,6 +2,7 @@ package usage
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,15 +44,40 @@ func setupEndUserAccountUsageTestDB(t *testing.T) {
 
 func insertEndUserAccountLog(t *testing.T, tenantID, apiKey, apiKeyID, apiKeyName string, cost float64) {
 	t.Helper()
+	at := CutoffStartUTC(1).Add(time.Hour)
 	_, err := getDB().Exec(`
 		INSERT INTO request_logs (
 			tenant_id, timestamp, api_key, api_key_id, api_key_name, model, source,
 			failed, streaming, latency_ms, first_token_ms, input_tokens, output_tokens,
 			reasoning_tokens, cached_tokens, total_tokens, cost
 		) VALUES (?, ?, ?, ?, ?, 'gpt-test', 'test', 0, 0, 1, 0, 1, 1, 0, 0, 2, ?)
-	`, tenantID, CutoffStartUTC(1).Add(time.Hour).Format(time.RFC3339), apiKey, apiKeyID, apiKeyName, cost)
+	`, tenantID, at.Format(time.RFC3339), apiKey, apiKeyID, apiKeyName, cost)
 	if err != nil {
 		t.Fatalf("insert request log: %v", err)
+	}
+	endUserID := ""
+	if row := GetAPIKey(apiKey); row != nil {
+		endUserID = strings.TrimSpace(row.EndUserID)
+	}
+	tx, err := getDB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := projectUsageRollupTx(tx, rollupEvent{
+		TenantID:  tenantID,
+		APIKeyID:  apiKeyID,
+		EndUserID: endUserID,
+		Model:     "gpt-test",
+		Source:    "test",
+		Tokens:    TokenStats{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		Cost:      cost,
+		At:        at,
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("project: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 }
 

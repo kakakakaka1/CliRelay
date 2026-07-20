@@ -58,20 +58,39 @@ type SDKConfig struct {
 	CACert string `yaml:"ca-cert" json:"ca-cert"`
 }
 
-// RequestLogStorageConfig controls retention and cleanup of full request/response bodies.
+// RequestLogStorageConfig controls retention and cleanup of request log metadata/bodies.
+// Stats live in usage_rollup_buckets and are never deleted by these policies.
 type RequestLogStorageConfig struct {
 	// StoreContent toggles persistence of full request and response bodies.
 	// Request details remain stored when this is false. Disabling through the
 	// management API also clears previously stored request/response bodies.
 	StoreContent bool `yaml:"store-content" json:"store-content"`
 
+	// RetentionDays is how long request_logs metadata rows are kept for diagnostics.
+	// Default 7. Stats are projected separately and survive cleanup.
+	RetentionDays int `yaml:"retention-days,omitempty" json:"retention-days,omitempty"`
+
 	// ContentRetentionDays defines how many days full request/response bodies are kept.
-	// 0 or less means keep full content indefinitely. Metadata rows remain available
-	// even after content is pruned.
+	// Should not exceed RetentionDays. 0 keeps content until size/metadata caps apply.
 	ContentRetentionDays int `yaml:"content-retention-days,omitempty" json:"content-retention-days,omitempty"`
+
+	// CleanupEnabled toggles the background metadata/content cleanup job.
+	CleanupEnabled *bool `yaml:"cleanup-enabled,omitempty" json:"cleanup-enabled,omitempty"`
 
 	// CleanupIntervalMinutes controls how often the background cleanup job runs.
 	CleanupIntervalMinutes int `yaml:"cleanup-interval-minutes,omitempty" json:"cleanup-interval-minutes,omitempty"`
+
+	// CleanupBatchSize is the max metadata rows deleted per batch.
+	CleanupBatchSize int `yaml:"cleanup-batch-size,omitempty" json:"cleanup-batch-size,omitempty"`
+
+	// CleanupMaxRuntimeSeconds caps a single cleanup pass wall time.
+	CleanupMaxRuntimeSeconds int `yaml:"cleanup-max-runtime-seconds,omitempty" json:"cleanup-max-runtime-seconds,omitempty"`
+
+	// MaxRows caps request_logs row count; oldest rows are pruned first.
+	MaxRows int `yaml:"max-rows,omitempty" json:"max-rows,omitempty"`
+
+	// MaxMetadataSizeMB caps request_logs heap+index relation size (best-effort on Postgres).
+	MaxMetadataSizeMB int `yaml:"max-metadata-size-mb,omitempty" json:"max-metadata-size-mb,omitempty"`
 
 	// MaxTotalSizeMB caps the total size of stored request/response bodies.
 	// When the cap is exceeded, the oldest stored bodies are pruned before the
@@ -79,6 +98,7 @@ type RequestLogStorageConfig struct {
 	MaxTotalSizeMB int `yaml:"max-total-size-mb,omitempty" json:"max-total-size-mb,omitempty"`
 
 	// VacuumOnCleanup triggers a database VACUUM after content pruning so disk space is reclaimed.
+	// PostgreSQL never runs VACUUM FULL from this flag.
 	VacuumOnCleanup bool `yaml:"vacuum-on-cleanup" json:"vacuum-on-cleanup"`
 }
 
