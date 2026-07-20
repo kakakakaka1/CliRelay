@@ -222,11 +222,12 @@ func UpsertAIAccountSubject(identity *AuthSubjectIdentity) error {
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	// Use bool (not integer 0/1): Postgres column is BOOLEAN; integer literals fail with SQLSTATE 42804.
 	_, err := db.Exec(`
 		INSERT INTO ai_account_subjects (
 			auth_subject_id, provider, subject_scope, seed_kind, seed_hash,
 			share_eligible, usage_history_complete, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(auth_subject_id) DO UPDATE SET
 			provider = excluded.provider,
 			subject_scope = excluded.subject_scope,
@@ -235,7 +236,7 @@ func UpsertAIAccountSubject(identity *AuthSubjectIdentity) error {
 			share_eligible = excluded.share_eligible,
 			updated_at = excluded.updated_at
 	`, strings.TrimSpace(identity.ID), strings.TrimSpace(identity.Provider), identity.SubjectScope,
-		identity.SeedKind, identity.SeedHash, identity.ShareEligible, now, now)
+		identity.SeedKind, identity.SeedHash, identity.ShareEligible, false, now, now)
 	if err != nil {
 		return fmt.Errorf("usage: upsert ai account subject: %w", err)
 	}

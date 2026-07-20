@@ -77,6 +77,34 @@ func TestResolveAuthSubjectIdentitySharesOnlyStableAccountID(t *testing.T) {
 	}
 }
 
+func TestUpsertAIAccountSubjectWritesBooleanHistoryComplete(t *testing.T) {
+	// Regression: PG column usage_history_complete is BOOLEAN; integer 0 fails SQLSTATE 42804
+	// and empties shared subject tables, which 500s /ai-accounts/status and blanks status-refresh job_id.
+	initSharedSubjectTestDB(t)
+	auth := sharedSubjectTestAuth(sharedSubjectTenantA, "auth-bool", "acct-bool", "bool@example.com")
+	identity := ResolveAuthSubjectIdentity(auth)
+	if err := UpsertAIAccountSubject(identity); err != nil {
+		t.Fatalf("UpsertAIAccountSubject: %v", err)
+	}
+	var complete bool
+	if err := getDB().QueryRow(
+		`SELECT usage_history_complete FROM ai_account_subjects WHERE auth_subject_id = ?`,
+		identity.ID,
+	).Scan(&complete); err != nil {
+		t.Fatalf("scan usage_history_complete: %v", err)
+	}
+	if complete {
+		t.Fatalf("usage_history_complete = true, want false on insert")
+	}
+	if err := UpsertAIAccountTenantBinding(auth, identity); err != nil {
+		t.Fatalf("UpsertAIAccountTenantBinding: %v", err)
+	}
+	subjects, err := ListAIAccountSubjects([]string{identity.ID})
+	if err != nil || subjects[identity.ID].AuthSubjectID == "" {
+		t.Fatalf("subject missing after binding upsert: %+v err=%v", subjects, err)
+	}
+}
+
 func TestAIAccountTenantBindingsDeleteOneTenantOnly(t *testing.T) {
 	initSharedSubjectTestDB(t)
 	authA := sharedSubjectTestAuth(sharedSubjectTenantA, "auth-a", "acct-bind", "a@example.com")
