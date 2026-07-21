@@ -216,42 +216,37 @@ func QueryDailySeries(apiKey string, days int) ([]DailySeriesPoint, error) {
 }
 
 func QueryDailySeriesForTenant(tenantID, apiKey string, days int) ([]DailySeriesPoint, error) {
-	db := getReadDB()
-	if db == nil {
+	if getReadDB() == nil {
 		return nil, nil
 	}
 	if days < 1 {
 		days = 7
 	}
 
+	// Use usage_rollup_buckets day keys (usageLoc / project timezone), not
+	// date(timestamp,'localtime') which PostgreSQL compat rewrites to UTC.
 	params := LogQueryParams{TenantID: tenantID, APIKey: apiKey, Days: days}
-	where, args := buildWhereClause(params)
-
-	// NOTE: timestamps are stored as UTC RFC3339 strings; localtime converts them to the process timezone
-	// (configured via TZ/time.Local) for correct day bucketing.
-	q := `SELECT date(timestamp, 'localtime') as d,
-	             COUNT(*) as reqs,
-	             SUM(CASE WHEN failed != 0 THEN 1 ELSE 0 END) as failed_reqs,
-	             COALESCE(SUM(input_tokens),0),
-	             COALESCE(SUM(output_tokens),0)
-	      FROM request_logs` + where + `
-	      GROUP BY d ORDER BY d`
-
-	rows, err := db.Query(q, args...)
+	filter, ok := rollupIdentityFilter(params)
+	if !ok {
+		return []DailySeriesPoint{}, nil
+	}
+	filter.BucketKind = rollupBucketDay
+	filter.BucketFrom = dayBucketFromDays(days)
+	points, err := queryRollupDailySeries(filter)
 	if err != nil {
-		return nil, fmt.Errorf("usage: daily series query: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	var result []DailySeriesPoint
-	for rows.Next() {
-		var p DailySeriesPoint
-		if err := rows.Scan(&p.Date, &p.Requests, &p.FailedReq, &p.InputTokens, &p.OutputTokens); err != nil {
-			return nil, fmt.Errorf("usage: daily series scan: %w", err)
-		}
-		result = append(result, p)
+	result := make([]DailySeriesPoint, 0, len(points))
+	for _, p := range points {
+		result = append(result, DailySeriesPoint{
+			Date:         p.Date,
+			Requests:     int(p.Requests),
+			FailedReq:    int(p.FailedRequests),
+			InputTokens:  int(p.InputTokens),
+			OutputTokens: int(p.OutputTokens),
+		})
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // QueryDailyHeatmapSeries returns sparse daily usage for the calendar heatmap.
@@ -444,8 +439,7 @@ func QueryModelDistribution(apiKey string, days int) ([]ModelDistributionPoint, 
 }
 
 func QueryModelDistributionForTenant(tenantID, apiKey string, days int) ([]ModelDistributionPoint, error) {
-	db := getReadDB()
-	if db == nil {
+	if getReadDB() == nil {
 		return nil, nil
 	}
 	if days < 1 {
@@ -453,29 +447,13 @@ func QueryModelDistributionForTenant(tenantID, apiKey string, days int) ([]Model
 	}
 
 	params := LogQueryParams{TenantID: tenantID, APIKey: apiKey, Days: days}
-	where, args := buildWhereClause(params)
-
-	q := `SELECT model,
-	             COUNT(*) as reqs,
-	             COALESCE(SUM(total_tokens),0)
-	      FROM request_logs` + where + `
-	      GROUP BY model ORDER BY reqs DESC`
-
-	rows, err := db.Query(q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("usage: model distribution query: %w", err)
+	filter, ok := rollupIdentityFilter(params)
+	if !ok {
+		return []ModelDistributionPoint{}, nil
 	}
-	defer rows.Close()
-
-	var result []ModelDistributionPoint
-	for rows.Next() {
-		var p ModelDistributionPoint
-		if err := rows.Scan(&p.Model, &p.Requests, &p.Tokens); err != nil {
-			return nil, fmt.Errorf("usage: model distribution scan: %w", err)
-		}
-		result = append(result, p)
-	}
-	return result, rows.Err()
+	filter.BucketKind = rollupBucketDay
+	filter.BucketFrom = dayBucketFromDays(days)
+	return queryRollupModelDistribution(filter)
 }
 
 // APIKeyDistributionPoint holds aggregated usage data for a single API key.
