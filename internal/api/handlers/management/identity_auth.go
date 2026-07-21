@@ -775,3 +775,14 @@ func (h *Handler) DeleteAuditLog(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+func (h *Handler) ClearAuditLogs(c *gin.Context) {
+	principal, _ := principalFromContext(c)
+	platform := principal.Has("platform.audit.read")
+	result, err := h.identity().ClearAuditLogs(c.Request.Context(), principal.EffectiveTenant.ID, platform)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}

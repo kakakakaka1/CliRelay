@@ -61,7 +61,11 @@ func permissionForManagementRequest(method, path string) string {
 		return "tenant.users.delete"
 	case strings.HasPrefix(relative, "/users/"):
 		return "tenant.users.update"
-	case relative == "/audit-logs" || (strings.HasPrefix(relative, "/audit-logs/") && method == http.MethodGet):
+	case relative == "/audit-logs" && method == http.MethodGet:
+		return "tenant.audit.read"
+	case relative == "/audit-logs" && method == http.MethodDelete:
+		return "tenant.audit.delete"
+	case strings.HasPrefix(relative, "/audit-logs/") && method == http.MethodGet:
 		return "tenant.audit.read"
 	case strings.HasPrefix(relative, "/audit-logs/") && method == http.MethodDelete:
 		return "tenant.audit.delete"

@@ -232,6 +232,33 @@ func (s *Service) DeleteAuditLog(ctx context.Context, tenantID string, platform 
 	return nil
 }
 
+// ClearAuditLogsResult reports how many audit rows were removed.
+type ClearAuditLogsResult struct {
+	Deleted int64 `json:"deleted"`
+}
+
+// ClearAuditLogs removes all audit logs visible to the caller.
+// Platform readers clear every tenant; tenant callers only clear their own tenant.
+func (s *Service) ClearAuditLogs(ctx context.Context, tenantID string, platform bool) (ClearAuditLogsResult, error) {
+	var (
+		result sql.Result
+		err    error
+	)
+	if platform {
+		result, err = s.db.ExecContext(ctx, `DELETE FROM audit_logs`)
+	} else {
+		result, err = s.db.ExecContext(ctx, `DELETE FROM audit_logs WHERE tenant_id = ?`, tenantID)
+	}
+	if err != nil {
+		return ClearAuditLogsResult{}, err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return ClearAuditLogsResult{}, err
+	}
+	return ClearAuditLogsResult{Deleted: deleted}, nil
+}
+
 func (s *Service) AssignUserRoles(ctx context.Context, actor Principal, tenantID, userID string, roleIDs []string) error {
 	if !actor.Has("tenant.users.assign_roles") && !actor.Has("platform.users.manage") {
 		return ErrPermissionDenied
