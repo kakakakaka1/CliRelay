@@ -174,15 +174,8 @@ func TestExpandPublicLookupAPIKeys_AggregatesOwnedKeys(t *testing.T) {
 	}
 
 	got := ExpandPublicLookupAPIKeys("sk-a")
-	if len(got) != 2 {
-		t.Fatalf("owned expand len=%d keys=%v, want 2", len(got), got)
-	}
-	set := map[string]bool{}
-	for _, k := range got {
-		set[k] = true
-	}
-	if !set["sk-a"] || !set["sk-b"] {
-		t.Fatalf("owned expand = %v, want sk-a and sk-b", got)
+	if len(got) != 1 || got[0] != "sk-a" {
+		t.Fatalf("owned expand = %v, want [sk-a] only (raw secret is key-scoped)", got)
 	}
 
 	solo := ExpandPublicLookupAPIKeys("sk-solo")

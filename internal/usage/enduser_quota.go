@@ -155,33 +155,20 @@ func ListAPIKeySecretsForEndUserForTenant(tenantID, endUserID string) []string {
 	return listAPIKeyValuesForEndUser(tenantID, endUserID, "key")
 }
 
-// ExpandPublicLookupAPIKeys expands a presented API key into the full account key pool
-// when the key is owned by an end user (shared quota / portal multi-key).
-// Standalone keys and unknown secrets stay single-key.
+// ExpandPublicLookupAPIKeys returns the presented API key only.
+// Account-wide multi-key views use portal EndUserID auth, not raw-secret expansion.
 func ExpandPublicLookupAPIKeys(apiKey string) []string {
 	trimmed := strings.TrimSpace(apiKey)
 	if trimmed == "" {
 		return nil
 	}
 	row := GetAPIKey(trimmed)
-	if row == nil {
-		return []string{trimmed}
-	}
-	endUserID := strings.TrimSpace(row.EndUserID)
-	if endUserID == "" {
+	if row != nil {
 		if k := strings.TrimSpace(row.Key); k != "" {
 			return []string{k}
 		}
-		return []string{trimmed}
 	}
-	secrets := ListAPIKeySecretsForEndUserForTenant(row.TenantID, endUserID)
-	if len(secrets) == 0 {
-		if k := strings.TrimSpace(row.Key); k != "" {
-			return []string{k}
-		}
-		return []string{trimmed}
-	}
-	return secrets
+	return []string{trimmed}
 }
 
 // ResolveAPIKeyOwnName returns the key's own name (not end-user account display name).

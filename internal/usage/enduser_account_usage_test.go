@@ -112,8 +112,8 @@ func TestEndUserAccountUsageAggregatesBusinessTenantKeysAndSurvivesRotate(t *tes
 		t.Fatalf("GetAPIKeyByID = %#v, want business-tenant key B", row)
 	}
 	expanded := ExpandPublicLookupAPIKeys("sk-business-a")
-	if len(expanded) != 2 || !containsString(expanded, "sk-business-a") || !containsString(expanded, "sk-business-b") {
-		t.Fatalf("ExpandPublicLookupAPIKeys = %v, want both owned keys", expanded)
+	if len(expanded) != 1 || expanded[0] != "sk-business-a" {
+		t.Fatalf("ExpandPublicLookupAPIKeys = %v, want [sk-business-a] only", expanded)
 	}
 
 	// Modern rows match stable key ids; the legacy row matches the current raw secret.

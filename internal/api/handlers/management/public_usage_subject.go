@@ -45,11 +45,12 @@ func (h *Handler) resolvePublicUsageSubject(c *gin.Context, apiKey string) (publ
 		return publicUsageSubject{}, false
 	}
 
+	// Raw secret lookup is key-scoped only. Do not promote to account-wide via
+	// end_user_id; portal cpt_ sessions above already use EndUserID without a secret.
 	subject := publicUsageSubject{APIKey: apiKey}
 	if row := usage.GetAPIKey(apiKey); row != nil {
 		subject.APIKeyRow = row
 		subject.TenantID = strings.TrimSpace(row.TenantID)
-		subject.EndUserID = strings.TrimSpace(row.EndUserID)
 	} else {
 		subject.TenantID = usage.ResolveAPIKeyTenant(apiKey)
 	}

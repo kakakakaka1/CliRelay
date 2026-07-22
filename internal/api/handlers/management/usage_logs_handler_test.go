@@ -2109,7 +2109,7 @@ func TestGetUsageLogsFiltersByOrphanAuthIndexWithoutLiveMeta(t *testing.T) {
 	}
 }
 
-func TestGetPublicUsageLogs_AggregatesOwnedBusinessTenantKeys(t *testing.T) {
+func TestGetPublicUsageLogs_RawSecretIsKeyScoped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tmpDir := t.TempDir()
@@ -2161,23 +2161,22 @@ func TestGetPublicUsageLogs_AggregatesOwnedBusinessTenantKeys(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if payload.Total != 2 || len(payload.Items) != 2 {
-		t.Fatalf("public logs total/items = %d/%d, want 2/2", payload.Total, len(payload.Items))
+	// Raw secret lookup must stay key-scoped; sibling keys on the same account stay hidden.
+	if payload.Total != 1 || len(payload.Items) != 1 {
+		t.Fatalf("public logs total/items = %d/%d, want 1/1; body=%s", payload.Total, len(payload.Items), rec.Body.String())
 	}
-	// Top-level label must be the presented key's own name, never the end-user display name.
 	if payload.APIKeyName != "Automation" {
-		t.Fatalf("api_key_name = %q, want Automation (key own name), not end-user display", payload.APIKeyName)
+		t.Fatalf("api_key_name = %q, want Automation (presented key own name)", payload.APIKeyName)
 	}
-	for _, item := range payload.Items {
-		if item.APIKey != "" || item.APIKeyID != "" {
-			t.Fatalf("public item leaked raw key identity: %+v", item)
-		}
-		if item.APIKeyMasked == "" {
-			t.Fatalf("public item missing masked key fallback: %+v", item)
-		}
-		if item.APIKeyOwnName != "Laptop" && item.APIKeyOwnName != "Automation" {
-			t.Fatalf("api_key_own_name = %q, want concrete key name", item.APIKeyOwnName)
-		}
+	item := payload.Items[0]
+	if item.APIKey != "" || item.APIKeyID != "" {
+		t.Fatalf("public item leaked raw key identity: %+v", item)
+	}
+	if item.APIKeyMasked == "" {
+		t.Fatalf("public item missing masked key fallback: %+v", item)
+	}
+	if item.APIKeyOwnName != "Automation" {
+		t.Fatalf("api_key_own_name = %q, want Automation", item.APIKeyOwnName)
 	}
 }
 
@@ -2245,22 +2244,17 @@ func TestGetPublicUsageLogs_FiltersByAPIKeyIDs(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if payload.Total != 1 || len(payload.Items) != 1 {
-		t.Fatalf("filtered total/items = %d/%d, want 1/1; body=%s", payload.Total, len(payload.Items), rec.Body.String())
+	// Sibling key ids are not in the raw-secret allow-list; filter is rejected → empty.
+	if payload.Total != 0 || len(payload.Items) != 0 {
+		t.Fatalf("filtered total/items = %d/%d, want 0/0; body=%s", payload.Total, len(payload.Items), rec.Body.String())
 	}
-	if payload.Items[0].APIKeyOwnName != "Laptop" {
-		t.Fatalf("api_key_own_name = %q, want Laptop", payload.Items[0].APIKeyOwnName)
-	}
-	if len(payload.Filters.APIKeyIDs) != 2 {
-		t.Fatalf("filters.api_key_ids = %#v, want 2 options", payload.Filters.APIKeyIDs)
-	}
-	if payload.Filters.APIKeyIDNames[keyAID] != "Laptop" {
-		t.Fatalf("filters.api_key_id_names[%s] = %q, want Laptop", keyAID, payload.Filters.APIKeyIDNames[keyAID])
+	if len(payload.Filters.APIKeyIDs) != 1 || payload.Filters.APIKeyIDs[0] != keyBID {
+		t.Fatalf("filters.api_key_ids = %#v, want only presented key %s", payload.Filters.APIKeyIDs, keyBID)
 	}
 	if payload.Filters.APIKeyIDNames[keyBID] != "Automation" {
 		t.Fatalf("filters.api_key_id_names[%s] = %q, want Automation", keyBID, payload.Filters.APIKeyIDNames[keyBID])
 	}
-	if payload.Filters.APIKeyIDCounts[keyAID] != 1 || payload.Filters.APIKeyIDCounts[keyBID] != 1 {
-		t.Fatalf("filters.api_key_id_counts = %#v, want one request per owned key", payload.Filters.APIKeyIDCounts)
+	if payload.Filters.APIKeyIDNames[keyAID] != "" {
+		t.Fatalf("sibling key %s must not appear in filter options", keyAID)
 	}
 }

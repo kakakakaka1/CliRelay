@@ -441,10 +441,12 @@ func TestGetPublicUsageSummary_AggregatesOwnedBusinessTenantKeys(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !got.Found || got.Stats.TotalCalls != 2 {
-		t.Fatalf("summary = %+v, want found and two account calls", got)
+	// Raw secret summary is key-scoped for call stats (not whole account).
+	if !got.Found || got.Stats.TotalCalls != 1 {
+		t.Fatalf("summary = %+v, want found and one key call", got)
 	}
-	if len(got.QuotaScopes) != 2 || got.QuotaScopes[0].Scope != "account" || got.QuotaScopes[1].Scope != "key" {
-		t.Fatalf("quota scopes = %+v, want account then key", got.QuotaScopes)
+	// Raw secret no longer promotes to EndUserID, so only key-scope quota cards appear.
+	if len(got.QuotaScopes) != 1 || got.QuotaScopes[0].Scope != "key" {
+		t.Fatalf("quota scopes = %+v, want key only", got.QuotaScopes)
 	}
 }

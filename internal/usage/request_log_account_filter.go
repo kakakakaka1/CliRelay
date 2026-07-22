@@ -260,14 +260,13 @@ func buildSingleAPIKeySelectorClauseForTenant(tenantID, selector string) (string
 		// Secret may resolve outside the tenant pin (legacy global lookup).
 		row = GetAPIKey(trimmed)
 	}
-	// Owned keys: selecting the account filter matches the whole key pool.
+	// Always key-scoped. Account-wide views use EndUserID on LogQueryParams, not secret expansion.
 	if row != nil {
-		if eu := strings.TrimSpace(row.EndUserID); eu != "" {
-			pred, args := buildEndUserAPIKeySelectorPredicate(tenantID, eu)
-			return " WHERE " + pred, args
-		}
 		if id := strings.TrimSpace(row.ID); id != "" {
 			return " WHERE (api_key_id = ? OR (api_key_id = '' AND api_key = ?))", []interface{}{id, strings.TrimSpace(row.Key)}
+		}
+		if k := strings.TrimSpace(row.Key); k != "" {
+			return " WHERE api_key = ?", []interface{}{k}
 		}
 	}
 	return " WHERE api_key = ?", []interface{}{trimmed}
