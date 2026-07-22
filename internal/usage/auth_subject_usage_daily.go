@@ -33,58 +33,6 @@ type AuthSubjectUsageSummary struct {
 	UpdatedAt         time.Time  `json:"updated_at,omitempty"`
 }
 
-// commitLogWithAuthSubjectUsageDaily projects daily card counters then commits the request_log tx.
-func commitLogWithAuthSubjectUsageDaily(tx *sql.Tx, tenantID, authSubjectID string, failed bool, cost float64, at time.Time) error {
-	if authSubjectID != "" {
-		if err := projectAuthSubjectUsageDailyTx(tx, tenantID, authSubjectID, failed, cost, at); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("project auth subject usage daily: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// projectAuthSubjectUsageDailyTx increments the day projection inside the request_log write tx.
-func projectAuthSubjectUsageDailyTx(tx *sql.Tx, tenantID, authSubjectID string, failed bool, cost float64, at time.Time) error {
-	if tx == nil {
-		return nil
-	}
-	tenantID = normalizeTenantID(tenantID)
-	authSubjectID = strings.TrimSpace(authSubjectID)
-	if authSubjectID == "" {
-		return nil
-	}
-	if at.IsZero() {
-		at = time.Now()
-	}
-	// Avoid getUsageLocation() lock: may run under InitDB which already holds usageDBMu.
-	loc := usageLoc
-	if loc == nil {
-		loc = time.Local
-	}
-	dayKey := localDayKeyAtLocation(at, loc)
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	successInc, failureInc := int64(1), int64(0)
-	if failed {
-		successInc, failureInc = 0, 1
-	}
-	_, err := tx.Exec(`
-		INSERT INTO auth_subject_usage_daily (
-			tenant_id, auth_subject_id, day_key, request_count, success_count, failure_count, cost_total, updated_at
-		) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
-		ON CONFLICT(tenant_id, auth_subject_id, day_key) DO UPDATE SET
-			request_count = auth_subject_usage_daily.request_count + 1,
-			success_count = auth_subject_usage_daily.success_count + excluded.success_count,
-			failure_count = auth_subject_usage_daily.failure_count + excluded.failure_count,
-			cost_total = auth_subject_usage_daily.cost_total + excluded.cost_total,
-			updated_at = excluded.updated_at
-	`, tenantID, authSubjectID, dayKey, successInc, failureInc, cost, now)
-	return err
-}
-
 func ensureUsageProjectionMarkerTable(db *sql.DB) {
 	if db == nil {
 		return

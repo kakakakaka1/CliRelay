@@ -78,7 +78,7 @@ func TestUpdateRefreshStatePreservesQuotas(t *testing.T) {
 	}
 }
 
-func TestAuthSubjectUsageDailySameTxProjection(t *testing.T) {
+func TestAIAccountSubjectUsageSameTxProjection(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "usage.db")
 	if err := InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
 		t.Fatalf("InitDB: %v", err)
@@ -97,13 +97,20 @@ func TestAuthSubjectUsageDailySameTxProjection(t *testing.T) {
 		true, ts.Add(time.Second), 10, 0, TokenStats{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 		"", "", "",
 	)
-	sums, err := QueryAuthSubjectUsageSummaries(systemTenantID, []string{subject}, nil)
+	sums, err := QueryAIAccountSubjectUsageSummaries([]string{subject}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := sums[subject]
-	if s.RequestTotal30d != 2 || s.SuccessTotal30d != 1 || s.FailureTotal30d != 1 {
+	if s.RequestTotal != 2 || s.RequestTotal30d != 2 || s.SuccessTotal30d != 1 || s.FailureTotal30d != 1 {
 		t.Fatalf("summary=%+v", s)
+	}
+	var legacyRows int64
+	if err := getDB().QueryRow(`SELECT COUNT(*) FROM auth_subject_usage_daily WHERE auth_subject_id = ?`, subject).Scan(&legacyRows); err != nil {
+		t.Fatal(err)
+	}
+	if legacyRows != 0 {
+		t.Fatalf("legacy daily rows=%d want 0", legacyRows)
 	}
 }
 
@@ -293,7 +300,7 @@ func TestStaleRefreshNormalizationPreservesSnapshotPayload(t *testing.T) {
 	}
 }
 
-func TestUsageDailyProjectionUsesConfiguredTimezone(t *testing.T) {
+func TestAIAccountSubjectDayProjectionUsesConfiguredTimezone(t *testing.T) {
 	loc, err := time.LoadLocation("Asia/Singapore")
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +320,7 @@ func TestUsageDailyProjectionUsesConfiguredTimezone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := projectAuthSubjectUsageDailyTx(tx, systemTenantID, "sub-timezone", false, 1.25, at); err != nil {
+	if err := projectAIAccountSubjectUsageTx(tx, "sub-timezone", false, 1.25, at); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
@@ -321,7 +328,7 @@ func TestUsageDailyProjectionUsesConfiguredTimezone(t *testing.T) {
 		t.Fatal(err)
 	}
 	var dayKey string
-	if err := getDB().QueryRow(`SELECT day_key FROM auth_subject_usage_daily WHERE tenant_id = ? AND auth_subject_id = ?`, systemTenantID, "sub-timezone").Scan(&dayKey); err != nil {
+	if err := getDB().QueryRow(`SELECT bucket_start FROM ai_account_subject_usage_buckets WHERE auth_subject_id = ? AND bucket_kind = 'day'`, "sub-timezone").Scan(&dayKey); err != nil {
 		t.Fatal(err)
 	}
 	if want := at.In(loc).Format("2006-01-02"); dayKey != want {
@@ -452,7 +459,7 @@ func TestStatusReadsUseReadPoolWhileWriterBusy(t *testing.T) {
 			done <- fmt.Errorf("list status unexpected: %+v", rows)
 			return
 		}
-		sums, err := QueryAuthSubjectUsageSummaries(systemTenantID, []string{"sub-readpool"}, nil)
+		sums, err := QueryAIAccountSubjectUsageSummaries([]string{"sub-readpool"}, nil)
 		if err != nil {
 			done <- err
 			return

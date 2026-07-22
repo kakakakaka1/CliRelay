@@ -189,6 +189,13 @@ func TestRequestProjectionSharesUsageWithoutTouchingBindingAndSurvivesLogCleanup
 	if dayRows != 1 || dayRequests != 2 {
 		t.Fatalf("day projection rows=%d requests=%d", dayRows, dayRequests)
 	}
+	var legacyRows int64
+	if err := getDB().QueryRow(`SELECT COUNT(*) FROM auth_subject_usage_daily WHERE auth_subject_id = ?`, identity.ID).Scan(&legacyRows); err != nil {
+		t.Fatal(err)
+	}
+	if legacyRows != 0 {
+		t.Fatalf("legacy daily rows=%d want 0", legacyRows)
+	}
 
 	start7 := time.Now().UTC().AddDate(0, 0, -6).Format("2006-01-02")
 	start30 := time.Now().UTC().AddDate(0, 0, -29).Format("2006-01-02")
@@ -363,8 +370,8 @@ func TestSharedSubjectBackfillUsesOnlySmallTablesAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	cycleSummary := cycleSummaries[identity.ID]
-	if !cycleSummary.CycleKnown || cycleSummary.CycleRequestTotal != 2 || math.Abs(cycleSummary.CycleCostTotal-4) > 1e-9 {
-		t.Fatalf("backfilled current cycle=%+v", cycleSummary)
+	if !cycleSummary.CycleKnown || cycleSummary.CycleRequestTotal != 0 || cycleSummary.CycleCostTotal != 0 {
+		t.Fatalf("cycle usage must not be estimated from legacy days: %+v", cycleSummary)
 	}
 
 	second, err := RunAIAccountSharedSubjectBackfillAtInit()
@@ -377,6 +384,60 @@ func TestSharedSubjectBackfillUsesOnlySmallTablesAndIsIdempotent(t *testing.T) {
 	third, err := RunAIAccountSharedSubjectBackfillAtInit()
 	if err != nil || third.Checksum != report.Checksum || third.UsageRows != report.UsageRows || third.QuotaPoints != report.QuotaPoints {
 		t.Fatalf("pending rerun report=%+v err=%v first=%+v", third, err, report)
+	}
+}
+
+func TestProjectAIAccountSubjectUsageLoadsPrimaryCycleOnCacheMiss(t *testing.T) {
+	initSharedSubjectTestDB(t)
+	auth := sharedSubjectTestAuth(sharedSubjectTenantA, "cache-miss", "acct-cache-miss", "cache@example.com")
+	identity := ResolveAuthSubjectIdentity(auth)
+	if err := UpsertAIAccountTenantBinding(auth, identity); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	primaryReset := now.Add(48 * time.Hour)
+	additionalReset := now.Add(96 * time.Hour)
+	pct := 50.0
+	if err := RecordAIAccountSubjectQuotaPoints(identity.ID, "codex", []QuotaSnapshotPoint{
+		{RecordedAt: now, Provider: "codex", QuotaKey: "code_week", QuotaLabel: "Week", Percent: &pct, ResetAt: &primaryReset, WindowSeconds: 604800},
+		{RecordedAt: now.Add(time.Second), Provider: "codex", QuotaKey: "other_week", QuotaLabel: "Other week", Percent: &pct, ResetAt: &additionalReset, WindowSeconds: 1209600},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resetAIAccountSubjectCycleCache()
+
+	tx, err := getDB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projectAIAccountSubjectUsageTx(tx, identity.ID, false, 1.5, now); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	primaryStart := primaryReset.Add(-7 * 24 * time.Hour)
+	var bucketStart string
+	var requests int64
+	if err := getDB().QueryRow(`
+		SELECT bucket_start, request_count
+		FROM ai_account_subject_usage_buckets
+		WHERE auth_subject_id = ? AND bucket_kind = 'cycle'
+	`, identity.ID).Scan(&bucketStart, &requests); err != nil {
+		t.Fatal(err)
+	}
+	if bucketStart != formatAIAccountSubjectCycleBucketStart(primaryStart) || requests != 1 {
+		t.Fatalf("cycle bucket start=%q requests=%d want %q/1", bucketStart, requests, formatAIAccountSubjectCycleBucketStart(primaryStart))
+	}
+	summaries, err := QueryAIAccountSubjectUsageSummaries([]string{identity.ID}, map[string]time.Time{identity.ID: primaryStart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := summaries[identity.ID]; !got.CycleKnown || got.CycleRequestTotal != 1 {
+		t.Fatalf("cycle summary=%+v", got)
 	}
 }
 

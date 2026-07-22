@@ -9,33 +9,126 @@ import (
 )
 
 const aiAccountSubjectDayRetention = 400 * 24 * time.Hour
+const aiAccountSubjectWeeklyWindowSeconds = int64(7 * 24 * time.Hour / time.Second)
 
+// Keep every (subject, quota key) cycle so additional weekly windows cannot
+// replace the provider's primary card cycle.
 var sharedCycleCache = struct {
 	sync.RWMutex
-	bySubject map[string]AIAccountSubjectQuotaCycle
-}{bySubject: make(map[string]AIAccountSubjectQuotaCycle)}
+	bySubjectQuota map[string]map[string]AIAccountSubjectQuotaCycle
+}{bySubjectQuota: make(map[string]map[string]AIAccountSubjectQuotaCycle)}
 
 func resetAIAccountSubjectCycleCache() {
 	sharedCycleCache.Lock()
-	sharedCycleCache.bySubject = make(map[string]AIAccountSubjectQuotaCycle)
+	sharedCycleCache.bySubjectQuota = make(map[string]map[string]AIAccountSubjectQuotaCycle)
 	sharedCycleCache.Unlock()
 }
 
 func setAIAccountSubjectActiveCycle(cycle AIAccountSubjectQuotaCycle) {
-	if strings.TrimSpace(cycle.AuthSubjectID) == "" || cycle.CycleStartAt.IsZero() || cycle.ResetAt.IsZero() || cycle.WindowSeconds <= 0 {
+	subjectID := strings.TrimSpace(cycle.AuthSubjectID)
+	quotaKey := strings.TrimSpace(cycle.QuotaKey)
+	if subjectID == "" || quotaKey == "" || cycle.CycleStartAt.IsZero() || cycle.ResetAt.IsZero() || cycle.WindowSeconds <= 0 {
 		return
 	}
 	sharedCycleCache.Lock()
-	sharedCycleCache.bySubject[cycle.AuthSubjectID] = cycle
+	byQuota := sharedCycleCache.bySubjectQuota[subjectID]
+	if byQuota == nil {
+		byQuota = make(map[string]AIAccountSubjectQuotaCycle)
+		sharedCycleCache.bySubjectQuota[subjectID] = byQuota
+	}
+	byQuota[quotaKey] = cycle
 	sharedCycleCache.Unlock()
 }
 
-func aiAccountSubjectCycleAt(subjectID string, at time.Time) (AIAccountSubjectQuotaCycle, bool) {
+func primaryAIAccountSubjectWeeklyQuotaKey(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "anthropic", "claude":
+		return "seven_day"
+	case "codex", "kimi":
+		return "code_week"
+	case "xai", "grok":
+		return "weekly_limit"
+	default:
+		return ""
+	}
+}
+
+func selectAIAccountSubjectWeeklyCycle(cycles []AIAccountSubjectQuotaCycle) (AIAccountSubjectQuotaCycle, bool) {
+	var selected AIAccountSubjectQuotaCycle
+	for _, cycle := range cycles {
+		if cycle.WindowSeconds < aiAccountSubjectWeeklyWindowSeconds || cycle.CycleStartAt.IsZero() || cycle.ResetAt.IsZero() {
+			continue
+		}
+		primaryKey := primaryAIAccountSubjectWeeklyQuotaKey(cycle.Provider)
+		if primaryKey != "" && strings.TrimSpace(cycle.QuotaKey) != primaryKey {
+			continue
+		}
+		if selected.AuthSubjectID == "" || cycle.LastVerifiedAt.After(selected.LastVerifiedAt) {
+			selected = cycle
+		}
+	}
+	return selected, selected.AuthSubjectID != ""
+}
+
+func cachedAIAccountSubjectWeeklyCycle(subjectID string) (AIAccountSubjectQuotaCycle, bool) {
+	subjectID = strings.TrimSpace(subjectID)
+	cycles := make([]AIAccountSubjectQuotaCycle, 0)
 	sharedCycleCache.RLock()
-	cycle, ok := sharedCycleCache.bySubject[strings.TrimSpace(subjectID)]
+	for _, cycle := range sharedCycleCache.bySubjectQuota[subjectID] {
+		cycles = append(cycles, cycle)
+	}
 	sharedCycleCache.RUnlock()
-	if !ok || cycle.WindowSeconds <= 0 || cycle.CycleStartAt.IsZero() || cycle.ResetAt.IsZero() {
-		return AIAccountSubjectQuotaCycle{}, false
+	return selectAIAccountSubjectWeeklyCycle(cycles)
+}
+
+func loadAIAccountSubjectWeeklyCycleTx(tx *sql.Tx, subjectID string) (AIAccountSubjectQuotaCycle, bool, error) {
+	rows, err := tx.Query(`
+		SELECT auth_subject_id, provider, quota_key, cycle_start_at, reset_at, window_seconds, last_verified_at
+		FROM ai_account_subject_quota_cycles
+		WHERE auth_subject_id = ? AND window_seconds >= ?
+		ORDER BY last_verified_at DESC, reset_at DESC
+	`, subjectID, aiAccountSubjectWeeklyWindowSeconds)
+	if err != nil {
+		return AIAccountSubjectQuotaCycle{}, false, fmt.Errorf("usage: load shared subject quota cycle: %w", err)
+	}
+	defer rows.Close()
+	cycles := make([]AIAccountSubjectQuotaCycle, 0)
+	for rows.Next() {
+		var cycle AIAccountSubjectQuotaCycle
+		var start, reset, verified storedTime
+		if err := rows.Scan(&cycle.AuthSubjectID, &cycle.Provider, &cycle.QuotaKey, &start, &reset, &cycle.WindowSeconds, &verified); err != nil {
+			return AIAccountSubjectQuotaCycle{}, false, err
+		}
+		if start.Valid {
+			cycle.CycleStartAt = start.Time
+		}
+		if reset.Valid {
+			cycle.ResetAt = reset.Time
+		}
+		if verified.Valid {
+			cycle.LastVerifiedAt = verified.Time
+		}
+		setAIAccountSubjectActiveCycle(cycle)
+		cycles = append(cycles, cycle)
+	}
+	if err := rows.Err(); err != nil {
+		return AIAccountSubjectQuotaCycle{}, false, err
+	}
+	cycle, ok := selectAIAccountSubjectWeeklyCycle(cycles)
+	return cycle, ok, nil
+}
+
+func aiAccountSubjectCycleAt(tx *sql.Tx, subjectID string, at time.Time) (AIAccountSubjectQuotaCycle, bool, error) {
+	cycle, ok := cachedAIAccountSubjectWeeklyCycle(subjectID)
+	if !ok {
+		var err error
+		cycle, ok, err = loadAIAccountSubjectWeeklyCycleTx(tx, strings.TrimSpace(subjectID))
+		if err != nil {
+			return AIAccountSubjectQuotaCycle{}, false, err
+		}
+	}
+	if !ok {
+		return AIAccountSubjectQuotaCycle{}, false, nil
 	}
 	at = at.UTC()
 	window := time.Duration(cycle.WindowSeconds) * time.Second
@@ -43,7 +136,11 @@ func aiAccountSubjectCycleAt(subjectID string, at time.Time) (AIAccountSubjectQu
 		cycle.CycleStartAt = cycle.ResetAt
 		cycle.ResetAt = cycle.ResetAt.Add(window)
 	}
-	return cycle, !at.Before(cycle.CycleStartAt)
+	return cycle, !at.Before(cycle.CycleStartAt), nil
+}
+
+func formatAIAccountSubjectCycleBucketStart(value time.Time) string {
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 // projectAIAccountSubjectUsageTx is the request-hot B-layer projection. It only
@@ -74,8 +171,12 @@ func projectAIAccountSubjectUsageTx(tx *sql.Tx, authSubjectID string, failed boo
 		{kind: "day", start: at.In(loc).Format("2006-01-02")},
 		{kind: "lifetime", start: rollupLifetimeStart},
 	}
-	if cycle, ok := aiAccountSubjectCycleAt(authSubjectID, at); ok {
-		buckets = append(buckets, struct{ kind, start string }{kind: "cycle", start: cycle.CycleStartAt.UTC().Format(time.RFC3339Nano)})
+	cycle, cycleKnown, err := aiAccountSubjectCycleAt(tx, authSubjectID, at)
+	if err != nil {
+		return err
+	}
+	if cycleKnown {
+		buckets = append(buckets, struct{ kind, start string }{kind: "cycle", start: formatAIAccountSubjectCycleBucketStart(cycle.CycleStartAt)})
 	}
 	const upsert = `
 		INSERT INTO ai_account_subject_usage_buckets (
@@ -268,7 +369,7 @@ func QueryAIAccountSubjectUsageSummaries(subjectIDs []string, cycleStartBySubjec
 		if _, ok := out[id]; !ok || start.IsZero() {
 			continue
 		}
-		startKey := start.UTC().Format(time.RFC3339Nano)
+		startKey := formatAIAccountSubjectCycleBucketStart(start)
 		s := out[id]
 		s.CycleKnown = true
 		s.CycleStart = start.UTC().Format(time.RFC3339)
@@ -310,7 +411,7 @@ func QueryAIAccountSubjectUsageSummaries(subjectIDs []string, cycleStartBySubjec
 			return nil, err
 		}
 		expected, ok := cycleStartBySubject[id]
-		if !ok || bucketStart != expected.UTC().Format(time.RFC3339Nano) {
+		if !ok || bucketStart != formatAIAccountSubjectCycleBucketStart(expected) {
 			continue
 		}
 		s := out[id]

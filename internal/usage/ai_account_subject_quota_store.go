@@ -30,6 +30,7 @@ func RecordAIAccountSubjectQuotaPoints(authSubjectID, provider string, points []
 	}
 	defer func() { _ = tx.Rollback() }()
 	now := time.Now().UTC()
+	cycles := make([]AIAccountSubjectQuotaCycle, 0, len(points))
 	for _, point := range points {
 		key := strings.TrimSpace(point.QuotaKey)
 		if key == "" {
@@ -67,7 +68,7 @@ func RecordAIAccountSubjectQuotaPoints(authSubjectID, provider string, points []
 			if err := upsertAIAccountSubjectQuotaCycleTx(tx, cycle); err != nil {
 				return err
 			}
-			setAIAccountSubjectActiveCycle(cycle)
+			cycles = append(cycles, cycle)
 		}
 		var latestAt sql.NullString
 		var latestPercent sql.NullFloat64
@@ -100,6 +101,9 @@ func RecordAIAccountSubjectQuotaPoints(authSubjectID, provider string, points []
 	}
 	if err := tx.Commit(); err != nil {
 		return err
+	}
+	for _, cycle := range cycles {
+		setAIAccountSubjectActiveCycle(cycle)
 	}
 	return nil
 }
@@ -206,15 +210,16 @@ func QueryLatestAIAccountSubjectWeeklyCyclesBatch(subjectIDs []string, preferred
 	if db == nil || len(ids) == 0 {
 		return out, nil
 	}
-	args := make([]any, 0, len(ids)+len(preferredKeys))
+	args := make([]any, 0, len(ids)+len(preferredKeys)+1)
 	for _, id := range ids {
 		args = append(args, id)
 	}
+	args = append(args, aiAccountSubjectWeeklyWindowSeconds)
 	query := `
 		SELECT auth_subject_id, provider, quota_key, cycle_start_at, reset_at, window_seconds, last_verified_at
 		FROM ai_account_subject_quota_cycles
 		WHERE auth_subject_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + `)
-		  AND window_seconds >= 604800`
+		  AND window_seconds >= ?`
 	keys := dedupeExactStrings(preferredKeys)
 	if len(keys) > 0 {
 		query += ` AND quota_key IN (` + strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",") + `)`
@@ -228,6 +233,7 @@ func QueryLatestAIAccountSubjectWeeklyCyclesBatch(subjectIDs []string, preferred
 		return nil, fmt.Errorf("usage: query shared quota cycles: %w", err)
 	}
 	defer rows.Close()
+	cyclesBySubject := make(map[string][]AIAccountSubjectQuotaCycle)
 	for rows.Next() {
 		var cycle AIAccountSubjectQuotaCycle
 		var start, reset, verified storedTime
@@ -244,11 +250,17 @@ func QueryLatestAIAccountSubjectWeeklyCyclesBatch(subjectIDs []string, preferred
 			cycle.LastVerifiedAt = verified.Time
 		}
 		setAIAccountSubjectActiveCycle(cycle)
-		if _, exists := out[cycle.AuthSubjectID]; !exists {
-			out[cycle.AuthSubjectID] = cycle.CycleStartAt
+		cyclesBySubject[cycle.AuthSubjectID] = append(cyclesBySubject[cycle.AuthSubjectID], cycle)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for subjectID, cycles := range cyclesBySubject {
+		if cycle, ok := selectAIAccountSubjectWeeklyCycle(cycles); ok {
+			out[subjectID] = cycle.CycleStartAt
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func loadAIAccountSubjectCycleCache(db *sql.DB) error {
@@ -258,24 +270,19 @@ func loadAIAccountSubjectCycleCache(db *sql.DB) error {
 	}
 	rows, err := db.Query(`
 		SELECT auth_subject_id, provider, quota_key, cycle_start_at, reset_at, window_seconds, last_verified_at
-		FROM ai_account_subject_quota_cycles WHERE window_seconds > 0
+		FROM ai_account_subject_quota_cycles WHERE window_seconds >= ?
 		ORDER BY last_verified_at DESC
-	`)
+	`, aiAccountSubjectWeeklyWindowSeconds)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	seen := map[string]struct{}{}
 	for rows.Next() {
 		var cycle AIAccountSubjectQuotaCycle
 		var start, reset, verified storedTime
 		if err := rows.Scan(&cycle.AuthSubjectID, &cycle.Provider, &cycle.QuotaKey, &start, &reset, &cycle.WindowSeconds, &verified); err != nil {
 			return err
 		}
-		if _, ok := seen[cycle.AuthSubjectID]; ok {
-			continue
-		}
-		seen[cycle.AuthSubjectID] = struct{}{}
 		if start.Valid {
 			cycle.CycleStartAt = start.Time
 		}

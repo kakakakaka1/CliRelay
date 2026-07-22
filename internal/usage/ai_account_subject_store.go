@@ -298,8 +298,7 @@ func UpsertAIAccountTenantBinding(auth *coreauth.Auth, identity *AuthSubjectIden
 	if err != nil {
 		return fmt.Errorf("usage: upsert ai account tenant binding: %w", err)
 	}
-	// Low-frequency lifecycle reconciliation may merge old small-table state.
-	return BackfillAIAccountSharedSubject(identity.ID)
+	return nil
 }
 
 func MarkAIAccountTenantBindingDeleted(tenantID, authID string) error {
@@ -601,7 +600,7 @@ func nullableTimeValue(value *time.Time) any {
 }
 
 // BackfillAIAccountSharedSubject merges only existing small projections. It
-// never reads request_logs; detail retention therefore cannot reset card data.
+// never writes cycle usage because legacy daily rows lack exact cycle timestamps.
 func BackfillAIAccountSharedSubject(subjectID string) error {
 	db := getDB()
 	subjectID = strings.TrimSpace(subjectID)
@@ -791,6 +790,8 @@ func backfillSharedLifetimeForSubject(db *sql.DB, subjectID string) error {
 	return err
 }
 
+// backfillSharedQuotaCyclesForSubject migrates cycle definitions only. Cycle
+// usage is projected from requests with exact timestamps.
 func backfillSharedQuotaCyclesForSubject(db *sql.DB, subjectID string) error {
 	rows, err := db.Query(`
 		SELECT provider, quota_key, cycle_start_at, reset_at, window_seconds, last_verified_at
@@ -821,7 +822,6 @@ func backfillSharedQuotaCyclesForSubject(db *sql.DB, subjectID string) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	cycleStarts := make(map[string]struct{}, len(batch))
 	for _, row := range batch {
 		startValue, okStart := requiredStoredTimeArg(row.start)
 		resetValue, okReset := requiredStoredTimeArg(row.reset)
@@ -843,21 +843,8 @@ func backfillSharedQuotaCyclesForSubject(db *sql.DB, subjectID string) error {
 		`, subjectID, row.provider, row.key, startValue, resetValue, row.window, verifiedValue); err != nil {
 			return err
 		}
-		cycleStarts[startValue] = struct{}{}
-	}
-	for start := range cycleStarts {
-		if err := backfillSharedCycleUsageForSubject(db, subjectID, start); err != nil {
-			return err
-		}
 	}
 	return nil
-}
-
-func canonicalAIAccountSubjectTime(value string) string {
-	if parsed, ok := parseStoredTimeString(value); ok {
-		return parsed.UTC().Format(time.RFC3339Nano)
-	}
-	return strings.TrimSpace(value)
 }
 
 // nullableStoredTimeArg returns a canonical RFC3339Nano string or nil (SQL NULL).
@@ -880,47 +867,6 @@ func requiredStoredTimeArg(value string) (string, bool) {
 	}
 	s, ok := arg.(string)
 	return s, ok && s != ""
-}
-
-// Current-cycle migration is intentionally estimated from the legacy daily
-// projection. It never scans request_logs, so the first partial day may be
-// conservative until the next full provider cycle starts.
-func backfillSharedCycleUsageForSubject(db *sql.DB, subjectID, cycleStart string) error {
-	startAt, ok := parseStoredTimeString(cycleStart)
-	if !ok {
-		return nil
-	}
-	startDay := startAt.In(getUsageLocation()).Format("2006-01-02")
-	var req, success, failure int64
-	var cost float64
-	var updated sql.NullString
-	if err := db.QueryRow(`
-		SELECT COALESCE(SUM(request_count),0), COALESCE(SUM(success_count),0),
-			COALESCE(SUM(failure_count),0), COALESCE(SUM(cost_total),0), MAX(updated_at)
-		FROM auth_subject_usage_daily
-		WHERE auth_subject_id = ? AND day_key >= ?
-	`, subjectID, startDay).Scan(&req, &success, &failure, &cost, &updated); err != nil {
-		return fmt.Errorf("usage: backfill shared cycle usage: %w", err)
-	}
-	if req == 0 {
-		return nil
-	}
-	updatedValue := nullableStoredTimeArg(updated.String)
-	if updatedValue == nil {
-		updatedValue = cycleStart
-	}
-	_, err := db.Exec(`
-		INSERT INTO ai_account_subject_usage_buckets
-			(auth_subject_id, bucket_kind, bucket_start, request_count, success_count, failure_count, cost_total, first_event_at, updated_at)
-		VALUES (?, 'cycle', ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(auth_subject_id, bucket_kind, bucket_start) DO UPDATE SET
-			request_count = CASE WHEN excluded.request_count > ai_account_subject_usage_buckets.request_count THEN excluded.request_count ELSE ai_account_subject_usage_buckets.request_count END,
-			success_count = CASE WHEN excluded.success_count > ai_account_subject_usage_buckets.success_count THEN excluded.success_count ELSE ai_account_subject_usage_buckets.success_count END,
-			failure_count = CASE WHEN excluded.failure_count > ai_account_subject_usage_buckets.failure_count THEN excluded.failure_count ELSE ai_account_subject_usage_buckets.failure_count END,
-			cost_total = CASE WHEN excluded.cost_total > ai_account_subject_usage_buckets.cost_total THEN excluded.cost_total ELSE ai_account_subject_usage_buckets.cost_total END,
-			updated_at = CASE WHEN excluded.updated_at > ai_account_subject_usage_buckets.updated_at THEN excluded.updated_at ELSE ai_account_subject_usage_buckets.updated_at END
-	`, subjectID, cycleStart, req, success, failure, cost, cycleStart, updatedValue)
-	return err
 }
 
 func backfillSharedQuotaPointsForSubject(db *sql.DB, subjectID string) error {

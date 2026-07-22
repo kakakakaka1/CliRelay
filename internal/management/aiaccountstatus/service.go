@@ -128,7 +128,7 @@ func (s *Service) StartRefresh(tenantID string, req RefreshRequest) RefreshAccep
 	// Refresh boundary: allow stale cleanup without waiting for GET throttle alone.
 	s.maybeNormalizeStaleRefresh(tenantID)
 	auths := s.listAuths(tenantID)
-	// Best-effort: still start refresh even if some legacy bindings fail to reconcile.
+	// Best-effort: still start refresh even if some binding repairs fail.
 	_ = reconcileTenantBindings(auths)
 	byIndex := make(map[string]*coreauth.Auth, len(auths))
 	bySubject := make(map[string]*coreauth.Auth, len(auths))
@@ -552,7 +552,28 @@ func (s *Service) refreshOne(jobID, tenantID string, auth *coreauth.Auth, subjec
 		}
 	}
 
-	// Latest-status persistence is the trust boundary: write failure must not be reported as success.
+	// Persist the shared runtime truth before the legacy tenant mirror. Shared
+	// status/version must not depend on a legacy reload succeeding.
+	if err := usage.UpsertAIAccountSubjectStatus(usage.AIAccountSubjectStatusRecord{
+		AuthSubjectID: subjectID, Provider: auth.Provider, LastProbeState: string(RefreshSuccess),
+		HealthStatus: healthStatus, PlanType: strings.TrimSpace(probe.PlanType),
+		SubscriptionStartedAt: probe.SubscriptionStartedAt, SubscriptionExpiresAt: probe.SubscriptionExpiresAt,
+		SubscriptionSource: probe.SubscriptionSource, RestrictionSummary: record.RestrictionSummary, Quotas: probe.Quotas,
+		ResetCreditCount: probe.ResetCreditCount, ResetCreditExpirations: probe.ResetCreditExpirations,
+		UpstreamCheckedAt: &checked, UpdatedAt: checked,
+	}); err != nil {
+		_ = usage.UpdateAIAccountRefreshFailure(tenantID, subjectID, auth.Index, auth.Provider, string(auth.Status), "persist_failed", err.Error(), checked)
+		s.setResult(jobID, subjectID, func(r *AccountRefreshResult) {
+			r.State = RefreshError
+			r.ErrorCode = "persist_failed"
+			r.ErrorMessage = sanitizeMsg(err.Error())
+			r.UpdatedAt = checked
+			r.Result = nil
+		})
+		return
+	}
+
+	// Keep the legacy tenant mirror for compatibility while shared remains authoritative.
 	upsert := s.upsertStatus
 	if upsert == nil {
 		upsert = usage.UpsertAIAccountStatus
@@ -582,24 +603,6 @@ func (s *Service) refreshOne(jobID, tenantID string, auth *coreauth.Auth, subjec
 			r.State = RefreshError
 			r.ErrorCode = "persist_reload_failed"
 			r.ErrorMessage = sanitizeMsg(msg)
-			r.UpdatedAt = checked
-			r.Result = nil
-		})
-		return
-	}
-	if err := usage.UpsertAIAccountSubjectStatus(usage.AIAccountSubjectStatusRecord{
-		AuthSubjectID: subjectID, Provider: auth.Provider, LastProbeState: string(RefreshSuccess),
-		HealthStatus: healthStatus, PlanType: strings.TrimSpace(probe.PlanType),
-		SubscriptionStartedAt: probe.SubscriptionStartedAt, SubscriptionExpiresAt: probe.SubscriptionExpiresAt,
-		SubscriptionSource: probe.SubscriptionSource, RestrictionSummary: record.RestrictionSummary, Quotas: probe.Quotas,
-		ResetCreditCount: probe.ResetCreditCount, ResetCreditExpirations: probe.ResetCreditExpirations,
-		UpstreamCheckedAt: &checked, Version: legacyPersisted.Version, UpdatedAt: checked,
-	}); err != nil {
-		_ = usage.UpdateAIAccountRefreshFailure(tenantID, subjectID, auth.Index, auth.Provider, string(auth.Status), "persist_failed", err.Error(), checked)
-		s.setResult(jobID, subjectID, func(r *AccountRefreshResult) {
-			r.State = RefreshError
-			r.ErrorCode = "persist_failed"
-			r.ErrorMessage = sanitizeMsg(err.Error())
 			r.UpdatedAt = checked
 			r.Result = nil
 		})
@@ -969,7 +972,7 @@ func reconcileTenantBindings(auths []*coreauth.Auth) error {
 	for _, row := range rows {
 		byID[row.AuthID] = row
 	}
-	// Best-effort per auth: one bad legacy row must not 500 the whole status list.
+	// Best-effort per auth: one bad binding row must not 500 the whole status list.
 	var firstErr error
 	for _, auth := range auths {
 		if auth == nil {

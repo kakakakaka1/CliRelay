@@ -498,7 +498,7 @@ func resolveEndUserIDForKey(apiKey string) string {
 	return strings.TrimSpace(row.EndUserID)
 }
 
-// commitLogWithProjections writes tenant rollup, shared subject buckets, then legacy tenant daily and commits.
+// commitLogWithProjections writes tenant rollup and shared subject buckets, then commits.
 // Caller must already hold usageProjectionMu.RLock (see insertLogIdentity).
 func commitLogWithProjections(tx *sql.Tx, ev rollupEvent) error {
 	if err := projectUsageRollupTx(tx, ev); err != nil {
@@ -509,10 +509,6 @@ func commitLogWithProjections(tx *sql.Tx, ev rollupEvent) error {
 		if err := projectAIAccountSubjectUsageTx(tx, ev.AuthSubjectID, ev.Failed, ev.Cost, ev.At); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("project shared auth subject usage: %w", err)
-		}
-		if err := projectAuthSubjectUsageDailyTx(tx, ev.TenantID, ev.AuthSubjectID, ev.Failed, ev.Cost, ev.At); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("project auth subject usage daily: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

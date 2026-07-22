@@ -225,9 +225,12 @@ func TestListStatusDoesNotReadRequestLogs(t *testing.T) {
 	}
 	pct := 65.0
 	now := time.Now().UTC()
-	if err := usage.UpsertAIAccountStatus(usage.AIAccountStatusRecord{
-		TenantID: "tenant-read-model", AuthSubjectID: identity.ID, AuthIndex: auth.EnsureIndex(), Provider: "codex",
-		RefreshState: "success", PlanType: "plus", Quotas: []usage.QuotaWindowDTO{{QuotaKey: "code_week", Percent: &pct}}, UpdatedAt: now,
+	if err := usage.UpsertAIAccountSubject(identity); err != nil {
+		t.Fatal(err)
+	}
+	if err := usage.UpsertAIAccountSubjectStatus(usage.AIAccountSubjectStatusRecord{
+		AuthSubjectID: identity.ID, Provider: "codex", LastProbeState: string(RefreshSuccess),
+		PlanType: "plus", Quotas: []usage.QuotaWindowDTO{{QuotaKey: "code_week", Percent: &pct}}, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -418,20 +421,22 @@ func TestProgressiveSuccessResultUsesDBVersion(t *testing.T) {
 	if identity == nil {
 		t.Fatal("missing identity")
 	}
-	// Bump DB version well above 0.
+	if err := usage.UpsertAIAccountSubject(identity); err != nil {
+		t.Fatal(err)
+	}
+	// Bump shared DB version well above 0.
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
 		pct := float64(10 + i)
-		if err := usage.UpsertAIAccountStatus(usage.AIAccountStatusRecord{
-			TenantID: "tenant-ver", AuthSubjectID: identity.ID, AuthIndex: auth.EnsureIndex(), Provider: "codex",
-			RefreshState: "success", PlanType: "plus",
+		if err := usage.UpsertAIAccountSubjectStatus(usage.AIAccountSubjectStatusRecord{
+			AuthSubjectID: identity.ID, Provider: "codex", LastProbeState: string(RefreshSuccess), PlanType: "plus",
 			Quotas:            []usage.QuotaWindowDTO{{QuotaKey: "code_week", Percent: &pct}},
 			UpstreamCheckedAt: &now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	before, err := usage.ListAIAccountStatusForTenant("tenant-ver", []string{identity.ID})
+	before, err := usage.ListAIAccountSubjectStatus([]string{identity.ID})
 	if err != nil || len(before) != 1 {
 		t.Fatalf("before=%v err=%v", before, err)
 	}
@@ -457,7 +462,7 @@ func TestProgressiveSuccessResultUsesDBVersion(t *testing.T) {
 	if progressive == nil {
 		t.Fatalf("missing progressive result: %+v", snap.Results)
 	}
-	after, err := usage.ListAIAccountStatusForTenant("tenant-ver", []string{identity.ID})
+	after, err := usage.ListAIAccountSubjectStatus([]string{identity.ID})
 	if err != nil || len(after) != 1 {
 		t.Fatalf("after=%v err=%v", after, err)
 	}
@@ -585,9 +590,11 @@ func TestFreshSkipUsesBatchLoadNotPerAccountUnderLock(t *testing.T) {
 	now := time.Now().UTC()
 	for _, auth := range []*coreauth.Auth{a1, a2} {
 		id := usage.ResolveAuthSubjectIdentity(auth)
-		if err := usage.UpsertAIAccountStatus(usage.AIAccountStatusRecord{
-			TenantID: "tenant-fresh", AuthSubjectID: id.ID, AuthIndex: auth.EnsureIndex(), Provider: "codex",
-			RefreshState: "success", UpstreamCheckedAt: &now, UpdatedAt: now,
+		if err := usage.UpsertAIAccountSubject(id); err != nil {
+			t.Fatal(err)
+		}
+		if err := usage.UpsertAIAccountSubjectStatus(usage.AIAccountSubjectStatusRecord{
+			AuthSubjectID: id.ID, Provider: "codex", LastProbeState: string(RefreshSuccess), UpstreamCheckedAt: &now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -762,6 +769,13 @@ func TestPersistReloadFailedDoesNotReportSuccess(t *testing.T) {
 			t.Fatalf("Result must be nil, got %+v", r.Result)
 		}
 	}
+	shared, err := usage.ListAIAccountSubjectStatus([]string{identity.ID})
+	if err != nil || len(shared) != 1 {
+		t.Fatalf("shared status=%+v err=%v", shared, err)
+	}
+	if shared[0].LastProbeState != string(RefreshSuccess) || shared[0].PlanType != "team" || len(shared[0].Quotas) != 1 {
+		t.Fatalf("legacy reload failure blocked shared status: %+v", shared[0])
+	}
 }
 
 func TestListStatusNewTenantBindingReadsExistingSharedStatus(t *testing.T) {
@@ -800,6 +814,40 @@ func TestListStatusNewTenantBindingReadsExistingSharedStatus(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	resetAt := checked.Add(48 * time.Hour)
+	cycleStart := resetAt.Add(-7 * 24 * time.Hour)
+	if err := usage.RecordAIAccountSubjectQuotaPoints(identity.ID, "codex", []usage.QuotaSnapshotPoint{{
+		RecordedAt: checked, Provider: "codex", QuotaKey: "code_week", QuotaLabel: "Week",
+		Percent: &pct, ResetAt: &resetAt, WindowSeconds: 604800,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(`
+		INSERT INTO ai_account_subject_usage_buckets
+			(auth_subject_id, bucket_kind, bucket_start, request_count, success_count, failure_count, cost_total, first_event_at, updated_at)
+		VALUES (?, 'cycle', ?, 1, 1, 0, 1, ?, ?)
+	`, identity.ID, cycleStart.Format(time.RFC3339Nano), cycleStart.Format(time.RFC3339Nano), checked.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(`
+		INSERT INTO auth_subject_usage_daily
+			(tenant_id, auth_subject_id, day_key, request_count, success_count, failure_count, cost_total, updated_at)
+		VALUES (?, ?, ?, 9, 9, 0, 9, ?)
+	`, authA.TenantID, identity.ID, cycleStart.Format("2006-01-02"), checked.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(`
+		INSERT INTO auth_subject_quota_cycles
+			(tenant_id, subject_id, auth_index, provider, quota_key, cycle_start_at, reset_at, window_seconds, last_verified_at)
+		VALUES (?, ?, ?, 'codex', 'code_week', ?, ?, 604800, ?)
+	`, authA.TenantID, identity.ID, authA.EnsureIndex(), cycleStart.Format(time.RFC3339Nano), resetAt.Format(time.RFC3339Nano), checked.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
 
 	// Mounting the same physical account in tenant B repairs only B's missing binding,
 	// then immediately reads the already-populated shared subject snapshot.
@@ -817,6 +865,9 @@ func TestListStatusNewTenantBindingReadsExistingSharedStatus(t *testing.T) {
 	}
 	if item.CurrentTenantBindingCount != 1 || item.AuthIndex != authB.EnsureIndex() {
 		t.Fatalf("tenant B binding projection=%+v", item)
+	}
+	if !item.Usage.CycleKnown || item.Usage.CycleRequestTotal != 1 {
+		t.Fatalf("binding repair changed shared cycle usage: %+v", item.Usage)
 	}
 }
 
