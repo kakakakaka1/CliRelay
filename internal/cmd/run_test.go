@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
@@ -101,6 +102,65 @@ func TestBootstrapIdentityEmptyPasswordErrorIncludesConfigSource(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "remote-management.secret-key") {
 		t.Fatalf("bootstrapIdentity() error = %q, want config source", err)
+	}
+}
+
+func TestRuntimeDataStackPostStartHooksRunMaintenanceAsynchronously(t *testing.T) {
+	sharedBackfillStarted := make(chan struct{})
+	releaseSharedBackfill := make(chan struct{})
+	sharedBackfillRan := make(chan struct{}, 1)
+	catchupScheduled := make(chan struct{}, 1)
+
+	hooks := runtimeDataStackPostStartHooks(runtimeDataStackMaintenanceOps{
+		runAIAccountSharedSubjectBackfill: func() error {
+			close(sharedBackfillStarted)
+			<-releaseSharedBackfill
+			sharedBackfillRan <- struct{}{}
+			return nil
+		},
+		scheduleUsageRollupCatchup: func() {
+			catchupScheduled <- struct{}{}
+		},
+	})
+
+	select {
+	case <-sharedBackfillStarted:
+		t.Fatal("maintenance started before OnAfterStart")
+	default:
+	}
+
+	hookReturned := make(chan struct{})
+	go func() {
+		hooks.OnAfterStart(nil)
+		close(hookReturned)
+	}()
+
+	select {
+	case <-hookReturned:
+	case <-time.After(time.Second):
+		t.Fatal("OnAfterStart blocked on runtime data maintenance")
+	}
+	select {
+	case <-sharedBackfillStarted:
+	case <-time.After(time.Second):
+		t.Fatal("post-start shared subject backfill did not start")
+	}
+	select {
+	case <-sharedBackfillRan:
+		t.Fatal("shared subject backfill completed before it was released")
+	default:
+	}
+
+	close(releaseSharedBackfill)
+	select {
+	case <-sharedBackfillRan:
+	case <-time.After(time.Second):
+		t.Fatal("shared subject backfill did not complete after release")
+	}
+	select {
+	case <-catchupScheduled:
+	case <-time.After(time.Second):
+		t.Fatal("blue-green rollup catch-up was not scheduled")
 	}
 }
 

@@ -45,6 +45,7 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 		WithConfig(cfg).
 		WithConfigPath(configPath).
 		WithCoreAuthHook(usage.NewAIAccountBindingHook()).
+		WithHooks(runtimeDataStackPostStartHooks(defaultRuntimeDataStackMaintenanceOps())).
 		WithLocalManagementPassword(localPassword)
 
 	ctxSignal, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -88,6 +89,7 @@ func StartServiceBackground(cfg *config.Config, configPath string, localPassword
 		WithConfig(cfg).
 		WithConfigPath(configPath).
 		WithCoreAuthHook(usage.NewAIAccountBindingHook()).
+		WithHooks(runtimeDataStackPostStartHooks(defaultRuntimeDataStackMaintenanceOps())).
 		WithLocalManagementPassword(localPassword)
 
 	ctx, cancelFn := context.WithCancel(context.Background())
@@ -166,17 +168,6 @@ func initializeRuntimeDataStack(cfg *config.Config, configPath string, loc *time
 	} else if created > 0 {
 		log.Infof("enduser: backfilled %d end users from api keys", created)
 	}
-	// After keys + end-user ownership are stable, rebuild usage rollup once.
-	// Metadata cleanup is gated on this marker so detail retention cannot run first.
-	if err := usage.RunUsageRollupBackfillAtInit(); err != nil {
-		return fmt.Errorf("usage rollup backfill: %w", err)
-	}
-	if _, err := usage.RunAIAccountSharedSubjectBackfillAtInit(); err != nil {
-		return fmt.Errorf("ai account shared subject backfill: %w", err)
-	}
-	// Old blue-green slot may keep writing request_logs without rollup until drain.
-	// Catch-up absolute rebuilds after drain so those rows are not permanently missing.
-	usage.ScheduleUsageRollupBlueGreenCatchup()
 	usage.MigrateAPIKeyPermissionProfilesFromYAML(configPath)
 	usage.MigrateRoutingConfigFromConfig(cfg, configPath)
 	usage.ApplyStoredRoutingConfig(cfg)
@@ -195,6 +186,49 @@ func initializeRuntimeDataStack(cfg *config.Config, configPath string, loc *time
 		middleware.RecordTokenUsageForRequest(apiKey, endUserID, totalTokens)
 	})
 	return nil
+}
+
+type runtimeDataStackMaintenanceOps struct {
+	runAIAccountSharedSubjectBackfill func() error
+	scheduleUsageRollupCatchup        func()
+}
+
+func defaultRuntimeDataStackMaintenanceOps() runtimeDataStackMaintenanceOps {
+	return runtimeDataStackMaintenanceOps{
+		runAIAccountSharedSubjectBackfill: func() error {
+			_, err := usage.RunAIAccountSharedSubjectBackfillAtInit()
+			return err
+		},
+		scheduleUsageRollupCatchup: usage.ScheduleUsageRollupBlueGreenCatchup,
+	}
+}
+
+func runtimeDataStackPostStartHooks(ops runtimeDataStackMaintenanceOps) cliproxy.Hooks {
+	return cliproxy.Hooks{OnAfterStart: func(*cliproxy.Service) {
+		go runRuntimeDataStackPostStartMaintenance(ops)
+	}}
+}
+
+func runRuntimeDataStackPostStartMaintenance(ops runtimeDataStackMaintenanceOps) {
+	startedAt := time.Now()
+	log.Info("usage: post-listen runtime data maintenance started")
+
+	if ops.runAIAccountSharedSubjectBackfill != nil {
+		stepStartedAt := time.Now()
+		if err := ops.runAIAccountSharedSubjectBackfill(); err != nil {
+			log.WithError(err).Error("usage: post-listen ai account shared subject backfill failed")
+		} else {
+			log.Infof("usage: post-listen ai account shared subject backfill completed in %s", time.Since(stepStartedAt).Round(time.Millisecond))
+		}
+	}
+	// Old blue-green slot may keep writing request_logs until drain. Run the one
+	// absolute rebuild only after the drain window so it includes both slots and
+	// cannot block the HTTP listener or deployment readiness.
+	if ops.scheduleUsageRollupCatchup != nil {
+		ops.scheduleUsageRollupCatchup()
+	}
+
+	log.Infof("usage: post-listen runtime data maintenance scheduled in %s", time.Since(startedAt).Round(time.Millisecond))
 }
 
 // WaitForCloudDeploy waits indefinitely for shutdown signals in cloud deploy mode
