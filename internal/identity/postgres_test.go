@@ -200,6 +200,106 @@ func TestPostgresIdentityLifecycle(t *testing.T) {
 	}
 }
 
+func TestPostgresTenantAdminUserProtection(t *testing.T) {
+	dsn := os.Getenv("CLIRELAY_POSTGRES_TEST_DSN")
+	if dsn == "" {
+		t.Skip("CLIRELAY_POSTGRES_TEST_DSN is not set")
+	}
+	postgrestest.LockSharedRuntimeDB(t, dsn)
+	ctx := context.Background()
+	db, err := postgresstore.OpenRuntimeDB(ctx, config.PostgresConfig{DSN: dsn, MaxOpenConns: 4, MaxIdleConns: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`TRUNCATE audit_logs,user_sessions,user_roles,role_permissions,menus,users,roles,permissions,tenants CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewService(db)
+	if err = service.Bootstrap(ctx, "Bootstrap-Password-123!"); err != nil {
+		t.Fatal(err)
+	}
+	login, err := service.Login(ctx, "admin", "Bootstrap-Password-123!", false, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformAdmin, err := service.Authenticate(ctx, login.AccessToken, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := service.CreateTenant(ctx, platformAdmin, CreateTenantInput{
+		Name:             "Protected Tenant",
+		ExpiresAt:        time.Now().Add(time.Hour),
+		AdminUsername:    "protected-tenant-admin",
+		AdminDisplayName: "Protected Tenant Admin",
+		AdminPassword:    "Tenant-Password-123!",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantLogin, err := service.Login(ctx, "protected-tenant-admin", "Tenant-Password-123!", false, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantAdmin, err := service.Authenticate(ctx, tenantLogin.AccessToken, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	roles, err := service.ListRoles(ctx, tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tenantAdminRole Role
+	for _, role := range roles {
+		if role.Code == "tenant_admin" {
+			tenantAdminRole = role
+			break
+		}
+	}
+	if tenantAdminRole.ID == "" {
+		t.Fatal("tenant admin role not found")
+	}
+	customRole, err := service.CreateRole(ctx, tenantAdmin, tenant.ID, "Custom role", "", []string{"tenant.users.read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	createUser := func(username string, roleIDs []string) User {
+		t.Helper()
+		user, _, createErr := service.CreateUser(ctx, tenantAdmin, tenant.ID, username, username, "User-Password-123!", roleIDs)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return user
+	}
+	deleteProtectedAdmin := createUser("delete-protected-admin", []string{tenantAdminRole.ID})
+	rolesProtectedAdmin := createUser("roles-protected-admin", []string{tenantAdminRole.ID})
+	membershipProtectedAdmin := createUser("membership-protected-admin", []string{tenantAdminRole.ID, customRole.ID})
+	assignableUser := createUser("assignable-user", nil)
+	deletableUser := createUser("deletable-user", nil)
+
+	if err = service.AssignUserRoles(ctx, tenantAdmin, tenant.ID, assignableUser.ID, []string{customRole.ID}); err != nil {
+		t.Errorf("assign roles to non-admin user: %v", err)
+	}
+	if err = service.DeleteUser(ctx, tenantAdmin, tenant.ID, deletableUser.ID); err != nil {
+		t.Errorf("delete non-admin user: %v", err)
+	}
+	if err = service.DeleteUser(ctx, tenantAdmin, tenant.ID, deleteProtectedAdmin.ID); !errors.Is(err, ErrProtectedResource) {
+		t.Errorf("delete tenant admin err=%v, want ErrProtectedResource", err)
+	}
+	if err = service.AssignUserRoles(ctx, tenantAdmin, tenant.ID, rolesProtectedAdmin.ID, []string{customRole.ID}); !errors.Is(err, ErrProtectedResource) {
+		t.Errorf("assign tenant admin roles err=%v, want ErrProtectedResource", err)
+	}
+	if err = service.ReplaceRoleUsers(ctx, tenantAdmin, tenant.ID, customRole.ID, []string{assignableUser.ID}, customRole.Version); !errors.Is(err, ErrProtectedResource) {
+		t.Errorf("remove custom role from tenant admin err=%v, want ErrProtectedResource", err)
+	}
+	if err = service.ReplaceRoleUsers(ctx, tenantAdmin, tenant.ID, tenantAdminRole.ID, []string{tenantAdmin.User.ID, membershipProtectedAdmin.ID}, tenantAdminRole.Version); !errors.Is(err, ErrProtectedResource) {
+		t.Errorf("replace tenant admin membership err=%v, want ErrProtectedResource", err)
+	}
+}
+
 func containsMenu(menus []Menu, code string) bool {
 	for _, menu := range menus {
 		if menu.Code == code {

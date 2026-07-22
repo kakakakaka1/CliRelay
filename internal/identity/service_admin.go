@@ -274,28 +274,11 @@ func (s *Service) AssignUserRoles(ctx context.Context, actor Principal, tenantID
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var userTenant string
-	if err = tx.QueryRowContext(ctx, `SELECT tenant_id FROM users WHERE id=? FOR UPDATE`, userID).Scan(&userTenant); err != nil {
+	if err = ensureNotTenantAdmin(ctx, tx, tenantID, userID); err != nil {
 		return err
-	}
-	if userTenant != tenantID {
-		return ErrTenantScope
 	}
 	if err = ensureRolesDelegable(ctx, tx, actor, tenantID, roleIDs); err != nil {
 		return err
-	}
-	keepsAdmin := false
-	for _, roleID := range roleIDs {
-		var protected bool
-		if err = tx.QueryRowContext(ctx, `SELECT system_protected FROM roles WHERE id=? AND tenant_id=?`, roleID, tenantID).Scan(&protected); err != nil {
-			return err
-		}
-		keepsAdmin = keepsAdmin || protected
-	}
-	if !keepsAdmin {
-		if err = ensureNotLastTenantAdmin(ctx, tx, tenantID, userID); err != nil {
-			return err
-		}
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM user_roles WHERE user_id=?`, userID); err != nil {
 		return err
@@ -341,7 +324,7 @@ func (s *Service) ReplaceRoleUsers(ctx context.Context, actor Principal, tenantI
 	if currentVersion != version {
 		return ErrVersionConflict
 	}
-	if roleID == SystemRoleID {
+	if protected {
 		return ErrProtectedResource
 	}
 	if err = ensureRolesDelegable(ctx, tx, actor, tenantID, []string{roleID}); err != nil {
@@ -349,7 +332,6 @@ func (s *Service) ReplaceRoleUsers(ctx context.Context, actor Principal, tenantI
 	}
 
 	selected := make(map[string]struct{}, len(userIDs))
-	activeSelected := 0
 	for _, userID := range userIDs {
 		userID = strings.TrimSpace(userID)
 		if userID == "" {
@@ -361,22 +343,17 @@ func (s *Service) ReplaceRoleUsers(ctx context.Context, actor Principal, tenantI
 		if _, exists := selected[userID]; exists {
 			continue
 		}
-		var userTenant, status string
-		if err = tx.QueryRowContext(ctx, `SELECT tenant_id,status FROM users WHERE id=?`, userID).Scan(&userTenant, &status); err != nil {
+		var userTenant string
+		if err = tx.QueryRowContext(ctx, `SELECT tenant_id FROM users WHERE id=?`, userID).Scan(&userTenant); err != nil {
 			return err
 		}
 		if userTenant != tenantID {
 			return ErrTenantScope
 		}
 		selected[userID] = struct{}{}
-		if status == "active" {
-			activeSelected++
-		}
-	}
-	if protected && activeSelected == 0 {
-		return ErrProtectedResource
 	}
 
+	current := make(map[string]struct{})
 	affected := make(map[string]struct{}, len(selected))
 	rows, err := tx.QueryContext(ctx, `SELECT user_id FROM user_roles WHERE role_id=?`, roleID)
 	if err != nil {
@@ -388,6 +365,7 @@ func (s *Service) ReplaceRoleUsers(ctx context.Context, actor Principal, tenantI
 			_ = rows.Close()
 			return err
 		}
+		current[userID] = struct{}{}
 		affected[userID] = struct{}{}
 	}
 	if err = rows.Close(); err != nil {
@@ -396,8 +374,22 @@ func (s *Service) ReplaceRoleUsers(ctx context.Context, actor Principal, tenantI
 	if err = rows.Err(); err != nil {
 		return err
 	}
+	for userID := range current {
+		if _, remainsAssigned := selected[userID]; remainsAssigned {
+			continue
+		}
+		if err = ensureNotTenantAdmin(ctx, tx, tenantID, userID); err != nil {
+			return err
+		}
+	}
 	for userID := range selected {
 		affected[userID] = struct{}{}
+		if _, alreadyAssigned := current[userID]; alreadyAssigned {
+			continue
+		}
+		if err = ensureNotTenantAdmin(ctx, tx, tenantID, userID); err != nil {
+			return err
+		}
 	}
 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM user_roles WHERE role_id=?`, roleID); err != nil {
@@ -490,7 +482,7 @@ func (s *Service) DeleteUser(ctx context.Context, actor Principal, tenantID, use
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err = ensureNotLastTenantAdmin(ctx, tx, tenantID, userID); err != nil {
+	if err = ensureNotTenantAdmin(ctx, tx, tenantID, userID); err != nil {
 		return err
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id=? AND tenant_id=?`, userID, tenantID)
@@ -570,6 +562,24 @@ func (s *Service) DeleteTenant(ctx context.Context, actor Principal, tenantID st
 	}
 	s.RecordAudit(ctx, AuditEvent{TenantID: tenantID, ActorKind: actor.Kind, ActorUserID: actor.User.ID, ActorSessionID: actor.SessionID, Action: "tenant.disable", ResourceType: "tenant", ResourceID: tenantID, Result: "success"})
 	return s.GetTenant(ctx, tenantID)
+}
+
+func ensureNotTenantAdmin(ctx context.Context, tx *sql.Tx, tenantID, userID string) error {
+	var userTenant string
+	if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM users WHERE id=? FOR UPDATE`, userID).Scan(&userTenant); err != nil {
+		return err
+	}
+	if userTenant != tenantID {
+		return ErrTenantScope
+	}
+	var tenantAdmin bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=? AND r.tenant_id=? AND r.code='tenant_admin' AND r.scope='tenant' AND r.system_protected=true)`, userID, tenantID).Scan(&tenantAdmin); err != nil {
+		return err
+	}
+	if tenantAdmin {
+		return ErrProtectedResource
+	}
+	return nil
 }
 
 func ensureNotLastTenantAdmin(ctx context.Context, tx *sql.Tx, tenantID, userID string) error {
