@@ -910,4 +910,3 @@ func (h *Handler) GetEndUserAPIKeyDailySpendingResetHistory(c *gin.Context) {
 	}
 	h.ownedAPIKeyDailySpendingHistory(c, effectiveTenantID(c), c.Param("id"), c.Param("key_id"))
 }
-
