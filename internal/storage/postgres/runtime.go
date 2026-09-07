@@ -136,16 +136,21 @@ func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error 
 		_ = tx.Rollback()
 		return fmt.Errorf("postgres: apply migration %s: %w", version, err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("postgres: commit migration %s: %w", version, err)
-	}
+	// Schema changes and their clean marker must commit together. A separate
+	// update after Commit can expire or crash after DDL is durable, leaving an
+	// applied migration marked dirty. Keep the initial dirty row on rollback so
+	// existing failures still require operator inspection instead of blind replay.
 	duration := time.Since(started).Milliseconds()
-	if _, err := db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE schema_migrations
 		   SET dirty = false, duration_ms = ?, applied_at = now()
 		 WHERE version = ?
 	`, duration, version); err != nil {
+		_ = tx.Rollback()
 		return fmt.Errorf("postgres: mark migration %s clean: %w", version, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("postgres: commit migration %s: %w", version, err)
 	}
 	return nil
 }

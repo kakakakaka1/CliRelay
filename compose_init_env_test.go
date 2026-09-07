@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/deploy/composeplan"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/identity"
 )
 
@@ -255,5 +256,45 @@ func runComposeInitEnv(t *testing.T, dir, envFile string) {
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("init script failed: %v\n%s", err, out)
+	}
+}
+
+// The updater runs the new image's init script before compose reconciliation;
+// ensureRuntimeEnvFile is no longer an independent bootstrap-password owner.
+func TestComposeInitEnvPasswordSurvivesTopologyMigration(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".env")
+	composeFile := filepath.Join(dir, "docker-compose.yml")
+	if err := os.WriteFile(composeFile, []byte(`services:
+  cli-proxy-api:
+    image: ghcr.io/kittors/clirelay:dev
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "scripts/init-compose-env.sh")
+	cmd.Env = append(os.Environ(),
+		"CLIRELAY_ENV_FILE="+envFile,
+		"CLIRELAY_PROJECT_DIR="+dir,
+		"CLIRELAY_COMPOSE_FILE="+composeFile,
+		"CLIRELAY_CONFIG_FILE="+filepath.Join(dir, "config.yaml"),
+		"CLIRELAY_CONFIG_EXAMPLE_FILE="+filepath.Join(dir, "missing-example.yaml"),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("init-compose-env: %v: %s", err, out)
+	}
+	password := readEnvFile(t, envFile)["CLIRELAY_ADMIN_PASSWORD"]
+	if _, err := identity.HashPassword(password); err != nil {
+		t.Fatalf("generated admin password rejected: %v", err)
+	}
+	// The script invokes the image's binary at an absolute container path. Call
+	// its real implementation here to exercise the same boundary on the host.
+	opts := composeplan.Options{ComposeFile: composeFile, EnvFile: envFile, ProjectDir: dir, Service: "cli-proxy-api"}
+	for i := 0; i < 2; i++ {
+		if err := composeplan.Migrate(opts); err != nil {
+			t.Fatalf("topology migration %d: %v", i+1, err)
+		}
+		if readEnvFile(t, envFile)["CLIRELAY_ADMIN_PASSWORD"] != password {
+			t.Fatalf("topology migration %d replaced or removed the bootstrap password", i+1)
+		}
 	}
 }
