@@ -180,7 +180,15 @@ def call_model(system: str, user_payload: str, max_tokens: int = 3500) -> str:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set")
-    base_url = os.environ.get("OPENAI_BASE_URL", "https://relay.07230805.xyz/v1").rstrip("/")
+    # Actions exports an empty value when neither a secret nor a variable is set.
+    base_url = os.environ.get("OPENAI_BASE_URL", "").strip().rstrip("/")
+    try:
+        parsed_base_url = urllib.parse.urlsplit(base_url)
+        valid_base_url = parsed_base_url.scheme in {"http", "https"} and parsed_base_url.hostname
+    except ValueError:
+        valid_base_url = False
+    if not valid_base_url:
+        raise RuntimeError("OPENAI_BASE_URL must be set to an absolute HTTP(S) URL")
     model = os.environ.get("OPENAI_MODEL", "grok-4.5")
     data = {
         "model": model,

@@ -5,6 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 ./scripts/ensure-no-vendored-panel-assets.sh
 python3 scripts/check-backend-structure.py
+python3 -m unittest discover -s scripts -p test_agent_model_config.py
 
 files="$(gofmt -l . || true)"
 if [ -n "${files}" ]; then
