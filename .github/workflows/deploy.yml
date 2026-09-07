@@ -31,8 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      SHOULD_DEPLOY: ${{ github.event_name == 'workflow_dispatch' || vars.CLIRELAY_DEV_AUTO_DEPLOY == 'true' }}
-      EXPECTED_SCRIPT_VERSION: '2026.08.19.3'
+      # Deploying is the default for a merge into dev. This used to require
+      # CLIRELAY_DEV_AUTO_DEPLOY=true, so an unset or reset repository variable
+      # silently turned every merge into a build-only run. Set the variable to
+      # 'false' to stop deployments deliberately.
+      SHOULD_DEPLOY: ${{ github.event_name == 'workflow_dispatch' || vars.CLIRELAY_DEV_AUTO_DEPLOY != 'false' }}
+      # Must match SCRIPT_VERSION in scripts/deploy-blue-green.sh; the host
+      # entrypoint refuses to run on a mismatch. Guarded by
+      # TestDeployScriptVersionMatchesWorkflowExpectation.
+      EXPECTED_SCRIPT_VERSION: '2026.09.08.1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -88,7 +95,7 @@ jobs:
         if: env.SHOULD_DEPLOY != 'true'
         run: |
           echo "Built dev binary, but server deploy is disabled."
-          echo "Run this workflow manually or set repository variable CLIRELAY_DEV_AUTO_DEPLOY=true after the target server data stack is ready."
+          echo "Deployment is opt-out: repository variable CLIRELAY_DEV_AUTO_DEPLOY is set to 'false'. Unset it to resume automatic deploys."
           echo "DEPLOY_MODE=built-only" >> "$GITHUB_ENV"
 
       # Native ssh/scp only. Remote user is deploy (not root).
@@ -156,6 +163,35 @@ jobs:
              /usr/local/sbin/clirelay-gha-deploy"
           echo "DEPLOY_MODE=${DEPLOY_MODE:-deployed}" >> "$GITHUB_ENV"
 
+      # The blue-green script smoke-tests the new slot at cutover, but the old
+      # slot is drained on a delay afterwards. Draining is exactly where two past
+      # outages happened, so keep probing across that window instead of declaring
+      # success at cutover and walking away.
+      - name: Verify service stays healthy through drain
+        if: env.SHOULD_DEPLOY == 'true'
+        env:
+          HEALTH_URL: ${{ vars.CLIRELAY_PUBLIC_HEALTH_URL || 'https://relay.07230805.xyz/healthz' }}
+        run: |
+          set -uo pipefail
+          fails=0
+          total=20
+          for i in $(seq 1 "$total"); do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' -m 10 "$HEALTH_URL" 2>/dev/null || echo 000)"
+            case "$code" in
+              200|204) ;;
+              *)
+                fails=$((fails + 1))
+                echo "probe ${i}/${total}: HTTP ${code}"
+                ;;
+            esac
+            sleep 3
+          done
+          if [ "$fails" -gt 0 ]; then
+            echo "::error::Post-deploy health probes failed ${fails}/${total}; the deployed slot is not serving reliably"
+            exit 1
+          fi
+          echo "Post-deploy health: ${total}/${total} probes healthy across the drain window"
+
       - name: Write job summary
         if: always()
         run: |
@@ -165,6 +201,7 @@ jobs:
             echo "- sha: \`${{ github.sha }}\`"
             echo "- version: \`${APP_VERSION:-n/a}\`"
             echo "- should_deploy: \`${SHOULD_DEPLOY}\`"
+            echo "- post-deploy health probes: \`${SHOULD_DEPLOY}\` (see 'Verify service stays healthy through drain')"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Trigger dev Docker image build

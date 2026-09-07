@@ -30,6 +30,7 @@ func seedModelChannels() []string {
 		"opencode-go",
 		"antigravity",
 		"xai",
+		"minimax",
 	}
 }
 

@@ -175,8 +175,8 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 			log.Debugf("auth file unchanged (hash match), skipping reload: %s", filepath.Base(event.Name))
 			return
 		}
-		log.Infof("auth file changed (%s): %s, processing incrementally", event.Op.String(), filepath.Base(event.Name))
-		w.addOrUpdateClient(event.Name)
+		// Coalesce bursty writes (token refresh + probe markers) before reload.
+		w.scheduleAuthFileUpdate(event.Name)
 	}
 }
 

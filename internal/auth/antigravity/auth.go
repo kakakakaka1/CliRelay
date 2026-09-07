@@ -387,7 +387,7 @@ func (o *AntigravityAuth) OnboardUser(ctx context.Context, accessToken, tierID s
 					return projectID, nil
 				}
 
-				return "", fmt.Errorf("no project_id in response")
+				return "", ErrNoProjectID
 			}
 
 			time.Sleep(2 * time.Second)

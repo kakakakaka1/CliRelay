@@ -259,6 +259,8 @@ The gallery below follows the panel's own navigation, captured from a live deplo
 
 ### 🐳 Install With Docker Compose
 
+For shared gateways and NAS installations, see the [team deployment checklist](docs/production-checklist.md).
+
 Docker Compose is the recommended installation path for CliRelay. The included `docker-compose.yml` starts CliRelay, PostgreSQL 15, Redis 7, and the updater sidecar. A `.env` file is optional: the `clirelay-init` service creates it on the first `docker compose up -d`, generates missing secrets such as `CLIRELAY_UPDATER_TOKEN`, `CLIRELAY_ADMIN_PASSWORD`, and `CLIRELAY_POSTGRES_PASSWORD`, preserves existing non-empty values, and creates `config.yaml` from `config.example.yaml` if it is missing. `CLIRELAY_ADMIN_PASSWORD` bootstraps the first `admin` user in an empty database; the init script generates a compliant random value, or you can pre-set your own of at least 12 characters containing an upper-case letter, a lower-case letter, and a non-alphanumeric character. A pre-set value that does not meet those rules is replaced on the next start, because bootstrap would otherwise reject it and the container would not come up. For production, pre-create `.env` only when you want to pin your own secrets or bind paths.
 
 ```bash
