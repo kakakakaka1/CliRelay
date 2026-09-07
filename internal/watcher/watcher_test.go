@@ -861,6 +861,8 @@ func TestHandleEventAuthWriteTriggersUpdate(t *testing.T) {
 	w.SetConfig(&config.Config{AuthDir: authDir})
 
 	w.handleEvent(fsnotify.Event{Name: authFile, Op: fsnotify.Write})
+	// Auth writes are debounced; flush immediately for deterministic unit coverage.
+	w.flushPendingAuthUpdates()
 	if atomic.LoadInt32(&reloads) != 1 {
 		t.Fatalf("expected auth write to trigger reload callback, got %d", reloads)
 	}

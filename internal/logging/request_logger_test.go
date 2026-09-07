@@ -173,3 +173,49 @@ func TestLogRequestWithDiagnosticsUsesOriginalURL(t *testing.T) {
 func timeZero() time.Time {
 	return time.Time{}
 }
+
+func TestCleanupOldRequestLogsCapsRequestFiles(t *testing.T) {
+	logsDir := t.TempDir()
+	logger := NewFileRequestLogger(true, logsDir, "", 2)
+
+	// Seed more request logs than the default request cap would allow if we force a low cap via helper.
+	for i := 0; i < 5; i++ {
+		name := filepath.Join(logsDir, "v1-chat-"+time.Now().Add(time.Duration(i)*time.Second).Format("2006-01-02T150405")+"-"+string(rune('a'+i))+".log")
+		if err := os.WriteFile(name, []byte("x"), 0o644); err != nil {
+			t.Fatalf("seed log: %v", err)
+		}
+	}
+	for i := 0; i < 4; i++ {
+		name := filepath.Join(logsDir, "error-v1-"+time.Now().Add(time.Duration(i)*time.Second).Format("2006-01-02T150405")+"-"+string(rune('a'+i))+".log")
+		if err := os.WriteFile(name, []byte("e"), 0o644); err != nil {
+			t.Fatalf("seed error log: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(logsDir, "main.log"), []byte("keep"), 0o644); err != nil {
+		t.Fatalf("seed main.log: %v", err)
+	}
+
+	if err := logger.cleanupOldErrorLogs(); err != nil {
+		t.Fatalf("cleanupOldErrorLogs: %v", err)
+	}
+	entries, err := os.ReadDir(logsDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	errorCount := 0
+	mainKept := false
+	for _, e := range entries {
+		if e.Name() == "main.log" {
+			mainKept = true
+		}
+		if len(e.Name()) >= 6 && e.Name()[:6] == "error-" {
+			errorCount++
+		}
+	}
+	if !mainKept {
+		t.Fatal("main.log should be preserved")
+	}
+	if errorCount > 2 {
+		t.Fatalf("error logs = %d, want <= 2", errorCount)
+	}
+}

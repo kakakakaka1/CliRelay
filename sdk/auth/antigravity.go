@@ -273,3 +273,23 @@ func FetchAntigravityProjectID(ctx context.Context, accessToken string, httpClie
 	authSvc := antigravity.NewAntigravityAuth(cfg, httpClient)
 	return authSvc.FetchProjectID(ctx, accessToken)
 }
+
+// ErrAntigravityNoProjectID is returned when onboard completes without a project id.
+var ErrAntigravityNoProjectID = antigravity.ErrNoProjectID
+
+// ShouldSkipAntigravityProjectIDProbe reports whether metadata says we must not
+// hit loadCodeAssist/onboardUser again for project discovery (same-package wrapper
+// so filestore can circuit-break without a new sdk→internal/antigravity import).
+func ShouldSkipAntigravityProjectIDProbe(metadata map[string]any, now time.Time, backoff time.Duration) bool {
+	return antigravity.ShouldSkipProjectIDProbe(metadata, now, backoff)
+}
+
+// MarkAntigravityProjectIDProbeFailure records a terminal/transient probe failure.
+func MarkAntigravityProjectIDProbeFailure(metadata map[string]any, err error, now time.Time) {
+	antigravity.MarkProjectIDProbeFailure(metadata, err, now)
+}
+
+// ClearAntigravityProjectIDProbeMarkers clears backoff/unavailable markers after success.
+func ClearAntigravityProjectIDProbeMarkers(metadata map[string]any) {
+	antigravity.ClearProjectIDProbeMarkers(metadata)
+}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	antigravityauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/antigravity"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
@@ -134,8 +135,13 @@ func (e *AntigravityExecutor) ensureAntigravityProjectID(ctx context.Context, au
 	if auth == nil {
 		return nil
 	}
+	if auth.Metadata == nil {
+		auth.Metadata = make(map[string]any)
+	}
 
-	if auth.Metadata["project_id"] != nil {
+	// Non-empty project_id or a recent/terminal probe failure must not re-enter
+	// onboardUser — that path was thrashing production with auth writes + reloads.
+	if antigravityauth.ShouldSkipProjectIDProbe(auth.Metadata, time.Now(), 0) {
 		return nil
 	}
 
@@ -150,15 +156,16 @@ func (e *AntigravityExecutor) ensureAntigravityProjectID(ctx context.Context, au
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	projectID, errFetch := sdkAuth.FetchAntigravityProjectID(ctx, token, httpClient)
 	if errFetch != nil {
+		antigravityauth.MarkProjectIDProbeFailure(auth.Metadata, errFetch, time.Now())
 		return errFetch
 	}
-	if strings.TrimSpace(projectID) == "" {
-		return nil
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		antigravityauth.MarkProjectIDProbeFailure(auth.Metadata, antigravityauth.ErrNoProjectID, time.Now())
+		return antigravityauth.ErrNoProjectID
 	}
-	if auth.Metadata == nil {
-		auth.Metadata = make(map[string]any)
-	}
-	auth.Metadata["project_id"] = strings.TrimSpace(projectID)
+	antigravityauth.ClearProjectIDProbeMarkers(auth.Metadata)
+	auth.Metadata["project_id"] = projectID
 
 	return nil
 }
