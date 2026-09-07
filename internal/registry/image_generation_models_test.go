@@ -119,22 +119,21 @@ func TestGrokImageModelsAreRegistered(t *testing.T) {
 }
 
 func TestMiniMaxImageModelsClassify(t *testing.T) {
-	for _, modelID := range []string{"image-01", "image-01-live", "IMAGE-01", " image-01 "} {
+	for _, modelID := range []string{"image-01", "IMAGE-01", " image-01 "} {
 		if !IsImageGenerationModel(modelID) {
 			t.Errorf("IsImageGenerationModel(%q) = false, want true", modelID)
 		}
 	}
 
-	// No per-image rate is published for these models, so the defaults must not
-	// invent one; an invented number becomes real spend in usage reporting.
-	for _, modelID := range []string{"image-01", "image-01-live"} {
+	// The official image-01 rate is charged once per single-image invocation.
+	for _, modelID := range []string{"image-01"} {
 		price, description, ok := ImageGenerationModelDefaults(modelID)
 		if !ok {
 			t.Errorf("%s should have defaults", modelID)
 			continue
 		}
-		if price != 0 {
-			t.Errorf("%s price = %v, want 0", modelID, price)
+		if price != 0.0035 {
+			t.Errorf("%s price = %v, want 0.0035", modelID, price)
 		}
 		if description == "" {
 			t.Errorf("%s description should be set", modelID)
@@ -146,7 +145,7 @@ func TestMiniMaxImageModelsClassify(t *testing.T) {
 // depends on: without it these models resolve to no provider at all and the request
 // is rejected as unsupported.
 func TestMiniMaxImageModelsRouteToMiniMax(t *testing.T) {
-	for _, modelID := range []string{"image-01", "image-01-live"} {
+	for _, modelID := range []string{"image-01"} {
 		if got := ImageGenerationProvider(modelID); got != ImageProviderMiniMax {
 			t.Errorf("ImageGenerationProvider(%q) = %q, want %q", modelID, got, ImageProviderMiniMax)
 		}
@@ -162,7 +161,7 @@ func TestMiniMaxImageModelsRouteToMiniMax(t *testing.T) {
 
 	// Text-to-image only: the reference-image form is a different upstream request
 	// shape, so claiming edit support would offer a control this build cannot serve.
-	for _, modelID := range []string{"image-01", "image-01-live"} {
+	for _, modelID := range []string{"image-01"} {
 		if SupportsImageEditing(modelID) {
 			t.Errorf("SupportsImageEditing(%q) = true, want false", modelID)
 		}
@@ -173,7 +172,7 @@ func TestMiniMaxImageModelsRouteToMiniMax(t *testing.T) {
 // model that routes to a provider but is absent from the catalog is selectable and
 // unreachable at the same time.
 func TestMiniMaxImageModelsAreRegistered(t *testing.T) {
-	wanted := []string{"image-01", "image-01-live"}
+	wanted := []string{"image-01"}
 
 	registered := make(map[string]struct{})
 	for _, model := range GetMiniMaxModels() {
@@ -219,6 +218,19 @@ func TestMiniMaxImageModelsAreRegistered(t *testing.T) {
 	for _, modelID := range []string{"gpt-image-2", "grok-imagine-image"} {
 		if _, ok := listed[modelID]; !ok {
 			t.Errorf("%s is no longer selectable", modelID)
+		}
+	}
+}
+
+func TestMiniMaxDoesNotAdvertiseUndocumentedTextToImageModels(t *testing.T) {
+	for _, id := range []string{"image-01-live", "image-01-preview"} {
+		if IsImageGenerationModel(id) || ImageGenerationProvider(id) != "" {
+			t.Errorf("unsupported text-to-image model advertised: %s", id)
+		}
+		for _, model := range GetMiniMaxModels() {
+			if model.ID == id {
+				t.Errorf("unsupported static model: %s", id)
+			}
 		}
 	}
 }

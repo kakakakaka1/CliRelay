@@ -602,9 +602,10 @@ func openAICompatInfoFromAuth(auth *coreauth.Auth) (providerKey string, compatNa
 	if auth == nil {
 		return "", "", false
 	}
-	// Ollama Cloud keeps compat metadata for chat fallback, but its native
-	// Responses/Messages routes require the dedicated executor.
-	if strings.EqualFold(strings.TrimSpace(auth.Provider), "ollama-cloud") {
+	// These providers retain compat metadata for chat fallback, but their native
+	// Responses/Messages or image routes require the dedicated executor.
+	if strings.EqualFold(strings.TrimSpace(auth.Provider), "ollama-cloud") ||
+		strings.EqualFold(strings.TrimSpace(auth.Provider), "minimax") {
 		return "", "", false
 	}
 	if len(auth.Attributes) > 0 {

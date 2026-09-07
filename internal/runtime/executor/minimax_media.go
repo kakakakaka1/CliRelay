@@ -30,10 +30,8 @@ const (
 // minimaxIsMediaAlt reports whether a request targets the image endpoint rather
 // than the chat surface.
 //
-// Only generation is claimed here. The reference-image form of these models is a
-// different upstream request shape, not a variant of this call, so an edit request
-// is left to fail as an unsupported model rather than being silently answered with
-// a text-to-image result.
+// Only generation is claimed here. Execute/ExecuteStream explicitly reject edits
+// because reference images require the separate subject_reference contract.
 func minimaxIsMediaAlt(alt string) bool {
 	return strings.TrimSpace(alt) == minimaxImageGenerationAlt
 }
@@ -67,6 +65,14 @@ func (e *MiniMaxExecutor) executeImageGeneration(ctx context.Context, auth *clip
 	execCtx := newExecutionContext(ctx, e.Identifier(), e.cfg, auth, req, opts, ExecutionOptions{})
 	reporter := execCtx.Reporter()
 	defer reporter.trackFailure(execCtx.Context, &err)
+	if strings.TrimSpace(req.Model) != "image-01" {
+		return resp, statusErr{code: http.StatusBadRequest, msg: "MiniMax text-to-image supports only image-01"}
+	}
+	// One successful execution is one billable image. The public images handler
+	// expands n into n single-image executions; direct SDK callers must do likewise.
+	if n := gjson.GetBytes(req.Payload, "n"); n.Exists() && (n.Type != gjson.Number || n.Float() != 1) {
+		return resp, statusErr{code: http.StatusBadRequest, msg: "MiniMax executor requires n=1; use /v1/images/generations for multiple images"}
+	}
 
 	if _, apiKey := e.resolveCredentials(auth); strings.TrimSpace(apiKey) == "" {
 		return resp, statusErr{code: http.StatusUnauthorized, msg: "minimax credential has no api key"}
@@ -78,6 +84,12 @@ func (e *MiniMaxExecutor) executeImageGeneration(ctx context.Context, auth *clip
 	}
 
 	payload, dropped := shapeMiniMaxImageRequest(payload)
+	// Auth routing may resolve a model alias independently of the original body.
+	// The upstream model must be the validated executor model, not an untrusted alias.
+	payload, err = sjson.SetBytes(payload, "model", req.Model)
+	if err != nil {
+		return resp, statusErr{code: http.StatusBadRequest, msg: "invalid MiniMax image request"}
+	}
 	if len(dropped) > 0 {
 		logWithRequestID(execCtx.Context).Debugf(
 			"minimax image request: dropped unsupported arguments %s", strings.Join(dropped, ", "),
@@ -136,6 +148,12 @@ func (e *MiniMaxExecutor) executeImageGeneration(ctx context.Context, auth *clip
 		reporter.publishFailureWithContentBytes(execCtx.Context, req.Payload, err.Error())
 		return resp, err
 	}
+
+	// Image responses omit token usage; the successful call still counts for
+	// request logs, request quotas and configured per-call pricing.
+	reporter.setInputContentBytes(req.Payload)
+	reporter.appendOutputChunk(data)
+	reporter.ensurePublished(execCtx.Context)
 
 	return cliproxyexecutor.Response{Payload: translated, Headers: minimaxImageResponseHeaders(httpResp.Header)}, nil
 }

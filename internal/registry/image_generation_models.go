@@ -42,14 +42,11 @@ var imageGenerationModels = map[string]imageGenerationModelDefaults{
 	"grok-imagine-image-quality": {
 		Description: "Grok Imagine Quality image generation, billed per invocation",
 	},
-	// MiniMax image generation. Pricing stays at zero for the same reason as
-	// above: the published reference documents no per-image rate, so any number
-	// here would be invented spend in usage reporting.
+	// MiniMax publishes $0.0035/image: https://platform.minimax.io/docs/guides/pricing-paygo#image
+	// The public images handler splits n into single-image executor calls.
 	"image-01": {
-		Description: "MiniMax image generation, billed per invocation",
-	},
-	"image-01-live": {
-		Description: "MiniMax Live image generation, billed per invocation",
+		PricePerCall: 0.0035,
+		Description:  "MiniMax image generation, billed per invocation",
 	},
 }
 
@@ -58,8 +55,6 @@ var imageGenerationModels = map[string]imageGenerationModelDefaults{
 var imageGenerationModelPrefixes = []string{
 	"gpt-image-",
 	"grok-imagine-image",
-	// Covers image-01 revisions, including image-01-live.
-	"image-01",
 }
 
 // IsImageGenerationModel reports whether a model produces images rather than text.
@@ -130,7 +125,7 @@ func ImageGenerationProvider(modelID string) string {
 			return ImageProviderXAI
 		}
 		return ""
-	case strings.HasPrefix(normalized, "image-01"):
+	case normalized == "image-01":
 		return ImageProviderMiniMax
 	default:
 		return ""

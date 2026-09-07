@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"net/http"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
@@ -30,6 +31,11 @@ func NewMiniMaxExecutor(provider string, cfg *config.Config) *MiniMaxExecutor {
 
 // Execute routes image requests to the image endpoint and everything else to chat.
 func (e *MiniMaxExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	// The public edits route resolves image providers too; catalog/UI capability
+	// flags do not prevent it from reaching this executor.
+	if strings.TrimSpace(opts.Alt) == "images/edits" {
+		return cliproxyexecutor.Response{}, statusErr{code: http.StatusBadRequest, msg: "MiniMax image editing is not supported"}
+	}
 	if minimaxIsMediaAlt(opts.Alt) {
 		return e.executeImageGeneration(ctx, auth, req, opts)
 	}
@@ -38,6 +44,9 @@ func (e *MiniMaxExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, 
 
 // ExecuteStream mirrors Execute for the streaming entry point.
 func (e *MiniMaxExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	if strings.TrimSpace(opts.Alt) == "images/edits" {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "MiniMax image editing is not supported"}
+	}
 	if minimaxIsMediaAlt(opts.Alt) {
 		return e.executeImageGenerationStream(ctx, auth, req, opts)
 	}

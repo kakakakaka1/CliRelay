@@ -26,8 +26,7 @@ func getOpenAIImageModelDefinitions() []*ModelInfo {
 
 // minimaxImageSupportedParameters lists what the MiniMax image endpoint accepts.
 //
-// It is declared once and shared by every MiniMax image model so the catalog and
-// the request allowlist in the runtime executor cannot drift apart.
+// Keep this aligned with minimaxImageRequestFields in the executor.
 var minimaxImageSupportedParameters = []string{
 	"prompt",
 	"aspect_ratio",
@@ -41,9 +40,9 @@ var minimaxImageSupportedParameters = []string{
 
 // getMiniMaxImageModelDefinitions returns MiniMax image-generation models.
 //
-// Pricing is left at zero deliberately: the published reference documents the
-// request and response shape but no per-image rate, and an invented number would
-// surface as real spend in usage reporting.
+// Only image-01 is documented for text-to-image; image-01-live appears in the
+// reference-image API, whose subject_reference contract is not implemented here.
+// https://platform.minimax.io/docs/api-reference/image-generation-t2i
 func getMiniMaxImageModelDefinitions() []*ModelInfo {
 	return []*ModelInfo{
 		{
@@ -55,17 +54,6 @@ func getMiniMaxImageModelDefinitions() []*ModelInfo {
 			DisplayName:         "MiniMax Image 01",
 			Name:                "image-01",
 			Description:         "MiniMax text-to-image generation, billed per invocation.",
-			SupportedParameters: minimaxImageSupportedParameters,
-		},
-		{
-			ID:                  "image-01-live",
-			Object:              "model",
-			OwnedBy:             "minimax",
-			Type:                "minimax",
-			Version:             "image-01-live",
-			DisplayName:         "MiniMax Image 01 Live",
-			Name:                "image-01-live",
-			Description:         "MiniMax text-to-image generation tuned for illustrative styles.",
 			SupportedParameters: minimaxImageSupportedParameters,
 		},
 	}

@@ -76,7 +76,7 @@ func TestMiniMaxImageGenerationTranslatesRequestAndResponse(t *testing.T) {
 		minimaxAPIKeyAuth(upstream.URL+"/v1"),
 		cliproxyexecutor.Request{
 			Model:   "image-01",
-			Payload: []byte(`{"model":"image-01","prompt":"a cat","size":"1024x768","quality":"high","n":2}`),
+			Payload: []byte(`{"model":"image-01","prompt":"a cat","size":"1024x768","quality":"high","n":1}`),
 		},
 		cliproxyexecutor.Options{Alt: minimaxImageGenerationAlt},
 	)
@@ -106,7 +106,7 @@ func TestMiniMaxImageGenerationTranslatesRequestAndResponse(t *testing.T) {
 	if got := sent.Get("response_format").String(); got != "base64" {
 		t.Errorf("response_format = %q, want base64", got)
 	}
-	if sent.Get("prompt").String() != "a cat" || sent.Get("n").Int() != 2 {
+	if sent.Get("prompt").String() != "a cat" || sent.Get("n").Int() != 1 {
 		t.Errorf("accepted arguments were not preserved: %s", gotBody)
 	}
 
