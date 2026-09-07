@@ -59,7 +59,15 @@ func (l *FileRequestLogger) sanitizeForFilename(path string) string {
 }
 
 func (l *FileRequestLogger) cleanupOldErrorLogs() error {
-	if l.errorLogsMaxFiles <= 0 {
+	return l.cleanupOldRequestLogs(true)
+}
+
+// defaultRequestLogsMaxFiles caps per-request *.log files when request logging is enabled.
+// error-* files still obey errorLogsMaxFiles (typically much smaller).
+const defaultRequestLogsMaxFiles = 1000
+
+func (l *FileRequestLogger) cleanupOldRequestLogs(errorOnly bool) error {
+	if l.errorLogsMaxFiles <= 0 && errorOnly {
 		return nil
 	}
 
@@ -73,35 +81,50 @@ func (l *FileRequestLogger) cleanupOldErrorLogs() error {
 		modTime time.Time
 	}
 
-	var files []logFile
+	var errorFiles []logFile
+	var requestFiles []logFile
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
-		if !strings.HasPrefix(name, "error-") || !strings.HasSuffix(name, ".log") {
+		if !strings.HasSuffix(name, ".log") {
+			continue
+		}
+		// Preserve the rotating application log.
+		if name == "main.log" || strings.HasPrefix(name, "main-") {
 			continue
 		}
 		info, errInfo := entry.Info()
 		if errInfo != nil {
-			log.WithError(errInfo).Warn("failed to read error log info")
+			log.WithError(errInfo).Warn("failed to read request/error log info")
 			continue
 		}
-		files = append(files, logFile{name: name, modTime: info.ModTime()})
-	}
-
-	if len(files) <= l.errorLogsMaxFiles {
-		return nil
-	}
-
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].modTime.After(files[j].modTime)
-	})
-
-	for _, file := range files[l.errorLogsMaxFiles:] {
-		if errRemove := os.Remove(filepath.Join(l.logsDir, file.name)); errRemove != nil {
-			log.WithError(errRemove).Warnf("failed to remove old error log: %s", file.name)
+		item := logFile{name: name, modTime: info.ModTime()}
+		if strings.HasPrefix(name, "error-") {
+			errorFiles = append(errorFiles, item)
+		} else {
+			requestFiles = append(requestFiles, item)
 		}
+	}
+
+	prune := func(files []logFile, maxFiles int, kind string) {
+		if maxFiles <= 0 || len(files) <= maxFiles {
+			return
+		}
+		sort.Slice(files, func(i, j int) bool {
+			return files[i].modTime.After(files[j].modTime)
+		})
+		for _, file := range files[maxFiles:] {
+			if errRemove := os.Remove(filepath.Join(l.logsDir, file.name)); errRemove != nil {
+				log.WithError(errRemove).Warnf("failed to remove old %s log: %s", kind, file.name)
+			}
+		}
+	}
+
+	prune(errorFiles, l.errorLogsMaxFiles, "error")
+	if !errorOnly {
+		prune(requestFiles, defaultRequestLogsMaxFiles, "request")
 	}
 	return nil
 }

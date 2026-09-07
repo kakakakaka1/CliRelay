@@ -119,6 +119,10 @@ func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[st
 		if errCleanup := l.cleanupOldErrorLogs(); errCleanup != nil {
 			log.WithError(errCleanup).Warn("failed to clean up old error logs")
 		}
+	} else if l.enabled {
+		if errCleanup := l.cleanupOldRequestLogs(false); errCleanup != nil {
+			log.WithError(errCleanup).Warn("failed to clean up old request logs")
+		}
 	}
 
 	return nil
@@ -157,6 +161,7 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 	responseBodyPath := responseBodyFile.Name()
 
 	writer := &FileStreamingLogWriter{
+		logger:           l,
 		logFilePath:      filePath,
 		url:              url,
 		method:           method,

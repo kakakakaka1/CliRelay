@@ -78,6 +78,10 @@ func (w *Watcher) dispatchRuntimeAuthUpdate(update AuthUpdate) bool {
 }
 
 func (w *Watcher) refreshAuthState(force bool) {
+	// Snapshot and publication must keep event order: an older async reload
+	// must not restore an auth after a newer deletion has been published.
+	w.authRefreshMu.Lock()
+	defer w.authRefreshMu.Unlock()
 	auths := w.SnapshotCoreAuths()
 	w.clientsMutex.Lock()
 	if len(w.runtimeAuths) > 0 {

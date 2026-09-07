@@ -20,6 +20,7 @@ func StreamingLogTruncationNote(dropped int) string {
 // FileStreamingLogWriter spools streaming response chunks to temporary files
 // and assembles the final human-readable log only when the stream closes.
 type FileStreamingLogWriter struct {
+	logger               *FileRequestLogger
 	logFilePath          string
 	url                  string
 	method               string
@@ -137,6 +138,12 @@ func (w *FileStreamingLogWriter) Close() error {
 	}
 
 	w.cleanupTempFiles()
+	// Retain only completed logs, after the final file has been closed.
+	if writeErr == nil && w.logger != nil {
+		if errCleanup := w.logger.cleanupOldRequestLogs(false); errCleanup != nil {
+			log.WithError(errCleanup).Warn("failed to cleanup old request logs")
+		}
+	}
 	return writeErr
 }
 

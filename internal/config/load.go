@@ -66,7 +66,7 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Set defaults before unmarshal so that absent keys keep defaults.
 	cfg.Host = "" // Default empty: binds to all interfaces (IPv4 + IPv6)
 	cfg.LoggingToFile = false
-	cfg.LogsMaxTotalSizeMB = 0
+	cfg.LogsMaxTotalSizeMB = 512
 	cfg.ErrorLogsMaxFiles = 10
 	cfg.RequestBody.ModelMaxMB = DefaultModelRequestBodyMB
 	cfg.RequestBody.DiskThresholdMB = DefaultRequestBodyDiskThresholdMB
