@@ -78,6 +78,7 @@ func (e *OpenCodeGoExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth
 }
 
 func (e *OpenCodeGoExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	auth = opencodeGoAuthWithSessionHeader(ctx, auth, opts)
 	// Image registry: handle historical image references and inject
 	// registry notes for follow-up questions. Current-turn images are
 	// left for the existing vision fallback path below.
@@ -158,6 +159,7 @@ func (e *OpenCodeGoExecutor) Execute(ctx context.Context, auth *cliproxyauth.Aut
 }
 
 func (e *OpenCodeGoExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	auth = opencodeGoAuthWithSessionHeader(ctx, auth, opts)
 	// Image registry: handle historical image references and inject
 	// registry notes for follow-up questions. Current-turn images are
 	// left for the existing vision fallback path below.
