@@ -24,6 +24,51 @@ func getOpenAIImageModelDefinitions() []*ModelInfo {
 	}
 }
 
+// minimaxImageSupportedParameters lists what the MiniMax image endpoint accepts.
+//
+// Keep this aligned with minimaxImageRequestFields in the executor.
+var minimaxImageSupportedParameters = []string{
+	"prompt",
+	"aspect_ratio",
+	"width",
+	"height",
+	"response_format",
+	"seed",
+	"n",
+	"prompt_optimizer",
+}
+
+// getMiniMaxImageModelDefinitions returns MiniMax image-generation models.
+//
+// Only image-01 is documented for text-to-image; image-01-live appears in the
+// reference-image API, whose subject_reference contract is not implemented here.
+// https://platform.minimax.io/docs/api-reference/image-generation-t2i
+func getMiniMaxImageModelDefinitions() []*ModelInfo {
+	return []*ModelInfo{
+		{
+			ID:                  "image-01",
+			Object:              "model",
+			OwnedBy:             "minimax",
+			Type:                "minimax",
+			Version:             "image-01",
+			DisplayName:         "MiniMax Image 01",
+			Name:                "image-01",
+			Description:         "MiniMax text-to-image generation, billed per invocation.",
+			SupportedParameters: minimaxImageSupportedParameters,
+		},
+	}
+}
+
+// GetMiniMaxModels returns the static MiniMax catalog.
+//
+// MiniMax currently contributes image models only, so this is the image set. It
+// exists as its own accessor because the channel dispatcher and the image
+// classifier both resolve providers through GetXxxModels, and routing a model the
+// catalog cannot report leaves it selectable but unreachable.
+func GetMiniMaxModels() []*ModelInfo {
+	return getMiniMaxImageModelDefinitions()
+}
+
 // getXAIImageModelDefinitions returns Grok Imagine image-generation models.
 //
 // Media requests reach the official API host even for subscription credentials,
