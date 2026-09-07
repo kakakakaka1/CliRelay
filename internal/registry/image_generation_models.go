@@ -42,6 +42,12 @@ var imageGenerationModels = map[string]imageGenerationModelDefaults{
 	"grok-imagine-image-quality": {
 		Description: "Grok Imagine Quality image generation, billed per invocation",
 	},
+	// MiniMax publishes $0.0035/image: https://platform.minimax.io/docs/guides/pricing-paygo#image
+	// The public images handler splits n into single-image executor calls.
+	"image-01": {
+		PricePerCall: 0.0035,
+		Description:  "MiniMax image generation, billed per invocation",
+	},
 }
 
 // imageGenerationModelPrefixes covers families that version faster than this list
@@ -102,8 +108,9 @@ func ImageGenerationInputModalities(string) []string {
 // to know which credential pool can serve a given image model; without this it
 // pinned every request to codex, which is what kept Grok models unreachable.
 const (
-	ImageProviderCodex = "codex"
-	ImageProviderXAI   = "xai"
+	ImageProviderCodex   = "codex"
+	ImageProviderXAI     = "xai"
+	ImageProviderMiniMax = "minimax"
 )
 
 // ImageGenerationProvider returns the credential provider that serves a model, or
@@ -118,6 +125,8 @@ func ImageGenerationProvider(modelID string) string {
 			return ImageProviderXAI
 		}
 		return ""
+	case normalized == "image-01":
+		return ImageProviderMiniMax
 	default:
 		return ""
 	}
@@ -172,6 +181,9 @@ func ListImageGenerationModels() []ImageGenerationModel {
 	for _, info := range GetXAIModels() {
 		appendModel(info)
 	}
+	for _, info := range GetMiniMaxModels() {
+		appendModel(info)
+	}
 	return models
 }
 
@@ -184,6 +196,10 @@ func SupportsImageEditing(modelID string) bool {
 		return true
 	case strings.HasPrefix(normalized, "grok-imagine-image"):
 		return true
+	// image-01 is text-to-image here. The reference-image form of these models is
+	// a separate upstream request shape rather than a variant of the generation
+	// call, so claiming edit support would offer the console a control this build
+	// cannot serve yet.
 	default:
 		return false
 	}
