@@ -50,6 +50,7 @@ func (s *Server) setupRoutes() {
 		})
 		group.POST("/responses", openaiResponsesHandlers.Responses)
 		group.POST("/responses/compact", openaiResponsesHandlers.Compact)
+		group.POST("/alpha/search", openaiResponsesHandlers.AlphaSearch)
 	}
 	registerV1BetaRoutes := func(group *gin.RouterGroup) {
 		group.GET("/models", geminiHandlers.GeminiModels)
