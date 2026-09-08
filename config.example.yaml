@@ -331,6 +331,7 @@ streaming:
 # Codex API keys
 # codex-api-key:
 #   - api-key: "sk-atSM..."
+#     alpha-search: false # opt in only when this upstream supports the Codex alpha search endpoint
 #     prefix: "test" # optional: require calls like "test/gpt-5-codex" to target this credential
 #     base-url: "https://www.example.com" # use the custom codex API endpoint
 #     headers:
