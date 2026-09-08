@@ -253,6 +253,7 @@ func (s *Service) DeleteClaudeKeyByIndex(index int) bool {
 }
 
 type CodexKeyPatch struct {
+	AlphaSearch    *bool                `json:"alpha-search"`
 	APIKey         *string              `json:"api-key"`
 	Prefix         *string              `json:"prefix"`
 	BaseURL        *string              `json:"base-url"`
@@ -318,6 +319,9 @@ func (s *Service) PatchCodexKey(index *int, match *string, patch CodexKeyPatch) 
 	}
 
 	entry := s.cfg.CodexKey[targetIndex]
+	if patch.AlphaSearch != nil {
+		entry.AlphaSearch = *patch.AlphaSearch
+	}
 	if patch.APIKey != nil {
 		entry.APIKey = strings.TrimSpace(*patch.APIKey)
 	}

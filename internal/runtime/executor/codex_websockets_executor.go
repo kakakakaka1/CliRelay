@@ -78,6 +78,9 @@ func NewCodexWebsocketsExecutor(cfg *config.Config) *CodexWebsocketsExecutor {
 }
 
 func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+	if opts.Alt == "alpha/search" {
+		return e.executeAlphaSearch(ctx, auth, req, opts)
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -286,8 +289,8 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if opts.Alt == "responses/compact" {
-		return nil, statusErr{code: http.StatusBadRequest, msg: "streaming not supported for /responses/compact"}
+	if opts.Alt == "responses/compact" || opts.Alt == "alpha/search" {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "streaming not supported for /" + opts.Alt}
 	}
 	execCtx := newExecutionContext(ctx, e.Identifier(), e.cfg, auth, req, opts, ExecutionOptions{
 		TargetFormat:      sdktranslator.FromString("codex"),
