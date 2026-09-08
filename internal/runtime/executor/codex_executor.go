@@ -113,6 +113,9 @@ func (e *CodexExecutor) ProbeQuotaRecovery(ctx context.Context, auth *cliproxyau
 }
 
 func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+	if opts.Alt == "alpha/search" {
+		return e.executeAlphaSearch(ctx, auth, req, opts)
+	}
 	if opts.Alt == codexImageGenerationAlt || opts.Alt == codexImageEditsAlt {
 		return e.executeImageGeneration(ctx, auth, req, opts)
 	}
@@ -328,8 +331,8 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 }
 
 func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
-	if opts.Alt == "responses/compact" {
-		return nil, statusErr{code: http.StatusBadRequest, msg: "streaming not supported for /responses/compact"}
+	if opts.Alt == "responses/compact" || opts.Alt == "alpha/search" {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "streaming not supported for /" + opts.Alt}
 	}
 	// Shrink multi-MB Desktop history data URLs before translation/sanitize so later
 	// body-level passes never see the full base64 history.
@@ -490,6 +493,9 @@ func newCodexResponsesIncompleteError() *cliproxyauth.Error {
 }
 
 func (e *CodexExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	if opts.Alt == "alpha/search" {
+		return cliproxyexecutor.Response{}, statusErr{code: http.StatusBadRequest, msg: "token counting is not supported for Alpha Search"}
+	}
 	execCtx := newExecutionContext(ctx, e.Identifier(), e.cfg, auth, req, opts, ExecutionOptions{
 		TargetFormat: sdktranslator.FromString("codex"),
 	})

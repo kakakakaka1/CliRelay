@@ -14,7 +14,8 @@ import (
 
 func SystemPromptMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Method != http.MethodPost {
+		// Alpha Search commands must not acquire chat-only fields.
+		if c.Request.Method != http.MethodPost || strings.HasSuffix(c.FullPath(), "/alpha/search") {
 			c.Next()
 			return
 		}

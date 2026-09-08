@@ -193,10 +193,12 @@ func scheduleRuntimeIdentityFingerprintPersist(input identityfingerprint.LearnIn
 		return
 	}
 	runtimeIdentityFingerprintAsync.persists[key] = struct{}{}
+	finishLearning := beginCodexIdentityFingerprintLearning(provider, accountKey)
 	runtimeIdentityFingerprintAsync.Unlock()
 
 	go func() {
 		defer func() {
+			finishLearning()
 			runtimeIdentityFingerprintAsync.Lock()
 			delete(runtimeIdentityFingerprintAsync.persists, key)
 			runtimeIdentityFingerprintAsync.Unlock()

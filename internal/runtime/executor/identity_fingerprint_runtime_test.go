@@ -37,29 +37,6 @@ func initIdentityFingerprintRuntimeDB(t *testing.T) {
 	})
 }
 
-func resetIdentityFingerprintRuntimeStateForTest() {
-	runtimeIdentityFingerprintCache.Lock()
-	runtimeIdentityFingerprintCache.records = map[string]identityFingerprintCacheEntry{}
-	runtimeIdentityFingerprintCache.Unlock()
-
-	runtimeIdentityFingerprintAsync.Lock()
-	runtimeIdentityFingerprintAsync.loads = map[string]struct{}{}
-	runtimeIdentityFingerprintAsync.persists = map[string]struct{}{}
-	runtimeIdentityFingerprintAsync.Unlock()
-
-	codexIdentityFingerprintSelectionCache.Lock()
-	codexIdentityFingerprintSelectionCache.entries = map[string]codexIdentityFingerprintSelectionEntry{}
-	codexIdentityFingerprintSelectionCache.refreshing = map[string]struct{}{}
-	codexIdentityFingerprintSelectionCache.Unlock()
-
-	runtimeIdentityFingerprintStoreFuncMu.Lock()
-	runtimeGetIdentityFingerprint = usage.GetIdentityFingerprint
-	runtimeObserveIdentityFingerprint = usage.ObserveIdentityFingerprint
-	runtimeListCodexIdentityFingerprintProfiles = usage.ListIdentityFingerprintProfiles
-	runtimeGetCodexIdentityFingerprintAccountPolicy = usage.GetIdentityFingerprintAccountPolicy
-	runtimeIdentityFingerprintStoreFuncMu.Unlock()
-}
-
 func eventually(t *testing.T, timeout time.Duration, check func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

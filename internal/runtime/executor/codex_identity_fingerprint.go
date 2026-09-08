@@ -46,13 +46,20 @@ type codexIdentityFingerprintSelectionEntry struct {
 	expiresAt time.Time
 }
 
+type codexIdentityFingerprintRefreshState struct {
+	revision uint64
+	learning int
+}
+
 var codexIdentityFingerprintSelectionCache = struct {
 	sync.Mutex
 	entries    map[string]codexIdentityFingerprintSelectionEntry
 	refreshing map[string]struct{}
+	states     map[string]*codexIdentityFingerprintRefreshState
 }{
 	entries:    map[string]codexIdentityFingerprintSelectionEntry{},
 	refreshing: map[string]struct{}{},
+	states:     map[string]*codexIdentityFingerprintRefreshState{},
 }
 
 func init() {
@@ -94,7 +101,18 @@ func codexIdentityFingerprint(cfg *config.Config, auth *cliproxyauth.Auth, ctx c
 	}
 	scheduleCodexIdentityFingerprintSelectionRefresh(accountKey)
 	selection := codexIdentityFingerprintSelectionFromRuntimeCache(accountKey, observed)
-	setCachedCodexIdentityFingerprintSelection(accountKey, selection)
+	// A store refresh may have completed while we assembled the provisional
+	// profile. Never overwrite its explicit account policy with default policy.
+	codexIdentityFingerprintSelectionCache.Lock()
+	if entry, exists := codexIdentityFingerprintSelectionCache.entries[accountKey]; exists {
+		selection = cloneCodexIdentityFingerprintSelection(entry.selection)
+	} else {
+		codexIdentityFingerprintSelectionCache.entries[accountKey] = codexIdentityFingerprintSelectionEntry{
+			selection: cloneCodexIdentityFingerprintSelection(selection),
+			expiresAt: time.Now().Add(codexIdentityFingerprintSelectionCacheTTL),
+		}
+	}
+	codexIdentityFingerprintSelectionCache.Unlock()
 	if selection.Profile != nil {
 		resolved, _ := identityfingerprint.ResolveCodexProfile(cfg.IdentityFingerprint.Codex, selection.Profile)
 		return resolved, true
@@ -144,6 +162,7 @@ func invalidateCachedCodexIdentityFingerprintSelection(accountKey string) {
 	}
 	now := time.Now().Add(-time.Second)
 	codexIdentityFingerprintSelectionCache.Lock()
+	codexIdentityFingerprintRefreshStateLocked(accountKey).revision++
 	if entry, ok := codexIdentityFingerprintSelectionCache.entries[accountKey]; ok {
 		entry.expiresAt = now
 		codexIdentityFingerprintSelectionCache.entries[accountKey] = entry
@@ -163,13 +182,25 @@ func scheduleCodexIdentityFingerprintSelectionRefresh(accountKey string) {
 		return
 	}
 	codexIdentityFingerprintSelectionCache.refreshing[accountKey] = struct{}{}
+	state := codexIdentityFingerprintRefreshStateLocked(accountKey)
+	revision := state.revision
+	learning := state.learning
 	codexIdentityFingerprintSelectionCache.Unlock()
 
 	go func() {
 		defer func() {
 			codexIdentityFingerprintSelectionCache.Lock()
-			delete(codexIdentityFingerprintSelectionCache.refreshing, accountKey)
+			current := codexIdentityFingerprintSelectionCache.states[accountKey] == state
+			if current {
+				delete(codexIdentityFingerprintSelectionCache.refreshing, accountKey)
+			}
+			// Invalidation during a read cannot be dropped by single-flight
+			// suppression. Learning completion schedules its own refresh.
+			retry := current && state.revision != revision && state.learning == 0
 			codexIdentityFingerprintSelectionCache.Unlock()
+			if retry {
+				scheduleCodexIdentityFingerprintSelectionRefresh(accountKey)
+			}
 		}()
 		profiles, err := callRuntimeListCodexIdentityFingerprintProfiles(identityfingerprint.ProviderCodex, accountKey)
 		if err != nil {
@@ -181,8 +212,49 @@ func scheduleCodexIdentityFingerprintSelectionRefresh(accountKey string) {
 			log.WithError(err).Warn("identity fingerprint: load Codex account policy")
 		}
 		selection := identityfingerprint.SelectCodexProfile(profiles, policy)
-		setCachedCodexIdentityFingerprintSelection(accountKey, selection)
+		codexIdentityFingerprintSelectionCache.Lock()
+		// A snapshot read before learning commits is incomplete, even when it
+		// finishes later. Fresh empty snapshots remain authoritative for deletes.
+		if codexIdentityFingerprintSelectionCache.states[accountKey] == state && state.revision == revision && learning == 0 && state.learning == 0 {
+			codexIdentityFingerprintSelectionCache.entries[accountKey] = codexIdentityFingerprintSelectionEntry{
+				selection: cloneCodexIdentityFingerprintSelection(selection),
+				expiresAt: time.Now().Add(codexIdentityFingerprintSelectionCacheTTL),
+			}
+		}
+		codexIdentityFingerprintSelectionCache.Unlock()
 	}()
+}
+
+// Caller holds the selection-cache mutex.
+func codexIdentityFingerprintRefreshStateLocked(accountKey string) *codexIdentityFingerprintRefreshState {
+	state := codexIdentityFingerprintSelectionCache.states[accountKey]
+	if state == nil {
+		state = &codexIdentityFingerprintRefreshState{}
+		codexIdentityFingerprintSelectionCache.states[accountKey] = state
+	}
+	return state
+}
+
+func beginCodexIdentityFingerprintLearning(provider identityfingerprint.Provider, accountKey string) func() {
+	if provider != identityfingerprint.ProviderCodex {
+		return func() {}
+	}
+	codexIdentityFingerprintSelectionCache.Lock()
+	state := codexIdentityFingerprintRefreshStateLocked(accountKey)
+	state.revision++
+	state.learning++
+	codexIdentityFingerprintSelectionCache.Unlock()
+	return func() {
+		codexIdentityFingerprintSelectionCache.Lock()
+		current := codexIdentityFingerprintSelectionCache.states[accountKey] == state
+		state.learning--
+		state.revision++
+		ready := current && state.learning == 0
+		codexIdentityFingerprintSelectionCache.Unlock()
+		if ready {
+			scheduleCodexIdentityFingerprintSelectionRefresh(accountKey)
+		}
+	}
 }
 
 func codexIdentityFingerprintSelectionFromRuntimeCache(accountKey string, observed *identityfingerprint.LearnedRecord) identityfingerprint.ProfileSelection {
